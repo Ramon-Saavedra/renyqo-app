@@ -6,6 +6,8 @@ Backend API for Renyqo, a smart rental platform for Germany.
 
 - [NestJS](https://nestjs.com/) (Node.js framework)
 - TypeScript (strict mode)
+- `@nestjs/config` for environment loading
+- `class-validator` + `class-transformer` for env and DTO validation
 
 ## Requirements
 
@@ -20,6 +22,23 @@ cd renyqo-app
 npm install
 cp .env.example .env
 ```
+
+## Environment variables
+
+| Variable   | Required | Description                                           |
+| ---------- | -------- | ----------------------------------------------------- |
+| `NODE_ENV` | yes      | One of `development`, `production`, `test`            |
+| `PORT`     | yes      | TCP port for the HTTP server (1-65535)                |
+
+Values are validated at startup; the application fails fast with a clear error if any are missing or invalid.
+
+## API
+
+Global prefix: `/api/v1`
+
+| Method | Path               | Description                          |
+| ------ | ------------------ | ------------------------------------ |
+| `GET`  | `/api/v1/health`   | Liveness probe, returns service status |
 
 ## Scripts
 
@@ -40,8 +59,12 @@ cp .env.example .env
 ## Project structure
 
 ```
-src/        Application source
-test/       End-to-end test setup
+src/
+  config/         Environment validation
+  health/         Health module (controller, service)
+  app.module.ts   Root module
+  main.ts         Bootstrap (global prefix, validation pipe)
+test/             End-to-end test setup
 ```
 
 ## License
