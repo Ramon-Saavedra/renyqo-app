@@ -81,6 +81,29 @@ Global prefix: `/api/v1`
 
 Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_sessions`).
 
+### Me
+
+| Method | Path                              | Auth        | Description                              |
+| ------ | --------------------------------- | ----------- | ---------------------------------------- |
+| `GET`  | `/api/v1/me/onboarding-state`     | 🔒 Session | Returns role-based onboarding state      |
+
+**Response for `provider`:**
+```json
+{
+  "role": "provider",
+  "hasCreatedFirstListing": false,
+  "nextStep": "create_first_listing"
+}
+```
+
+**Response for `applicant`:**
+```json
+{
+  "role": "applicant",
+  "nextStep": "applicant_area_pending"
+}
+```
+
 ## Scripts
 
 | Script                  | Purpose                                    |
@@ -117,6 +140,12 @@ src/
   generated/
     prisma/           Auto-generated Prisma client (gitignored)
   health/             Health module (controller, service)
+  me/
+    types/            OnboardingState discriminated union type
+    me.controller.ts
+    me.module.ts
+    me.service.ts
+    me.service.spec.ts
   prisma/             PrismaService (global), PrismaModule
   users/
     types/            SafeUser type (User without passwordHash)
