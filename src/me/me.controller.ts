@@ -12,7 +12,7 @@ export class MeController {
   constructor(private readonly meService: MeService) {}
 
   @Get('onboarding-state')
-  getOnboardingState(@Req() req: Request): OnboardingState {
+  async getOnboardingState(@Req() req: Request): Promise<OnboardingState> {
     return this.meService.getOnboardingState(req.user as SafeUser);
   }
 }

@@ -8,29 +8,96 @@ datasource db {
 }
 
 enum Role {
-  applicant
-  provider
-  admin
+  APPLICANT @map("applicant")
+  PROVIDER  @map("provider")
+  ADMIN     @map("admin")
 }
 
 enum UserStatus {
-  active
-  suspended
-  deleted
+  ACTIVE    @map("active")
+  SUSPENDED @map("suspended")
+  DELETED   @map("deleted")
+}
+
+enum ListingStatus {
+  DRAFT     @map("draft")
+  PUBLISHED @map("published")
+  PAUSED    @map("paused")
+  ARCHIVED  @map("archived")
+}
+
+enum ObjectType {
+  APARTMENT @map("apartment")
+  HOUSE     @map("house")
+  ROOM      @map("room")
+}
+
+enum PetsPolicy {
+  ALLOWED        @map("allowed")
+  BY_ARRANGEMENT @map("by_arrangement")
+  PREFER_NOT     @map("prefer_not")
+}
+
+enum SmokingPolicy {
+  ALLOWED               @map("allowed")
+  BY_ARRANGEMENT        @map("by_arrangement")
+  NON_SMOKERS_PREFERRED @map("non_smokers_preferred")
 }
 
 model User {
-  id                String     @id @default(cuid())
+  id                String     @id @default(uuid()) @db.Uuid
   name              String
   email             String     @unique
   passwordHash      String     @map("password_hash")
-  role              Role       @default(applicant)
+  role              Role       @default(APPLICANT)
   emailVerified     Boolean    @default(false) @map("email_verified")
-  status            UserStatus @default(active)
+  status            UserStatus @default(ACTIVE)
   acceptedTermsAt   DateTime   @map("accepted_terms_at")
   acceptedPrivacyAt DateTime   @map("accepted_privacy_at")
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")
 
+  listings Listing[]
+
   @@map("users")
+}
+
+model Listing {
+  id               String        @id @default(uuid()) @db.Uuid
+  providerId       String        @map("provider_id") @db.Uuid
+  status           ListingStatus @default(DRAFT)
+
+  city             String
+  zip              String
+  street           String?
+  country          String        @default("DE")
+  showExactAddress Boolean       @default(false) @map("show_exact_address")
+
+  objectType      ObjectType @map("object_type")
+  livingArea      Float?     @map("living_area")
+  rooms           Float?
+  bedrooms        Int?
+  coldRent        Float?     @map("cold_rent")
+  additionalCosts Float?     @map("additional_costs")
+  deposit         Float?
+  availableFrom   DateTime?  @map("available_from")
+
+  title            String?
+  shortDescription String?  @map("short_description")
+  photos           String[]
+
+  minimumHouseholdNetIncome Float?         @map("minimum_household_net_income")
+  schufaRequired            Boolean        @default(false) @map("schufa_required")
+  incomeProofRequired       Boolean        @default(false) @map("income_proof_required")
+  suitableForPeopleCount    Int?           @map("suitable_for_people_count")
+  petsPolicy                PetsPolicy?    @map("pets_policy")
+  smokingPolicy             SmokingPolicy? @map("smoking_policy")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  publishedAt DateTime? @map("published_at")
+
+  provider User @relation(fields: [providerId], references: [id])
+
+  @@map("listings")
 }

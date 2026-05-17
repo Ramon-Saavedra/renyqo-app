@@ -29,7 +29,7 @@ cp .env.example .env
 # Fill in SESSION_SECRET (min 32 chars)
 ```
 
-Start the database:
+Start the database (exposes PostgreSQL on port **5433** to avoid conflicts with a local PostgreSQL on 5432):
 
 ```bash
 docker compose up -d
@@ -104,6 +104,24 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 }
 ```
 
+### Listings (Provider only 🔒)
+
+| Method   | Path                                   | Auth             | Body / Params                    | Description                                      |
+| -------- | -------------------------------------- | ---------------- | -------------------------------- | ------------------------------------------------ |
+| `POST`   | `/api/v1/listings`                     | 🔒 Provider     | `CreateListingDto`               | Create a new listing (status: DRAFT)             |
+| `GET`    | `/api/v1/listings`                     | 🔒 Provider     | —                                | Get all listings owned by the authenticated provider |
+| `GET`    | `/api/v1/listings/:id`                 | 🔒 Provider     | `:id` (UUID)                     | Get a single listing by ID (ownership enforced)  |
+| `PATCH`  | `/api/v1/listings/:id`                 | 🔒 Provider     | `UpdateListingDto` (all optional)| Update a listing                                 |
+| `DELETE` | `/api/v1/listings/:id`                 | 🔒 Provider     | `:id` (UUID)                     | Delete a listing                                 |
+| `POST`   | `/api/v1/listings/:id/publish`         | 🔒 Provider     | `:id` (UUID)                     | Publish listing (validates required fields)      |
+| `POST`   | `/api/v1/listings/:id/move-to-draft`   | 🔒 Provider     | `:id` (UUID)                     | Move a published listing back to DRAFT           |
+
+**Required fields to publish:** `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
+
+**Listing statuses:** `DRAFT`, `PUBLISHED`, `ARCHIVED`.
+
+**Enums:** `ObjectType` (`APARTMENT`, `HOUSE`, `ROOM`, `STUDIO`, `SHARED_ROOM`, `COMMERCIAL`), `PetsPolicy` (`ALLOWED`, `NOT_ALLOWED`, `NEGOTIABLE`), `SmokingPolicy` (`ALLOWED`, `NOT_ALLOWED`, `BALCONY_ONLY`).
+
 ## Scripts
 
 | Script                  | Purpose                                    |
@@ -135,6 +153,7 @@ src/
     auth.service.ts
     auth.service.spec.ts
   common/
+    guards/           ProviderOnlyGuard (requires authenticated + PROVIDER role)
     types/            express.d.ts (Express.User type augmentation)
   config/             Environment validation (EnvironmentVariables, validateEnv)
   generated/
@@ -146,6 +165,12 @@ src/
     me.module.ts
     me.service.ts
     me.service.spec.ts
+  listings/
+    dto/              CreateListingDto, UpdateListingDto
+    listings.controller.ts
+    listings.module.ts
+    listings.service.ts
+    listings.service.spec.ts
   prisma/             PrismaService (global), PrismaModule
   users/
     types/            SafeUser type (User without passwordHash)
@@ -155,7 +180,7 @@ src/
   app.module.ts       Root module
   main.ts             Bootstrap (global prefix, validation pipe, session, passport)
 prisma/
-  schema.prisma       Data model (User, Role, UserStatus enums, snake_case column maps)
+  schema.prisma       Data model (User, Listing, Role, UserStatus, ListingStatus, ObjectType, PetsPolicy, SmokingPolicy enums, snake_case column maps, UUID primary keys)
 prisma.config.ts      Prisma v7 datasource config (DATABASE_URL)
 docker-compose.yml    PostgreSQL 16-alpine with healthcheck and restart policy
 test/                 End-to-end test setup
