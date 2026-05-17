@@ -8,6 +8,28 @@ Nunca hagas commit tu, los hago yo.
 
 Siempre escribir el README cuando sea necesario para tener un README profesional..
 
+Todo código NestJS debe seguir la arquitectura recomendada de NestJS y mantener responsabilidades separadas.
+
+### Reglas
+
+- Cada dominio o feature debe vivir en su propio módulo.
+- Usar `Module`, `Controller`, `Service` y `DTOs` de forma clara.
+- Los controllers solo manejan HTTP: reciben request, validan entrada y llaman al service.
+- No poner lógica de negocio en controllers.
+- La lógica de negocio vive en services.
+- Todo input debe pasar por DTOs.
+- Usar DTOs como clases concretas, no objetos sueltos.
+- Usar validación con DTOs y pipes.
+- Usar guards para autenticación, autorización y roles cuando aplique.
+- No crear módulos, services o endpoints fuera de la fase actual.
+- No mezclar responsabilidades entre módulos.
+- No crear archivos “utils” genéricos si la lógica pertenece a un dominio concreto.
+
+### Patrón esperado
+
+```txt
+module → controller → dto → service → repository/database
+
 No dejar comentarios
 
 Before coding:
