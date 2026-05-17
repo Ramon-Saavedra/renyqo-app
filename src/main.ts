@@ -3,7 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import session from 'express-session';
-import * as passport from 'passport';
+import passport from 'passport';
 import connectPgSimple from 'connect-pg-simple';
 import { AppModule } from './app.module';
 import { EnvironmentVariables, NodeEnv } from './config/env.validation';
