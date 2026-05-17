@@ -1,13 +1,20 @@
 import { ConflictException, Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
+import { Role } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { UsersService } from '../users/users.service';
+import { PublicRole } from './dto/register.dto';
 import type { RegisterDto } from './dto/register.dto';
 
 const SALT_ROUNDS = 12;
 const DUMMY_HASH =
   '$2b$12$invalidhashforuserthatdoesnotexistXXXXXXXXXXXXXXXXXXXX';
+
+const PUBLIC_ROLE_TO_ROLE: Record<PublicRole, Role> = {
+  [PublicRole.APPLICANT]: Role.APPLICANT,
+  [PublicRole.PROVIDER]: Role.PROVIDER,
+};
 
 @Injectable()
 export class AuthService {
@@ -21,7 +28,7 @@ export class AuthService {
         name: dto.name,
         email,
         passwordHash,
-        role: dto.role,
+        role: PUBLIC_ROLE_TO_ROLE[dto.role],
         acceptedTermsAt: new Date(),
         acceptedPrivacyAt: new Date(),
       });
