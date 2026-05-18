@@ -23,8 +23,10 @@ jest.mock('bcrypt', () => ({
   getRounds: jest.fn(),
 }));
 
+const USER_ID = '00000000-0000-4000-8000-000000000001';
+
 const makeUser = (): User => ({
-  id: 'cuid-abc123',
+  id: USER_ID,
   name: 'Test User',
   email: 'test@example.com',
   passwordHash: '$2b$12$somehash',

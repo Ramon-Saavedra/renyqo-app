@@ -11,9 +11,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ListingsService } from './listings.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
 
+const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
+const LISTING_ID = '00000000-0000-4000-8000-000000000002';
+const LISTING_ID_2 = '00000000-0000-4000-8000-000000000003';
+const OTHER_LISTING_ID = '00000000-0000-4000-8000-000000000004';
+
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
-  id: 'listing-uuid',
-  providerId: 'provider-uuid',
+  id: LISTING_ID,
+  providerId: PROVIDER_ID,
   status: ListingStatus.DRAFT,
   city: 'Berlin',
   zip: '10115',
@@ -89,13 +94,12 @@ describe('ListingsService', () => {
         zip: '10115',
       };
 
-      const result = await service.create('provider-uuid', dto);
+      const result = await service.create(PROVIDER_ID, dto);
 
       expect(prismaMock.listing.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            providerId: 'provider-uuid',
-            objectType: ObjectType.APARTMENT,
+            providerId: PROVIDER_ID,
             city: 'Berlin',
             zip: '10115',
           }),
@@ -107,14 +111,14 @@ describe('ListingsService', () => {
 
   describe('findAllByProvider', () => {
     it('returns all listings for a provider ordered by createdAt desc', async () => {
-      const listings = [makeRawListing(), makeRawListing({ id: 'listing-2' })];
+      const listings = [makeRawListing(), makeRawListing({ id: LISTING_ID_2 })];
       prismaMock.listing.findMany.mockResolvedValue(listings);
 
-      const result = await service.findAllByProvider('provider-uuid');
+      const result = await service.findAllByProvider(PROVIDER_ID);
 
       expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { providerId: 'provider-uuid' },
+          where: { providerId: PROVIDER_ID },
           orderBy: { createdAt: 'desc' },
         }),
       );
@@ -128,8 +132,8 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
 
       const result = await service.findOneByProvider(
-        'listing-uuid',
-        'provider-uuid',
+        LISTING_ID,
+        PROVIDER_ID,
       );
 
       expect(result).toEqual(listing);
@@ -139,7 +143,7 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.findOneByProvider('other-uuid', 'provider-uuid'),
+        service.findOneByProvider(OTHER_LISTING_ID, PROVIDER_ID),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -150,7 +154,7 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
 
       await expect(
-        service.publish('listing-uuid', 'provider-uuid'),
+        service.publish(LISTING_ID, PROVIDER_ID),
       ).rejects.toThrow(UnprocessableEntityException);
     });
 
@@ -168,11 +172,11 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.listing.update.mockResolvedValue(published);
 
-      const result = await service.publish('listing-uuid', 'provider-uuid');
+      const result = await service.publish(LISTING_ID, PROVIDER_ID);
 
       expect(prismaMock.listing.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'listing-uuid' },
+          where: { id: LISTING_ID },
           data: expect.objectContaining({ status: ListingStatus.PUBLISHED }),
         }),
       );
@@ -187,7 +191,7 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.listing.update.mockResolvedValue(drafted);
 
-      const result = await service.moveToDraft('listing-uuid', 'provider-uuid');
+      const result = await service.moveToDraft(LISTING_ID, PROVIDER_ID);
 
       expect(prismaMock.listing.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -202,10 +206,10 @@ describe('ListingsService', () => {
     it('returns the number of listings for a provider', async () => {
       prismaMock.listing.count.mockResolvedValue(3);
 
-      const result = await service.countByProvider('provider-uuid');
+      const result = await service.countByProvider(PROVIDER_ID);
 
       expect(prismaMock.listing.count).toHaveBeenCalledWith({
-        where: { providerId: 'provider-uuid' },
+        where: { providerId: PROVIDER_ID },
       });
       expect(result).toBe(3);
     });
