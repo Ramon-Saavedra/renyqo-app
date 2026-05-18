@@ -7,8 +7,10 @@ import { ListingsService } from '../listings/listings.service';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { MeService } from './me.service';
 
+const USER_ID = '00000000-0000-4000-8000-000000000001';
+
 const makeSafeUser = (role: SafeUser['role']): SafeUser => ({
-  id: 'user-id',
+  id: USER_ID,
   name: 'Test User',
   email: 'test@example.com',
   role,

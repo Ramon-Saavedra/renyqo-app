@@ -5,8 +5,10 @@ import type { User } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from './users.service';
 
+const USER_ID = '00000000-0000-4000-8000-000000000001';
+
 const makeUser = (): User => ({
-  id: 'cuid-abc123',
+  id: USER_ID,
   name: 'Max Mustermann',
   email: 'max@example.com',
   passwordHash: '$2b$12$somehash',
