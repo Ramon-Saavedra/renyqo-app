@@ -62,4 +62,10 @@ export class ListingsController {
     const user = req.user as SafeUser;
     return this.listingsService.moveToDraft(id, user.id);
   }
+
+  @Patch(':id/archive')
+  archive(@Param('id') id: string, @Req() req: Request): Promise<Listing> {
+    const user = req.user as SafeUser;
+    return this.listingsService.archive(id, user.id);
+  }
 }
