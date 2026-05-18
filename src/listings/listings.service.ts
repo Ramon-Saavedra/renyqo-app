@@ -116,6 +116,14 @@ export class ListingsService {
     });
   }
 
+  async archive(id: string, providerId: string): Promise<Listing> {
+    await this.findOneByProvider(id, providerId);
+    return this.prisma.listing.update({
+      where: { id },
+      data: { status: ListingStatus.ARCHIVED },
+    });
+  }
+
   async countByProvider(providerId: string): Promise<number> {
     return this.prisma.listing.count({ where: { providerId } });
   }

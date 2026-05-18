@@ -199,6 +199,33 @@ describe('ListingsService', () => {
     });
   });
 
+  describe('archive', () => {
+    it('sets listing status to ARCHIVED', async () => {
+      const listing = makeRawListing({ status: ListingStatus.PUBLISHED });
+      const archived = { ...listing, status: ListingStatus.ARCHIVED };
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue(archived);
+
+      const result = await service.archive(LISTING_ID, PROVIDER_ID);
+
+      expect(prismaMock.listing.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: LISTING_ID },
+          data: { status: ListingStatus.ARCHIVED },
+        }),
+      );
+      expect(result.status).toBe(ListingStatus.ARCHIVED);
+    });
+
+    it('throws NotFoundException when listing does not belong to the provider', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.archive(OTHER_LISTING_ID, PROVIDER_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('countByProvider', () => {
     it('returns the number of listings for a provider', async () => {
       prismaMock.listing.count.mockResolvedValue(3);

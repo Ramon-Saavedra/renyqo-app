@@ -114,6 +114,7 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 | `PATCH`  | `/api/v1/provider/listings/:id`               | 🔒 Provider     | `UpdateListingDto` (all optional)| Update a listing                                     |
 | `PATCH`  | `/api/v1/provider/listings/:id/publish`       | 🔒 Provider     | `:id` (UUID)                     | Publish listing (validates required fields)          |
 | `PATCH`  | `/api/v1/provider/listings/:id/draft`         | 🔒 Provider     | `:id` (UUID)                     | Move a published listing back to DRAFT               |
+| `PATCH`  | `/api/v1/provider/listings/:id/archive`       | 🔒 Provider     | `:id` (UUID)                     | Archive a listing (soft, keeps record in database)   |
 
 **Required fields to publish:** `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
 
