@@ -106,21 +106,20 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 
 ### Listings (Provider only 🔒)
 
-| Method   | Path                                   | Auth             | Body / Params                    | Description                                      |
-| -------- | -------------------------------------- | ---------------- | -------------------------------- | ------------------------------------------------ |
-| `POST`   | `/api/v1/listings`                     | 🔒 Provider     | `CreateListingDto`               | Create a new listing (status: DRAFT)             |
-| `GET`    | `/api/v1/listings`                     | 🔒 Provider     | —                                | Get all listings owned by the authenticated provider |
-| `GET`    | `/api/v1/listings/:id`                 | 🔒 Provider     | `:id` (UUID)                     | Get a single listing by ID (ownership enforced)  |
-| `PATCH`  | `/api/v1/listings/:id`                 | 🔒 Provider     | `UpdateListingDto` (all optional)| Update a listing                                 |
-| `DELETE` | `/api/v1/listings/:id`                 | 🔒 Provider     | `:id` (UUID)                     | Delete a listing                                 |
-| `POST`   | `/api/v1/listings/:id/publish`         | 🔒 Provider     | `:id` (UUID)                     | Publish listing (validates required fields)      |
-| `POST`   | `/api/v1/listings/:id/move-to-draft`   | 🔒 Provider     | `:id` (UUID)                     | Move a published listing back to DRAFT           |
+| Method   | Path                                          | Auth             | Body / Params                    | Description                                          |
+| -------- | --------------------------------------------- | ---------------- | -------------------------------- | ---------------------------------------------------- |
+| `POST`   | `/api/v1/provider/listings`                   | 🔒 Provider     | `CreateListingDto`               | Create a new listing (status: DRAFT)                 |
+| `GET`    | `/api/v1/provider/listings`                   | 🔒 Provider     | —                                | Get all listings owned by the authenticated provider |
+| `GET`    | `/api/v1/provider/listings/:id`               | 🔒 Provider     | `:id` (UUID)                     | Get a single listing by ID (ownership enforced)      |
+| `PATCH`  | `/api/v1/provider/listings/:id`               | 🔒 Provider     | `UpdateListingDto` (all optional)| Update a listing                                     |
+| `PATCH`  | `/api/v1/provider/listings/:id/publish`       | 🔒 Provider     | `:id` (UUID)                     | Publish listing (validates required fields)          |
+| `PATCH`  | `/api/v1/provider/listings/:id/draft`         | 🔒 Provider     | `:id` (UUID)                     | Move a published listing back to DRAFT               |
 
 **Required fields to publish:** `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
 
-**Listing statuses:** `DRAFT`, `PUBLISHED`, `ARCHIVED`.
+**Listing statuses:** `DRAFT`, `PUBLISHED`, `PAUSED`, `ARCHIVED`.
 
-**Enums:** `ObjectType` (`APARTMENT`, `HOUSE`, `ROOM`, `STUDIO`, `SHARED_ROOM`, `COMMERCIAL`), `PetsPolicy` (`ALLOWED`, `NOT_ALLOWED`, `NEGOTIABLE`), `SmokingPolicy` (`ALLOWED`, `NOT_ALLOWED`, `BALCONY_ONLY`).
+**Enums:** `ObjectType` (`APARTMENT`, `HOUSE`, `ROOM`), `PetsPolicy` (`ALLOWED`, `BY_ARRANGEMENT`, `PREFER_NOT`), `SmokingPolicy` (`ALLOWED`, `BY_ARRANGEMENT`, `NON_SMOKERS_PREFERRED`).
 
 ## Scripts
 
