@@ -131,10 +131,7 @@ describe('ListingsService', () => {
       const listing = makeRawListing();
       prismaMock.listing.findFirst.mockResolvedValue(listing);
 
-      const result = await service.findOneByProvider(
-        LISTING_ID,
-        PROVIDER_ID,
-      );
+      const result = await service.findOneByProvider(LISTING_ID, PROVIDER_ID);
 
       expect(result).toEqual(listing);
     });
@@ -153,9 +150,9 @@ describe('ListingsService', () => {
       const listing = makeRawListing();
       prismaMock.listing.findFirst.mockResolvedValue(listing);
 
-      await expect(
-        service.publish(LISTING_ID, PROVIDER_ID),
-      ).rejects.toThrow(UnprocessableEntityException);
+      await expect(service.publish(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
+        UnprocessableEntityException,
+      );
     });
 
     it('publishes the listing when all required fields are present', async () => {
