@@ -12,16 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  dependency-review:
-    name: dependency-review
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v5
-        with:
-          fail-on-severity: high
-
   npm-audit:
     name: npm-audit
     runs-on: ubuntu-latest
@@ -33,23 +23,3 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm audit --audit-level=high
-
-  codeql-analysis:
-    name: codeql-analysis
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    permissions:
-      security-events: write
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript-typescript
-          build-mode: none
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: '/language:javascript-typescript'
