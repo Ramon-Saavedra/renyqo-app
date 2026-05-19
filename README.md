@@ -115,12 +115,41 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 | `PATCH`  | `/api/v1/provider/listings/:id/publish`       | 🔒 Provider     | `:id` (UUID)                     | Publish listing (validates required fields)          |
 | `PATCH`  | `/api/v1/provider/listings/:id/draft`         | 🔒 Provider     | `:id` (UUID)                     | Move a published listing back to DRAFT               |
 | `PATCH`  | `/api/v1/provider/listings/:id/archive`       | 🔒 Provider     | `:id` (UUID)                     | Archive a listing (soft, keeps record in database)   |
+| `GET`    | `/api/v1/provider/listings/:id/active-applications` | 🔒 Provider | `:id` (UUID)              | Get active applications for a listing (ownership enforced). Returns `[]` until the applications module is built. |
 
 **Required fields to publish:** `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
 
 **Listing statuses:** `DRAFT`, `PUBLISHED`, `PAUSED`, `ARCHIVED`.
 
 **Enums:** `ObjectType` (`APARTMENT`, `HOUSE`, `ROOM`), `PetsPolicy` (`ALLOWED`, `BY_ARRANGEMENT`, `PREFER_NOT`), `SmokingPolicy` (`ALLOWED`, `BY_ARRANGEMENT`, `NON_SMOKERS_PREFERRED`).
+
+### Dashboard (Provider only 🔒)
+
+| Method | Path                                     | Auth         | Description                                         |
+| ------ | ---------------------------------------- | ------------ | --------------------------------------------------- |
+| `GET`  | `/api/v1/provider/dashboard/summary`     | 🔒 Provider | Returns a summary of the provider's listings        |
+
+**Response shape:**
+```json
+{
+  "objectsCount": 4,
+  "draftsCount": 1,
+  "newApplicationsCount": 0,
+  "recentListings": [
+    {
+      "id": "uuid",
+      "title": "Schöne Wohnung in Mitte",
+      "status": "PUBLISHED",
+      "city": "Berlin",
+      "objectType": "APARTMENT",
+      "coldRent": 1200,
+      "createdAt": "2024-01-15T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+`newApplicationsCount` is always `0` until the applications module is implemented. `recentListings` is limited to the 5 most recent listings.
 
 ## Scripts
 
@@ -171,6 +200,12 @@ src/
     listings.module.ts
     listings.service.ts
     listings.service.spec.ts
+  dashboard/
+    types/            DashboardSummary interface, RecentListingSummary type
+    dashboard.controller.ts
+    dashboard.module.ts
+    dashboard.service.ts
+    dashboard.service.spec.ts
   prisma/             PrismaService (global), PrismaModule
   users/
     types/            SafeUser type (User without passwordHash)

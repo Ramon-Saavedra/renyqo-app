@@ -68,4 +68,13 @@ export class ListingsController {
     const user = req.user as SafeUser;
     return this.listingsService.archive(id, user.id);
   }
+
+  @Get(':id/active-applications')
+  getActiveApplications(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<never[]> {
+    const user = req.user as SafeUser;
+    return this.listingsService.getActiveApplications(id, user.id);
+  }
 }
