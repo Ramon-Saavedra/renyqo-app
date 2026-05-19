@@ -238,4 +238,57 @@ describe('ListingsService', () => {
       expect(result).toBe(3);
     });
   });
+
+  describe('countDraftsByProvider', () => {
+    it('returns the number of draft listings for a provider', async () => {
+      prismaMock.listing.count.mockResolvedValue(2);
+
+      const result = await service.countDraftsByProvider(PROVIDER_ID);
+
+      expect(prismaMock.listing.count).toHaveBeenCalledWith({
+        where: { providerId: PROVIDER_ID, status: ListingStatus.DRAFT },
+      });
+      expect(result).toBe(2);
+    });
+  });
+
+  describe('findRecentByProvider', () => {
+    it('returns recent listings limited to the given count', async () => {
+      const listings = [makeRawListing(), makeRawListing({ id: LISTING_ID_2 })];
+      prismaMock.listing.findMany.mockResolvedValue(listings);
+
+      const result = await service.findRecentByProvider(PROVIDER_ID, 5);
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { providerId: PROVIDER_ID },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        }),
+      );
+      expect(result).toEqual(listings);
+    });
+  });
+
+  describe('getActiveApplications', () => {
+    it('returns an empty array when listing belongs to the provider', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+
+      const result = await service.getActiveApplications(
+        LISTING_ID,
+        PROVIDER_ID,
+      );
+
+      expect(result).toEqual([]);
+    });
+
+    it('throws NotFoundException when listing does not belong to the provider', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getActiveApplications(OTHER_LISTING_ID, PROVIDER_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
 });

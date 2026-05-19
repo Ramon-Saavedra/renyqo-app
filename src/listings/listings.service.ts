@@ -127,4 +127,29 @@ export class ListingsService {
   async countByProvider(providerId: string): Promise<number> {
     return this.prisma.listing.count({ where: { providerId } });
   }
+
+  async countDraftsByProvider(providerId: string): Promise<number> {
+    return this.prisma.listing.count({
+      where: { providerId, status: ListingStatus.DRAFT },
+    });
+  }
+
+  async findRecentByProvider(
+    providerId: string,
+    limit: number,
+  ): Promise<Listing[]> {
+    return this.prisma.listing.findMany({
+      where: { providerId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async getActiveApplications(
+    id: string,
+    providerId: string,
+  ): Promise<never[]> {
+    await this.findOneByProvider(id, providerId);
+    return [];
+  }
 }
