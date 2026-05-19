@@ -151,6 +151,22 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 
 `newApplicationsCount` is always `0` until the applications module is implemented. `recentListings` is limited to the 5 most recent listings.
 
+## Docker
+
+Build the image locally:
+
+```bash
+docker build -t renyqo-backend .
+```
+
+Run the container (requires a running PostgreSQL and `.env` values):
+
+```bash
+docker run --env-file .env -p 3000:3000 renyqo-backend
+```
+
+The production image uses a non-root user (`nestjs`) and installs only production dependencies. The `PORT` environment variable controls which port the server listens on (default NestJS: 3000).
+
 ## Scripts
 
 | Script                  | Purpose                                    |
