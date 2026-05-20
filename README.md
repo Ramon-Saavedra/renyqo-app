@@ -167,6 +167,29 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 
 **Application statuses:** `ACTIVE`, `PENDING_QUEUE`, `REJECTED`, `WITHDRAWN`.
 
+### Applicant Profile
+
+| Method  | Path                          | Auth         | Description                                        |
+| ------- | ----------------------------- | ------------ | -------------------------------------------------- |
+| `GET`   | `/api/v1/applicant/profile`   | 🔒 Applicant | Get the current applicant's profile (`404` if none) |
+| `PATCH` | `/api/v1/applicant/profile`   | 🔒 Applicant | Create or update the applicant's profile (upsert)  |
+
+**PATCH body** (all fields optional):
+
+| Field                  | Type    | Constraints           |
+| ---------------------- | ------- | --------------------- |
+| `householdNetIncome`   | number  | ≥ 0                   |
+| `incomeProofAvailable` | boolean | —                     |
+| `schufaAvailable`      | boolean | —                     |
+| `peopleCount`          | integer | ≥ 1                   |
+| `adultsCount`          | integer | ≥ 1                   |
+| `childrenCount`        | integer | ≥ 0                   |
+| `hasPets`              | boolean | —                     |
+| `petsNote`             | string  | max 500 chars         |
+| `smokingStatus`        | enum    | `SMOKER`, `NON_SMOKER`, `OCCASIONALLY` |
+
+- `applicantId` always comes from the session. It cannot be passed in the body.
+
 ## CI
 
 All checks run on `pull_request` and `push` to `main`.
@@ -258,6 +281,12 @@ src/
     applications.service.spec.ts
     applicant-applications.controller.ts
     provider-applications.controller.ts
+  applicant-profile/
+    dto/              UpdateApplicantProfileDto
+    applicant-profile.controller.ts
+    applicant-profile.module.ts
+    applicant-profile.service.ts
+    applicant-profile.service.spec.ts
   prisma/             PrismaService (global), PrismaModule
   users/
     types/            SafeUser type (User without passwordHash)

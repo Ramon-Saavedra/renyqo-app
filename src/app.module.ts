@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env.validation';
+import { ApplicantProfileModule } from './applicant-profile/applicant-profile.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
@@ -19,6 +20,7 @@ import { MeModule } from './me/me.module';
     MeModule,
     DashboardModule,
     ApplicationsModule,
+    ApplicantProfileModule,
     HealthModule,
   ],
   controllers: [],
