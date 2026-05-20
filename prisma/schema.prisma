@@ -52,6 +52,12 @@ enum ApplicationStatus {
   WITHDRAWN     @map("withdrawn")
 }
 
+enum SmokingStatus {
+  SMOKER       @map("smoker")
+  NON_SMOKER   @map("non_smoker")
+  OCCASIONALLY @map("occasionally")
+}
+
 model User {
   id                String     @id @default(uuid()) @db.Uuid
   name              String
@@ -67,6 +73,7 @@ model User {
 
   listings     Listing[]
   applications Application[]
+  profile      ApplicantProfile?
 
   @@map("users")
 }
@@ -126,4 +133,24 @@ model Application {
 
   @@unique([listingId, applicantId])
   @@map("applications")
+}
+
+model ApplicantProfile {
+  id                   String         @id @default(uuid()) @db.Uuid
+  applicantId          String         @unique @map("applicant_id") @db.Uuid
+  householdNetIncome   Float?         @map("household_net_income")
+  incomeProofAvailable Boolean?       @map("income_proof_available")
+  schufaAvailable      Boolean?       @map("schufa_available")
+  peopleCount          Int?           @map("people_count")
+  adultsCount          Int?           @map("adults_count")
+  childrenCount        Int?           @map("children_count")
+  hasPets              Boolean?       @map("has_pets")
+  petsNote             String?        @map("pets_note")
+  smokingStatus        SmokingStatus? @map("smoking_status")
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  applicant User @relation(fields: [applicantId], references: [id])
+
+  @@map("applicant_profiles")
 }
