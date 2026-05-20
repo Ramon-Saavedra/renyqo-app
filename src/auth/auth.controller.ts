@@ -21,8 +21,21 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  async register(@Body() dto: RegisterDto): Promise<SafeUser> {
-    return this.authService.register(dto);
+  async register(
+    @Body() dto: RegisterDto,
+    @Req() req: Request,
+  ): Promise<SafeUser> {
+    const user = await this.authService.register(dto);
+    await new Promise<void>((resolve, reject) => {
+      req.login(user, (err: unknown) => {
+        if (err)
+          reject(
+            err instanceof Error ? err : new Error('Session creation failed'),
+          );
+        else resolve();
+      });
+    });
+    return user;
   }
 
   @UseGuards(LocalAuthGuard)

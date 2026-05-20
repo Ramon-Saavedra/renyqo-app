@@ -19,7 +19,7 @@
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["node", "jest"]
+    "types": ["node", "jest", "express-session"]
   },
   "exclude": ["node_modules", "dist", "test", "**/*.spec.ts", "**/*.test.ts"]
 }
