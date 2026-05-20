@@ -5,8 +5,12 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import type { Listing } from '../generated/prisma/client';
-import { ListingStatus, ObjectType } from '../generated/prisma/enums';
+import type { Application, Listing } from '../generated/prisma/client';
+import {
+  ApplicationStatus,
+  ListingStatus,
+  ObjectType,
+} from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListingsService } from './listings.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
@@ -15,6 +19,19 @@ const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
 const LISTING_ID_2 = '00000000-0000-4000-8000-000000000003';
 const OTHER_LISTING_ID = '00000000-0000-4000-8000-000000000004';
+const APPLICANT_ID = '00000000-0000-4000-8000-000000000005';
+
+const makeRawApplication = (
+  overrides: Partial<Application> = {},
+): Application => ({
+  id: '00000000-0000-4000-8000-000000000010',
+  listingId: LISTING_ID,
+  applicantId: APPLICANT_ID,
+  status: ApplicationStatus.ACTIVE,
+  createdAt: new Date('2024-01-01'),
+  updatedAt: new Date('2024-01-01'),
+  ...overrides,
+});
 
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
@@ -60,6 +77,9 @@ describe('ListingsService', () => {
       update: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
       count: jest.MockedFunction<(args?: unknown) => Promise<number>>;
     };
+    application: {
+      findMany: jest.MockedFunction<(args?: unknown) => Promise<Application[]>>;
+    };
   };
 
   beforeEach(async () => {
@@ -70,6 +90,9 @@ describe('ListingsService', () => {
         findFirst: jest.fn<(args?: unknown) => Promise<Listing | null>>(),
         update: jest.fn<(args?: unknown) => Promise<Listing>>(),
         count: jest.fn<(args?: unknown) => Promise<number>>(),
+      },
+      application: {
+        findMany: jest.fn<(args?: unknown) => Promise<Application[]>>(),
       },
     };
 
@@ -271,16 +294,23 @@ describe('ListingsService', () => {
   });
 
   describe('getActiveApplications', () => {
-    it('returns an empty array when listing belongs to the provider', async () => {
+    it('returns active applications when listing belongs to the provider', async () => {
       const listing = makeRawListing();
+      const applications = [makeRawApplication()];
       prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.application.findMany.mockResolvedValue(applications);
 
       const result = await service.getActiveApplications(
         LISTING_ID,
         PROVIDER_ID,
       );
 
-      expect(result).toEqual([]);
+      expect(prismaMock.application.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { listingId: LISTING_ID, status: ApplicationStatus.ACTIVE },
+        }),
+      );
+      expect(result).toEqual(applications);
     });
 
     it('throws NotFoundException when listing does not belong to the provider', async () => {

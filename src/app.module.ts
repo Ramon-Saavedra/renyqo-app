@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env.validation';
+import { ApplicationsModule } from './applications/applications.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -17,6 +18,7 @@ import { MeModule } from './me/me.module';
     AuthModule,
     MeModule,
     DashboardModule,
+    ApplicationsModule,
     HealthModule,
   ],
   controllers: [],

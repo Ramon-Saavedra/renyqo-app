@@ -115,7 +115,7 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 | `PATCH`  | `/api/v1/provider/listings/:id/publish`       | 🔒 Provider     | `:id` (UUID)                     | Publish listing (validates required fields)          |
 | `PATCH`  | `/api/v1/provider/listings/:id/draft`         | 🔒 Provider     | `:id` (UUID)                     | Move a published listing back to DRAFT               |
 | `PATCH`  | `/api/v1/provider/listings/:id/archive`       | 🔒 Provider     | `:id` (UUID)                     | Archive a listing (soft, keeps record in database)   |
-| `GET`    | `/api/v1/provider/listings/:id/active-applications` | 🔒 Provider | `:id` (UUID)              | Get active applications for a listing (ownership enforced). Returns `[]` until the applications module is built. |
+| `GET`    | `/api/v1/provider/listings/:id/active-applications` | 🔒 Provider | `:id` (UUID)              | Get ACTIVE applications for a listing (ownership enforced) |
 
 **Required fields to publish:** `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
 
@@ -149,7 +149,23 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 }
 ```
 
-`newApplicationsCount` is always `0` until the applications module is implemented. `recentListings` is limited to the 5 most recent listings.
+`newApplicationsCount` is always `0` until Phase 7 eligibility is implemented. `recentListings` is limited to the 5 most recent listings.
+
+### Applications
+
+| Method | Path                                                       | Auth         | Description                                                      |
+| ------ | ---------------------------------------------------------- | ------------ | ---------------------------------------------------------------- |
+| `POST` | `/api/v1/listings/:id/apply`                               | 🔒 Applicant | Apply to a listing                                               |
+| `GET`  | `/api/v1/applicant/applications`                           | 🔒 Applicant | Get all applications submitted by the current user               |
+| `GET`  | `/api/v1/provider/applications`                            | 🔒 Provider  | Get all applications across all listings owned by the provider   |
+| `GET`  | `/api/v1/provider/listings/:id/applications`               | 🔒 Provider  | Get all applications for a specific listing (ownership enforced) |
+
+- Only `PUBLISHED` listings accept applications. `DRAFT`, `PAUSED`, `ARCHIVED` → `422`.
+- One applicant per listing. Duplicate → `409 Conflict`.
+- If fewer than **5** `ACTIVE` applications exist for the listing, the new one is `ACTIVE`. Otherwise `PENDING_QUEUE`.
+- `applicantId` / `providerId` always come from the session — never from the request body or query string.
+
+**Application statuses:** `ACTIVE`, `PENDING_QUEUE`, `REJECTED`, `WITHDRAWN`.
 
 ## Docker
 
@@ -198,7 +214,7 @@ src/
     auth.service.ts
     auth.service.spec.ts
   common/
-    guards/           ProviderOnlyGuard (requires authenticated + PROVIDER role)
+    guards/           AuthenticatedGuard, ProviderOnlyGuard, ApplicantOnlyGuard
     types/            express.d.ts (Express.User type augmentation)
   config/             Environment validation (EnvironmentVariables, validateEnv)
   generated/
@@ -222,6 +238,13 @@ src/
     dashboard.module.ts
     dashboard.service.ts
     dashboard.service.spec.ts
+  applications/
+    applications.controller.ts
+    applications.module.ts
+    applications.service.ts
+    applications.service.spec.ts
+    applicant-applications.controller.ts
+    provider-applications.controller.ts
   prisma/             PrismaService (global), PrismaModule
   users/
     types/            SafeUser type (User without passwordHash)
@@ -231,7 +254,7 @@ src/
   app.module.ts       Root module
   main.ts             Bootstrap (global prefix, validation pipe, session, passport)
 prisma/
-  schema.prisma       Data model (User, Listing, Role, UserStatus, ListingStatus, ObjectType, PetsPolicy, SmokingPolicy enums, snake_case column maps, UUID primary keys)
+  schema.prisma       Data model (User, Listing, Application, Role, UserStatus, ListingStatus, ApplicationStatus, ObjectType, PetsPolicy, SmokingPolicy enums, snake_case column maps, UUID primary keys)
 prisma.config.ts      Prisma v7 datasource config (DATABASE_URL)
 docker-compose.yml    PostgreSQL 16-alpine with healthcheck and restart policy
 test/                 End-to-end test setup
