@@ -3,8 +3,8 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import type { Listing } from '../generated/prisma/client';
-import { ListingStatus } from '../generated/prisma/enums';
+import type { Application, Listing } from '../generated/prisma/client';
+import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
 import type { UpdateListingDto } from './dto/update-listing.dto';
@@ -148,8 +148,11 @@ export class ListingsService {
   async getActiveApplications(
     id: string,
     providerId: string,
-  ): Promise<never[]> {
+  ): Promise<Application[]> {
     await this.findOneByProvider(id, providerId);
-    return [];
+    return this.prisma.application.findMany({
+      where: { listingId: id, status: ApplicationStatus.ACTIVE },
+      orderBy: { createdAt: 'asc' },
+    });
   }
 }

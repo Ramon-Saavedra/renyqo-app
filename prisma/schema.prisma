@@ -45,6 +45,13 @@ enum SmokingPolicy {
   NON_SMOKERS_PREFERRED @map("non_smokers_preferred")
 }
 
+enum ApplicationStatus {
+  ACTIVE        @map("active")
+  PENDING_QUEUE @map("pending_queue")
+  REJECTED      @map("rejected")
+  WITHDRAWN     @map("withdrawn")
+}
+
 model User {
   id                String     @id @default(uuid()) @db.Uuid
   name              String
@@ -58,7 +65,8 @@ model User {
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")
 
-  listings Listing[]
+  listings     Listing[]
+  applications Application[]
 
   @@map("users")
 }
@@ -100,5 +108,22 @@ model Listing {
 
   provider User @relation(fields: [providerId], references: [id])
 
+  applications Application[]
+
   @@map("listings")
+}
+
+model Application {
+  id          String            @id @default(uuid()) @db.Uuid
+  listingId   String            @map("listing_id") @db.Uuid
+  applicantId String            @map("applicant_id") @db.Uuid
+  status      ApplicationStatus @default(PENDING_QUEUE)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  listing   Listing @relation(fields: [listingId], references: [id])
+  applicant User    @relation(fields: [applicantId], references: [id])
+
+  @@unique([listingId, applicantId])
+  @@map("applications")
 }

@@ -12,7 +12,7 @@ import type { Request } from 'express';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import type { Listing } from '../generated/prisma/client';
+import type { Application, Listing } from '../generated/prisma/client';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
@@ -73,7 +73,7 @@ export class ListingsController {
   getActiveApplications(
     @Param('id') id: string,
     @Req() req: Request,
-  ): Promise<never[]> {
+  ): Promise<Application[]> {
     const user = req.user as SafeUser;
     return this.listingsService.getActiveApplications(id, user.id);
   }
