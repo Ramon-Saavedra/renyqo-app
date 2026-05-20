@@ -1,4 +1,4 @@
-# Renyqo Backend
+﻿# Renyqo Backend
 
 Backend API for Renyqo, a smart rental platform for Germany.
 
@@ -7,11 +7,11 @@ Backend API for Renyqo, a smart rental platform for Germany.
 - [NestJS](https://nestjs.com/) (Node.js framework)
 - TypeScript (strict mode)
 - PostgreSQL 16 via Docker
-- Prisma v7 with `@prisma/adapter-pg` (WASM driver)
-- `express-session` + `connect-pg-simple` for HTTP-only cookie sessions
-- `passport` + `passport-local` for local auth strategy
-- `bcrypt` for password hashing
-- `@nestjs/config` + `class-validator` for env and DTO validation
+- Prisma v7 with `@prisma/adapter-pg`
+- `express-session` + `connect-pg-simple` â€” HTTP-only cookie sessions
+- `passport` + `passport-local` â€” local auth strategy
+- `bcrypt` â€” password hashing
+- `@nestjs/config` + `class-validator` â€” env and DTO validation
 
 ## Requirements
 
@@ -29,16 +29,16 @@ cp .env.example .env
 # Fill in SESSION_SECRET (min 32 chars)
 ```
 
-Start the database (exposes PostgreSQL on port **5433** to avoid conflicts with a local PostgreSQL on 5432):
+Start the database (PostgreSQL exposed on port **5433**):
 
 ```bash
 docker compose up -d
 ```
 
-Run the initial migration:
+Run migrations:
 
 ```bash
-npx prisma migrate dev --name init
+npx prisma migrate dev
 ```
 
 Start the server:
@@ -49,14 +49,12 @@ npm run start:dev
 
 ## Environment variables
 
-| Variable         | Required | Description                                           |
-| ---------------- | -------- | ----------------------------------------------------- |
-| `NODE_ENV`       | yes      | One of `development`, `production`, `test`            |
-| `PORT`           | yes      | TCP port for the HTTP server (1–65535)                |
-| `DATABASE_URL`   | yes      | PostgreSQL connection string                          |
-| `SESSION_SECRET` | yes      | Secret for session signing (min 32 characters)        |
-
-Values are validated at startup; the application fails fast with a clear error if any are missing or invalid.
+| Variable         | Required | Description                                    |
+| ---------------- | -------- | ---------------------------------------------- |
+| `NODE_ENV`       | yes      | `development`, `production` or `test`          |
+| `PORT`           | yes      | HTTP port (1â€“65535)                            |
+| `DATABASE_URL`   | yes      | PostgreSQL connection string                   |
+| `SESSION_SECRET` | yes      | Session signing secret (min 32 characters)     |
 
 ## API
 
@@ -64,253 +62,161 @@ Global prefix: `/api/v1`
 
 ### Health
 
-| Method | Path             | Auth | Description              |
-| ------ | ---------------- | ---- | ------------------------ |
-| `GET`  | `/api/v1/health` | —    | Liveness probe           |
+| Method | Path             | Auth | Description    |
+| ------ | ---------------- | ---- | -------------- |
+| `GET`  | `/api/v1/health` | â€”    | Liveness probe |
 
 ### Auth
 
-| Method | Path                    | Auth         | Body                                                                  | Description                    |
-| ------ | ----------------------- | ------------ | --------------------------------------------------------------------- | ------------------------------ |
-| `POST` | `/api/v1/auth/register` | —            | `name`, `email`, `password`, `role`, `acceptedTerms`, `acceptedPrivacy` | Register as applicant/provider |
-| `POST` | `/api/v1/auth/login`    | —            | `email`, `password`                                                   | Login, sets `sid` cookie       |
-| `POST` | `/api/v1/auth/logout`   | 🔒 Session  | —                                                                     | Logout, clears `sid` cookie    |
-| `GET`  | `/api/v1/auth/me`       | 🔒 Session  | —                                                                     | Returns current user (no hash) |
+| Method | Path                    | Auth        | Description                                            |
+| ------ | ----------------------- | ----------- | ------------------------------------------------------ |
+| `POST` | `/api/v1/auth/register` | â€”           | Register as applicant/provider â€” sets `sid` cookie automatically |
+| `POST` | `/api/v1/auth/login`    | â€”           | Login, sets `sid` cookie                               |
+| `POST` | `/api/v1/auth/logout`   | ðŸ”’ Session | Logout, clears `sid` cookie                            |
+| `GET`  | `/api/v1/auth/me`       | ðŸ”’ Session | Returns current user (no password hash)                |
 
-**Allowed roles at registration:** `applicant`, `provider`. Admin registration is internal only.
-
-Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_sessions`).
+Public registration is limited to `applicant` and `provider` roles.
 
 ### Me
 
-| Method | Path                              | Auth        | Description                              |
-| ------ | --------------------------------- | ----------- | ---------------------------------------- |
-| `GET`  | `/api/v1/me/onboarding-state`     | 🔒 Session | Returns role-based onboarding state      |
+| Method | Path                          | Auth        | Description                         |
+| ------ | ----------------------------- | ----------- | ----------------------------------- |
+| `GET`  | `/api/v1/me/onboarding-state` | ðŸ”’ Session | Returns role-based onboarding state |
 
-**Response for `provider`:**
-```json
-{
-  "role": "provider",
-  "hasCreatedFirstListing": false,
-  "nextStep": "create_first_listing"
-}
-```
+### Listings (Provider only)
 
-**Response for `applicant`:**
-```json
-{
-  "role": "applicant",
-  "nextStep": "applicant_area_pending"
-}
-```
+| Method  | Path                                                   | Auth        | Description                                        |
+| ------- | ------------------------------------------------------ | ----------- | -------------------------------------------------- |
+| `POST`  | `/api/v1/provider/listings`                            | ðŸ”’ Provider | Create a listing (status: `DRAFT`)                 |
+| `GET`   | `/api/v1/provider/listings`                            | ðŸ”’ Provider | Get all listings owned by the provider             |
+| `GET`   | `/api/v1/provider/listings/:id`                        | ðŸ”’ Provider | Get a single listing (ownership enforced)          |
+| `PATCH` | `/api/v1/provider/listings/:id`                        | ðŸ”’ Provider | Update a listing                                   |
+| `PATCH` | `/api/v1/provider/listings/:id/publish`                | ðŸ”’ Provider | Publish a listing                                  |
+| `PATCH` | `/api/v1/provider/listings/:id/draft`                  | ðŸ”’ Provider | Move a published listing back to `DRAFT`           |
+| `PATCH` | `/api/v1/provider/listings/:id/archive`                | ðŸ”’ Provider | Archive a listing                                  |
+| `GET`   | `/api/v1/provider/listings/:id/active-applications`    | ðŸ”’ Provider | Get `ACTIVE` applications for a listing            |
 
-### Listings (Provider only 🔒)
+Required fields to publish: `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
 
-| Method   | Path                                          | Auth             | Body / Params                    | Description                                          |
-| -------- | --------------------------------------------- | ---------------- | -------------------------------- | ---------------------------------------------------- |
-| `POST`   | `/api/v1/provider/listings`                   | 🔒 Provider     | `CreateListingDto`               | Create a new listing (status: DRAFT)                 |
-| `GET`    | `/api/v1/provider/listings`                   | 🔒 Provider     | —                                | Get all listings owned by the authenticated provider |
-| `GET`    | `/api/v1/provider/listings/:id`               | 🔒 Provider     | `:id` (UUID)                     | Get a single listing by ID (ownership enforced)      |
-| `PATCH`  | `/api/v1/provider/listings/:id`               | 🔒 Provider     | `UpdateListingDto` (all optional)| Update a listing                                     |
-| `PATCH`  | `/api/v1/provider/listings/:id/publish`       | 🔒 Provider     | `:id` (UUID)                     | Publish listing (validates required fields)          |
-| `PATCH`  | `/api/v1/provider/listings/:id/draft`         | 🔒 Provider     | `:id` (UUID)                     | Move a published listing back to DRAFT               |
-| `PATCH`  | `/api/v1/provider/listings/:id/archive`       | 🔒 Provider     | `:id` (UUID)                     | Archive a listing (soft, keeps record in database)   |
-| `GET`    | `/api/v1/provider/listings/:id/active-applications` | 🔒 Provider | `:id` (UUID)              | Get ACTIVE applications for a listing (ownership enforced) |
+### Dashboard (Provider only)
 
-**Required fields to publish:** `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
-
-**Listing statuses:** `DRAFT`, `PUBLISHED`, `PAUSED`, `ARCHIVED`.
-
-**Enums:** `ObjectType` (`APARTMENT`, `HOUSE`, `ROOM`), `PetsPolicy` (`ALLOWED`, `BY_ARRANGEMENT`, `PREFER_NOT`), `SmokingPolicy` (`ALLOWED`, `BY_ARRANGEMENT`, `NON_SMOKERS_PREFERRED`).
-
-### Dashboard (Provider only 🔒)
-
-| Method | Path                                     | Auth         | Description                                         |
-| ------ | ---------------------------------------- | ------------ | --------------------------------------------------- |
-| `GET`  | `/api/v1/provider/dashboard/summary`     | 🔒 Provider | Returns a summary of the provider's listings        |
-
-**Response shape:**
-```json
-{
-  "objectsCount": 4,
-  "draftsCount": 1,
-  "newApplicationsCount": 0,
-  "recentListings": [
-    {
-      "id": "uuid",
-      "title": "Schöne Wohnung in Mitte",
-      "status": "PUBLISHED",
-      "city": "Berlin",
-      "objectType": "APARTMENT",
-      "coldRent": 1200,
-      "createdAt": "2024-01-15T10:00:00.000Z"
-    }
-  ]
-}
-```
-
-`newApplicationsCount` is always `0` until Phase 7 eligibility is implemented. `recentListings` is limited to the 5 most recent listings.
+| Method | Path                                 | Auth        | Description                            |
+| ------ | ------------------------------------ | ----------- | -------------------------------------- |
+| `GET`  | `/api/v1/provider/dashboard/summary` | ðŸ”’ Provider | Summary of the provider's listings     |
 
 ### Applications
 
-| Method | Path                                                       | Auth         | Description                                                      |
-| ------ | ---------------------------------------------------------- | ------------ | ---------------------------------------------------------------- |
-| `POST` | `/api/v1/listings/:id/apply`                               | 🔒 Applicant | Apply to a listing                                               |
-| `GET`  | `/api/v1/applicant/applications`                           | 🔒 Applicant | Get all applications submitted by the current user               |
-| `GET`  | `/api/v1/provider/applications`                            | 🔒 Provider  | Get all applications across all listings owned by the provider   |
-| `GET`  | `/api/v1/provider/listings/:id/applications`               | 🔒 Provider  | Get all applications for a specific listing (ownership enforced) |
+| Method | Path                                         | Auth        | Description                                                       |
+| ------ | -------------------------------------------- | ----------- | ----------------------------------------------------------------- |
+| `POST` | `/api/v1/listings/:id/apply`                 | ðŸ”’ Applicant | Apply to a listing                                               |
+| `GET`  | `/api/v1/applicant/applications`             | ðŸ”’ Applicant | Get all applications submitted by the current applicant          |
+| `GET`  | `/api/v1/provider/applications`              | ðŸ”’ Provider  | Get all applications across all provider listings                |
+| `GET`  | `/api/v1/provider/listings/:id/applications` | ðŸ”’ Provider  | Get all applications for a specific listing (ownership enforced) |
 
-- Only `PUBLISHED` listings accept applications. `DRAFT`, `PAUSED`, `ARCHIVED` → `422`.
-- One applicant per listing. Duplicate → `409 Conflict`.
-- If fewer than **5** `ACTIVE` applications exist for the listing, the new one is `ACTIVE`. Otherwise `PENDING_QUEUE`.
-- `applicantId` / `providerId` always come from the session — never from the request body or query string.
-
-**Application statuses:** `ACTIVE`, `PENDING_QUEUE`, `REJECTED`, `WITHDRAWN`.
+Only `PUBLISHED` listings accept applications. Duplicate applications return `409`. If fewer than 5 `ACTIVE` applications exist the new one is `ACTIVE`, otherwise `PENDING_QUEUE`.
 
 ### Applicant Profile
 
-| Method  | Path                          | Auth         | Description                                        |
-| ------- | ----------------------------- | ------------ | -------------------------------------------------- |
-| `GET`   | `/api/v1/applicant/profile`   | 🔒 Applicant | Get the current applicant's profile (`404` if none) |
-| `PATCH` | `/api/v1/applicant/profile`   | 🔒 Applicant | Create or update the applicant's profile (upsert)  |
-
-**PATCH body** (all fields optional):
-
-| Field                  | Type    | Constraints           |
-| ---------------------- | ------- | --------------------- |
-| `householdNetIncome`   | number  | ≥ 0                   |
-| `incomeProofAvailable` | boolean | —                     |
-| `schufaAvailable`      | boolean | —                     |
-| `peopleCount`          | integer | ≥ 1                   |
-| `adultsCount`          | integer | ≥ 1                   |
-| `childrenCount`        | integer | ≥ 0                   |
-| `hasPets`              | boolean | —                     |
-| `petsNote`             | string  | max 500 chars         |
-| `smokingStatus`        | enum    | `SMOKER`, `NON_SMOKER`, `OCCASIONALLY` |
-
-- `applicantId` always comes from the session. It cannot be passed in the body.
+| Method  | Path                        | Auth        | Description                                          |
+| ------- | --------------------------- | ----------- | ---------------------------------------------------- |
+| `GET`   | `/api/v1/applicant/profile` | ðŸ”’ Applicant | Get the applicant's profile (`404` if none yet)     |
+| `PATCH` | `/api/v1/applicant/profile` | ðŸ”’ Applicant | Create or update the applicant's profile (upsert)   |
 
 ## CI
 
-All checks run on `pull_request` and `push` to `main`.
-
-| Workflow | Jobs |
-| -------- | ---- |
-| `ci.yml` | `quality-format`, `quality-lint`, `quality-typecheck`, `test-unit`, `build-backend` |
-| `security.yml` | `dependency-review`, `npm-audit`, `codeql-analysis` |
-| `docker.yml` | `docker-build` |
-| `database.yml` | `prisma-validate`, `prisma-generate`, `migration-check` |
-
-`migration-check` runs `prisma migrate deploy` against a fresh `postgres:16-alpine` service container to verify all migrations apply cleanly.
+| Workflow       | Jobs                                                                     |
+| -------------- | ------------------------------------------------------------------------ |
+| `ci.yml`       | `quality-format`, `quality-lint`, `quality-typecheck`, `test-unit`, `build-backend` |
+| `security.yml` | `dependency-review`, `npm-audit`, `codeql-analysis`                      |
+| `docker.yml`   | `docker-build`                                                           |
+| `database.yml` | `prisma-validate`, `prisma-generate`, `migration-check`                  |
 
 ## Docker
 
-Build the image locally:
-
 ```bash
 docker build -t renyqo-backend .
-```
-
-Run the container (requires a running PostgreSQL and `.env` values):
-
-```bash
 docker run --env-file .env -p 3000:3000 renyqo-backend
 ```
 
-The production image uses a non-root user (`nestjs`) and installs only production dependencies. The `PORT` environment variable controls which port the server listens on (default NestJS: 3000).
-
 ## Scripts
 
-| Script                  | Purpose                                    |
-| ----------------------- | ------------------------------------------ |
-| `npm run start`         | Start the server                           |
-| `npm run start:dev`     | Start in watch mode                        |
-| `npm run start:prod`    | Start the compiled build                   |
-| `npm run build`         | Compile to `dist/`                         |
-| `npm run lint`          | Run ESLint                                 |
-| `npm run format`        | Format sources with Prettier               |
-| `npm run format:check`  | Check formatting without writing           |
-| `npm run typecheck`     | Run TypeScript without emitting files      |
-| `npm run test`          | Run unit tests                             |
-| `npm run test:e2e`      | Run end-to-end tests                       |
-| `npm run test:cov`      | Run tests with coverage                    |
+| Script              | Purpose                       |
+| ------------------- | ----------------------------- |
+| `npm run start:dev` | Start in watch mode           |
+| `npm run build`     | Compile to `dist/`            |
+| `npm run lint`      | Run ESLint                    |
+| `npm run format`    | Format with Prettier          |
+| `npm run typecheck` | TypeScript check without emit |
+| `npm run test`      | Run unit tests                |
+| `npm run test:e2e`  | Run end-to-end tests          |
+| `npm run test:cov`  | Run tests with coverage       |
 
 ## Project structure
 
 ```
 src/
-  __mocks__/            Jest module mocks (e.g., prisma-client.mock.ts for unit tests)
-  auth/
-    dto/              RegisterDto, LoginDto
-    guards/           LocalAuthGuard, AuthenticatedGuard
-    serializers/      SessionSerializer (serialize/deserialize by user ID)
-    strategies/       LocalStrategy (passport-local, usernameField: email)
-    auth.controller.ts
-    auth.module.ts
-    auth.service.ts
-    auth.service.spec.ts
-  common/
-    guards/           AuthenticatedGuard, ProviderOnlyGuard, ApplicantOnlyGuard
-    types/            express.d.ts (Express.User type augmentation)
-  config/             Environment validation (EnvironmentVariables, validateEnv)
-  generated/
-    prisma/           Auto-generated Prisma client (gitignored)
-  health/             Health module (controller, service)
-  me/
-    types/            OnboardingState discriminated union type
-    me.controller.ts
-    me.module.ts
-    me.service.ts
-    me.service.spec.ts
-  listings/
-    dto/              CreateListingDto, UpdateListingDto
-    listings.controller.ts
-    listings.module.ts
-    listings.service.ts
-    listings.service.spec.ts
-  dashboard/
-    types/            DashboardSummary interface, RecentListingSummary type
-    dashboard.controller.ts
-    dashboard.module.ts
-    dashboard.service.ts
-    dashboard.service.spec.ts
-  applications/
-    applications.controller.ts
-    applications.module.ts
-    applications.service.ts
-    applications.service.spec.ts
-    applicant-applications.controller.ts
-    provider-applications.controller.ts
-  applicant-profile/
-    dto/              UpdateApplicantProfileDto
-    applicant-profile.controller.ts
-    applicant-profile.module.ts
-    applicant-profile.service.ts
-    applicant-profile.service.spec.ts
-  prisma/             PrismaService (global), PrismaModule
-  users/
-    types/            SafeUser type (User without passwordHash)
-    users.module.ts
-    users.service.ts
-    users.service.spec.ts
-  app.module.ts       Root module
-  main.ts             Bootstrap (global prefix, validation pipe, session, passport)
+  auth/                 Register, login, logout, me — session-based auth
+  me/                   Onboarding state per role
+  listings/             Provider listing management
+  dashboard/            Provider dashboard summary
+  applications/         Apply to listings, view applications
+  applicant-profile/    Applicant profile (used for eligibility)
+  users/                User service and SafeUser type
+  common/               Guards (AuthenticatedGuard, ProviderOnlyGuard, ApplicantOnlyGuard)
+  config/               Env validation
+  prisma/               PrismaService (global)
+  __mocks__/            Jest module mocks
+  app.module.ts
+  main.ts
 prisma/
-  schema.prisma       Data model (User, Listing, Application, Role, UserStatus, ListingStatus, ApplicationStatus, ObjectType, PetsPolicy, SmokingPolicy enums, snake_case column maps, UUID primary keys)
-prisma.config.ts      Prisma v7 datasource config (DATABASE_URL)
-docker-compose.yml    PostgreSQL 16-alpine with healthcheck and restart policy
-test/                 End-to-end test setup
+  schema.prisma
+prisma.config.ts
+docker-compose.yml
 ```
 
-## Security notes
+## License
 
-- Passwords hashed with bcrypt (cost 12). `passwordHash` is never returned in API responses.
-- Sessions stored in PostgreSQL (`user_sessions`) via `connect-pg-simple`. Cookie: HTTP-only, `SameSite=Lax`, secure in production.
-- `validateUser` always runs `bcrypt.compare` even when the user does not exist (timing attack mitigation).
-- Email is normalized to lowercase + trimmed on register and login.
-- Duplicate email on register is detected via PostgreSQL unique constraint (P2002) to avoid TOCTOU race conditions.
-- Public registration is restricted to `applicant` and `provider` roles. Admin accounts are internal only.
-- Trust proxy is enabled only in `NODE_ENV=production` for correct cookie `Secure` flag behavior behind a reverse proxy.
+See [LICENSE](./LICENSE).
+```bash
+docker build -t renyqo-backend .
+docker run --env-file .env -p 3000:3000 renyqo-backend
+```
+
+## Scripts
+
+| Script                 | Purpose                               |
+| ---------------------- | ------------------------------------- |
+| `npm run start:dev`    | Start in watch mode                   |
+| `npm run build`        | Compile to `dist/`                    |
+| `npm run lint`         | Run ESLint                            |
+| `npm run format`       | Format with Prettier                  |
+| `npm run typecheck`    | TypeScript check without emit         |
+| `npm run test`         | Run unit tests                        |
+| `npm run test:e2e`     | Run end-to-end tests                  |
+| `npm run test:cov`     | Run tests with coverage               |
+
+## Project structure
+
+```
+src/
+  auth/                 Register, login, logout, me â€” session-based auth
+  me/                   Onboarding state per role
+  listings/             Provider listing management
+  dashboard/            Provider dashboard summary
+  applications/         Apply to listings, view applications
+  applicant-profile/    Applicant profile (used for eligibility)
+  users/                User service and SafeUser type
+  common/               Guards (AuthenticatedGuard, ProviderOnlyGuard, ApplicantOnlyGuard)
+  config/               Env validation
+  prisma/               PrismaService (global)
+  __mocks__/            Jest module mocks
+  app.module.ts
+  main.ts
+prisma/
+  schema.prisma
+prisma.config.ts
+docker-compose.yml
+```
 
 ## License
 
