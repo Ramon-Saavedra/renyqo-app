@@ -167,6 +167,19 @@ Sessions use an HTTP-only cookie (`sid`) stored in a PostgreSQL table (`user_ses
 
 **Application statuses:** `ACTIVE`, `PENDING_QUEUE`, `REJECTED`, `WITHDRAWN`.
 
+## CI
+
+All checks run on `pull_request` and `push` to `main`.
+
+| Workflow | Jobs |
+| -------- | ---- |
+| `ci.yml` | `quality-format`, `quality-lint`, `quality-typecheck`, `test-unit`, `build-backend` |
+| `security.yml` | `dependency-review`, `npm-audit`, `codeql-analysis` |
+| `docker.yml` | `docker-build` |
+| `database.yml` | `prisma-validate`, `prisma-generate`, `migration-check` |
+
+`migration-check` runs `prisma migrate deploy` against a fresh `postgres:16-alpine` service container to verify all migrations apply cleanly.
+
 ## Docker
 
 Build the image locally:
