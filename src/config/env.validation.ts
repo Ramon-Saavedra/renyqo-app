@@ -3,7 +3,9 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
+  IsUrl,
   Max,
   Min,
   MinLength,
@@ -32,6 +34,10 @@ export class EnvironmentVariables {
   @IsString()
   @MinLength(32)
   SESSION_SECRET!: string;
+
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  FRONTEND_URL?: string;
 }
 
 export function validateEnv(

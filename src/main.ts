@@ -27,6 +27,13 @@ async function bootstrap() {
   const secret = config.get('SESSION_SECRET', { infer: true });
   const databaseUrl = config.get('DATABASE_URL', { infer: true });
   const isProd = config.get('NODE_ENV', { infer: true }) === NodeEnv.Production;
+  const frontendUrl =
+    config.get('FRONTEND_URL', { infer: true }) ?? 'http://localhost:3001';
+
+  app.enableCors({
+    origin: frontendUrl,
+    credentials: true,
+  });
 
   if (isProd) {
     (app.getHttpAdapter().getInstance() as Application).set('trust proxy', 1);
