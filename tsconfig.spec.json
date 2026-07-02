@@ -3,7 +3,7 @@
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true,
-    "types": ["jest", "node", "express-session"]
+    "types": ["jest", "node", "express-session", "passport"]
   },
   "include": ["src/**/*.spec.ts", "src/**/*.test.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist"]

@@ -12,9 +12,9 @@ import {
 import type { Request, Response } from 'express';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { AuthService } from './auth.service';
+import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { AuthenticatedGuard } from './guards/authenticated.guard';
-import { LocalAuthGuard } from './guards/local-auth.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -38,11 +38,20 @@ export class AuthController {
     return user;
   }
 
-  @UseGuards(LocalAuthGuard)
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  login(@Req() req: Request): SafeUser {
-    return req.user as SafeUser;
+  async login(@Body() dto: LoginDto, @Req() req: Request): Promise<SafeUser> {
+    const user = await this.authService.login(dto.email, dto.password);
+    await new Promise<void>((resolve, reject) => {
+      req.login(user, (err: unknown) => {
+        if (err)
+          reject(
+            err instanceof Error ? err : new Error('Session creation failed'),
+          );
+        else resolve();
+      });
+    });
+    return user;
   }
 
   @UseGuards(AuthenticatedGuard)

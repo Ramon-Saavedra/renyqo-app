@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   afterEach,
@@ -223,6 +223,38 @@ describe('AuthService', () => {
       await service.validateUser('unknown@example.com', 'password');
 
       expect(compareMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('login', () => {
+    it('returns SafeUser when credentials are valid', async () => {
+      const user = makeUser();
+      const safeUser = makeSafeUser(user);
+      usersService.findByEmail.mockResolvedValue(user);
+      jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
+      usersService.toSafeUser.mockReturnValue(safeUser);
+
+      const result = await service.login('test@example.com', 'correctpassword');
+
+      expect(result).toEqual(safeUser);
+    });
+
+    it('throws UnauthorizedException when credentials are invalid', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+      jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
+
+      await expect(
+        service.login('unknown@example.com', 'wrongpassword'),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('throws UnauthorizedException with generic message', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+      jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
+
+      await expect(
+        service.login('unknown@example.com', 'wrongpassword'),
+      ).rejects.toThrow('Invalid credentials');
     });
   });
 });

@@ -1,4 +1,8 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { Role } from '../generated/prisma/enums';
@@ -41,6 +45,14 @@ export class AuthService {
       }
       throw err;
     }
+  }
+
+  async login(email: string, password: string): Promise<SafeUser> {
+    const user = await this.validateUser(email, password);
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    return user;
   }
 
   async validateUser(
