@@ -22,7 +22,7 @@ export class MeService {
     if (user.role === Role.APPLICANT) {
       return {
         role: 'applicant',
-        nextStep: 'applicant_area_pending',
+        nextStep: 'browse_listings',
       };
     }
 
