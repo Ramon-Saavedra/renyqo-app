@@ -6,7 +6,7 @@ export type ProviderOnboardingState = {
 
 export type ApplicantOnboardingState = {
   role: 'applicant';
-  nextStep: 'applicant_area_pending';
+  nextStep: 'browse_listings';
 };
 
 export type OnboardingState =

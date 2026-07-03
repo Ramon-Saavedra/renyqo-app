@@ -70,14 +70,14 @@ describe('MeService', () => {
       });
     });
 
-    it('returns applicant_area_pending state for an applicant', async () => {
+    it('returns browse_listings state for an applicant', async () => {
       const result = await service.getOnboardingState(
         makeSafeUser(Role.APPLICANT),
       );
 
       expect(result).toEqual({
         role: 'applicant',
-        nextStep: 'applicant_area_pending',
+        nextStep: 'browse_listings',
       });
     });
 
