@@ -79,15 +79,15 @@ model User {
 }
 
 model Listing {
-  id               String        @id @default(uuid()) @db.Uuid
-  providerId       String        @map("provider_id") @db.Uuid
-  status           ListingStatus @default(DRAFT)
+  id         String        @id @default(uuid()) @db.Uuid
+  providerId String        @map("provider_id") @db.Uuid
+  status     ListingStatus @default(DRAFT)
 
   city             String
   zip              String
   street           String?
-  country          String        @default("DE")
-  showExactAddress Boolean       @default(false) @map("show_exact_address")
+  country          String  @default("DE")
+  showExactAddress Boolean @default(false) @map("show_exact_address")
 
   objectType      ObjectType @map("object_type")
   livingArea      Float?     @map("living_area")
@@ -116,8 +116,25 @@ model Listing {
   provider User @relation(fields: [providerId], references: [id])
 
   applications Application[]
+  images       ListingImage[]
 
   @@map("listings")
+}
+
+model ListingImage {
+  id        String   @id @default(uuid()) @db.Uuid
+  listingId String   @map("listing_id") @db.Uuid
+  publicId  String   @unique @map("public_id")
+  secureUrl String   @map("secure_url")
+  position  Int      @default(0)
+  isCover   Boolean  @default(false) @map("is_cover")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, position])
+  @@index([listingId])
+  @@map("listing_images")
 }
 
 model Application {
