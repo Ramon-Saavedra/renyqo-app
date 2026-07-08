@@ -6,13 +6,22 @@ import {
   Patch,
   Post,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
+import { memoryStorage } from 'multer';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { Application, Listing } from '../generated/prisma/client';
+import {
+  LISTING_IMAGE_FILE_FIELD,
+  MAX_LISTING_IMAGE_FILE_SIZE_BYTES,
+  OPTIONAL_LISTING_IMAGE_FILE_PIPE,
+} from '../listing-images/listing-image-upload.constants';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
@@ -24,9 +33,20 @@ export class ListingsController {
   constructor(private readonly listingsService: ListingsService) {}
 
   @Post()
-  create(@Body() dto: CreateListingDto, @Req() req: Request): Promise<Listing> {
+  @UseInterceptors(
+    FileInterceptor(LISTING_IMAGE_FILE_FIELD, {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_LISTING_IMAGE_FILE_SIZE_BYTES, files: 1 },
+    }),
+  )
+  create(
+    @Body() dto: CreateListingDto,
+    @UploadedFile(OPTIONAL_LISTING_IMAGE_FILE_PIPE)
+    file: Express.Multer.File | undefined,
+    @Req() req: Request,
+  ): Promise<Listing> {
     const user = req.user as SafeUser;
-    return this.listingsService.create(user.id, dto);
+    return this.listingsService.create(user.id, dto, file);
   }
 
   @Get()

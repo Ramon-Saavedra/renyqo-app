@@ -114,9 +114,13 @@ describe('ListingsController', () => {
       };
       listingsService.create.mockResolvedValue(listing);
 
-      const result = await controller.create(dto, makeReq());
+      const result = await controller.create(dto, undefined, makeReq());
 
-      expect(listingsService.create).toHaveBeenCalledWith(PROVIDER_ID, dto);
+      expect(listingsService.create).toHaveBeenCalledWith(
+        PROVIDER_ID,
+        dto,
+        undefined,
+      );
       expect(result).toEqual(listing);
     });
   });
