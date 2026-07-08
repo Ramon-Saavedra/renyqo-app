@@ -1,23 +1,24 @@
-﻿# Renyqo Backend
+# Renyqo Backend
 
-Backend API for Renyqo, a smart rental platform for Germany.
+Backend API for Renyqo, a smart rental platform for the German rental market.
 
 ## Stack
 
-- [NestJS](https://nestjs.com/) (Node.js framework)
-- TypeScript (strict mode)
-- PostgreSQL 16 via Docker
-- Prisma v7 with `@prisma/adapter-pg`
-- `express-session` + `connect-pg-simple` â€” HTTP-only cookie sessions
-- `passport` + `passport-local` â€” local auth strategy
-- `bcrypt` â€” password hashing
-- `@nestjs/config` + `class-validator` â€” env and DTO validation
+- NestJS
+- TypeScript strict mode
+- REST API first
+- PostgreSQL 16
+- Prisma ORM v7 with `@prisma/adapter-pg`
+- Session authentication with `express-session`, `connect-pg-simple`, `passport`, and `passport-local`
+- Password hashing with `bcrypt`
+- Environment and DTO validation with `@nestjs/config`, `class-validator`, and `class-transformer`
+- Listing image uploads with Cloudinary
 
 ## Requirements
 
 - Node.js 20+
 - npm 10+
-- Docker + Docker Compose
+- Docker and Docker Compose
 
 ## Setup
 
@@ -26,35 +27,47 @@ git clone https://github.com/Ramon-Saavedra/renyqo-app.git
 cd renyqo-app
 npm install
 cp .env.example .env
-# Fill in SESSION_SECRET (min 32 chars)
 ```
 
-Start the database (PostgreSQL exposed on port **5433**):
+Fill the required values in `.env`, especially `SESSION_SECRET`. Cloudinary credentials are required in production and for local listing image uploads.
+
+Start PostgreSQL:
 
 ```bash
 docker compose up -d
 ```
 
-Run migrations:
+Run database migrations:
 
 ```bash
 npx prisma migrate dev
 ```
 
-Start the server:
+Generate the Prisma client:
+
+```bash
+npx prisma generate
+```
+
+Start the API:
 
 ```bash
 npm run start:dev
 ```
 
-## Environment variables
+## Environment Variables
 
-| Variable         | Required | Description                                    |
-| ---------------- | -------- | ---------------------------------------------- |
-| `NODE_ENV`       | yes      | `development`, `production` or `test`          |
-| `PORT`           | yes      | HTTP port (1â€“65535)                            |
-| `DATABASE_URL`   | yes      | PostgreSQL connection string                   |
-| `SESSION_SECRET` | yes      | Session signing secret (min 32 characters)     |
+| Variable                | Required           | Description                                   |
+| ----------------------- | ------------------ | --------------------------------------------- |
+| `NODE_ENV`              | yes                | `development`, `production`, or `test`        |
+| `PORT`                  | yes                | HTTP port from `1` to `65535`                 |
+| `DATABASE_URL`          | yes                | PostgreSQL connection string                  |
+| `SESSION_SECRET`        | yes                | Session signing secret, minimum 32 characters |
+| `FRONTEND_URL`          | no                 | Allowed frontend origin for CORS              |
+| `CLOUDINARY_CLOUD_NAME` | production/uploads | Cloudinary cloud name                         |
+| `CLOUDINARY_API_KEY`    | production/uploads | Cloudinary API key                            |
+| `CLOUDINARY_API_SECRET` | production/uploads | Cloudinary API secret                         |
+| `CLOUDINARY_FOLDER`     | no                 | Root Cloudinary folder, defaults to `renyqo`  |
 
 ## API
 
@@ -64,79 +77,115 @@ Global prefix: `/api/v1`
 
 | Method | Path             | Auth | Description    |
 | ------ | ---------------- | ---- | -------------- |
-| `GET`  | `/api/v1/health` | â€”    | Liveness probe |
+| `GET`  | `/api/v1/health` | No   | Liveness probe |
 
 ### Auth
 
-| Method | Path                    | Auth        | Description                                            |
-| ------ | ----------------------- | ----------- | ------------------------------------------------------ |
-| `POST` | `/api/v1/auth/register` | â€”           | Register as applicant/provider â€” sets `sid` cookie automatically |
-| `POST` | `/api/v1/auth/login`    | â€”           | Login, sets `sid` cookie                               |
-| `POST` | `/api/v1/auth/logout`   | ðŸ”’ Session | Logout, clears `sid` cookie                            |
-| `GET`  | `/api/v1/auth/me`       | ðŸ”’ Session | Returns current user (no password hash)                |
+| Method | Path                    | Auth    | Description                                      |
+| ------ | ----------------------- | ------- | ------------------------------------------------ |
+| `POST` | `/api/v1/auth/register` | No      | Register as applicant or provider and set cookie |
+| `POST` | `/api/v1/auth/login`    | No      | Login and set cookie                             |
+| `POST` | `/api/v1/auth/logout`   | Session | Logout and clear cookie                          |
+| `GET`  | `/api/v1/auth/me`       | Session | Return current user without password hash        |
 
-Public registration is limited to `applicant` and `provider` roles.
+Public registration only accepts `applicant` and `provider`.
 
 ### Me
 
-| Method | Path                          | Auth        | Description                         |
-| ------ | ----------------------------- | ----------- | ----------------------------------- |
-| `GET`  | `/api/v1/me/onboarding-state` | ðŸ”’ Session | Returns role-based onboarding state |
+| Method | Path                          | Auth    | Description                        |
+| ------ | ----------------------------- | ------- | ---------------------------------- |
+| `GET`  | `/api/v1/me/onboarding-state` | Session | Return role-based onboarding state |
 
-### Listings (Provider only)
+### Listings
 
-| Method  | Path                                                   | Auth        | Description                                        |
-| ------- | ------------------------------------------------------ | ----------- | -------------------------------------------------- |
-| `POST`  | `/api/v1/provider/listings`                            | ðŸ”’ Provider | Create a listing (status: `DRAFT`)                 |
-| `GET`   | `/api/v1/provider/listings`                            | ðŸ”’ Provider | Get all listings owned by the provider             |
-| `GET`   | `/api/v1/provider/listings/:id`                        | ðŸ”’ Provider | Get a single listing (ownership enforced)          |
-| `PATCH` | `/api/v1/provider/listings/:id`                        | ðŸ”’ Provider | Update a listing                                   |
-| `PATCH` | `/api/v1/provider/listings/:id/publish`                | ðŸ”’ Provider | Publish a listing                                  |
-| `PATCH` | `/api/v1/provider/listings/:id/draft`                  | ðŸ”’ Provider | Move a published listing back to `DRAFT`           |
-| `PATCH` | `/api/v1/provider/listings/:id/archive`                | ðŸ”’ Provider | Archive a listing                                  |
-| `GET`   | `/api/v1/provider/listings/:id/active-applications`    | ðŸ”’ Provider | Get `ACTIVE` applications for a listing            |
+Provider endpoints require an authenticated provider session and enforce listing ownership.
+
+| Method  | Path                                                | Auth     | Description                                             |
+| ------- | --------------------------------------------------- | -------- | ------------------------------------------------------- |
+| `POST`  | `/api/v1/provider/listings`                         | Provider | Create a draft listing, optionally with its first image |
+| `GET`   | `/api/v1/provider/listings`                         | Provider | Get all listings owned by the provider                  |
+| `GET`   | `/api/v1/provider/listings/:id`                     | Provider | Get one owned listing                                   |
+| `PATCH` | `/api/v1/provider/listings/:id`                     | Provider | Update an owned listing                                 |
+| `PATCH` | `/api/v1/provider/listings/:id/publish`             | Provider | Publish an owned listing                                |
+| `PATCH` | `/api/v1/provider/listings/:id/draft`               | Provider | Move a listing back to draft                            |
+| `PATCH` | `/api/v1/provider/listings/:id/archive`             | Provider | Archive an owned listing                                |
+| `GET`   | `/api/v1/provider/listings/:id/active-applications` | Provider | Get active applications for one listing                 |
 
 Required fields to publish: `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
 
-### Dashboard (Provider only)
+`POST /api/v1/provider/listings` accepts either `application/json` for listing data only, or `multipart/form-data` with the same listing fields and an optional `file` field. When `file` is provided, the API uploads the image to Cloudinary, creates the listing, stores image metadata in `listing_images`, and keeps the listing `photos` array in sync for existing consumers.
 
-| Method | Path                                 | Auth        | Description                            |
-| ------ | ------------------------------------ | ----------- | -------------------------------------- |
-| `GET`  | `/api/v1/provider/dashboard/summary` | ðŸ”’ Provider | Summary of the provider's listings     |
+Example with first image:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/provider/listings \
+  -H "Cookie: sid=<session-cookie>" \
+  -F "objectType=apartment" \
+  -F "city=Berlin" \
+  -F "zip=10115" \
+  -F "file=@/path/to/photo.jpg"
+```
+
+### Listing Images
+
+Listing image uploads are stored in Cloudinary and persisted as listing image metadata in PostgreSQL.
+In development, the API can start without Cloudinary credentials. Uploading images still requires the three Cloudinary credential variables; otherwise the upload endpoint returns `503`.
+
+| Method | Path                                          | Auth     | Description                                     |
+| ------ | --------------------------------------------- | -------- | ----------------------------------------------- |
+| `POST` | `/api/v1/provider/listings/:listingId/images` | Provider | Upload an additional image for an owned listing |
+
+Request format:
+
+- `Content-Type`: `multipart/form-data`
+- File field: `file`
+- Allowed MIME types: `image/jpeg`, `image/png`, `image/webp`
+- Maximum file size: `10 MB`
+
+Example:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/provider/listings/<listing-id>/images \
+  -H "Cookie: sid=<session-cookie>" \
+  -F "file=@/path/to/photo.jpg"
+```
+
+Response:
+
+```json
+{
+  "id": "00000000-0000-4000-8000-000000000003",
+  "listingId": "00000000-0000-4000-8000-000000000002",
+  "secureUrl": "https://res.cloudinary.com/example/image/upload/abc.jpg",
+  "position": 0,
+  "isCover": true,
+  "createdAt": "2026-07-06T10:00:00.000Z"
+}
+```
 
 ### Applications
 
-| Method | Path                                         | Auth        | Description                                                       |
-| ------ | -------------------------------------------- | ----------- | ----------------------------------------------------------------- |
-| `POST` | `/api/v1/listings/:id/apply`                 | ðŸ”’ Applicant | Apply to a listing                                               |
-| `GET`  | `/api/v1/applicant/applications`             | ðŸ”’ Applicant | Get all applications submitted by the current applicant          |
-| `GET`  | `/api/v1/provider/applications`              | ðŸ”’ Provider  | Get all applications across all provider listings                |
-| `GET`  | `/api/v1/provider/listings/:id/applications` | ðŸ”’ Provider  | Get all applications for a specific listing (ownership enforced) |
+| Method | Path                                         | Auth      | Description                                         |
+| ------ | -------------------------------------------- | --------- | --------------------------------------------------- |
+| `POST` | `/api/v1/listings/:id/apply`                 | Applicant | Apply to a published listing                        |
+| `GET`  | `/api/v1/applicant/applications`             | Applicant | Get applications submitted by the current applicant |
+| `GET`  | `/api/v1/provider/applications`              | Provider  | Get applications across provider listings           |
+| `GET`  | `/api/v1/provider/listings/:id/applications` | Provider  | Get applications for an owned listing               |
 
-Only `PUBLISHED` listings accept applications. Duplicate applications return `409`. If fewer than 5 `ACTIVE` applications exist the new one is `ACTIVE`, otherwise `PENDING_QUEUE`.
+Only published listings accept applications. Duplicate applications return `409`.
 
 ### Applicant Profile
 
-| Method  | Path                        | Auth        | Description                                          |
-| ------- | --------------------------- | ----------- | ---------------------------------------------------- |
-| `GET`   | `/api/v1/applicant/profile` | ðŸ”’ Applicant | Get the applicant's profile (`404` if none yet)     |
-| `PATCH` | `/api/v1/applicant/profile` | ðŸ”’ Applicant | Create or update the applicant's profile (upsert)   |
+| Method  | Path                        | Auth      | Description                                    |
+| ------- | --------------------------- | --------- | ---------------------------------------------- |
+| `GET`   | `/api/v1/applicant/profile` | Applicant | Get the applicant profile, or `404` if missing |
+| `PATCH` | `/api/v1/applicant/profile` | Applicant | Create or update the applicant profile         |
 
-## CI
+### Dashboard
 
-| Workflow       | Jobs                                                                     |
-| -------------- | ------------------------------------------------------------------------ |
-| `ci.yml`       | `quality-format`, `quality-lint`, `quality-typecheck`, `test-unit`, `build-backend` |
-| `security.yml` | `dependency-review`, `npm-audit`, `codeql-analysis`                      |
-| `docker.yml`   | `docker-build`                                                           |
-| `database.yml` | `prisma-validate`, `prisma-generate`, `migration-check`                  |
-
-## Docker
-
-```bash
-docker build -t renyqo-backend .
-docker run --env-file .env -p 3000:3000 renyqo-backend
-```
+| Method | Path                                 | Auth     | Description                      |
+| ------ | ------------------------------------ | -------- | -------------------------------- |
+| `GET`  | `/api/v1/provider/dashboard/summary` | Provider | Summary of the provider listings |
 
 ## Scripts
 
@@ -145,76 +194,49 @@ docker run --env-file .env -p 3000:3000 renyqo-backend
 | `npm run start:dev` | Start in watch mode           |
 | `npm run build`     | Compile to `dist/`            |
 | `npm run lint`      | Run ESLint                    |
-| `npm run format`    | Format with Prettier          |
+| `npm run format`    | Format source files           |
 | `npm run typecheck` | TypeScript check without emit |
 | `npm run test`      | Run unit tests                |
 | `npm run test:e2e`  | Run end-to-end tests          |
 | `npm run test:cov`  | Run tests with coverage       |
 
-## Project structure
+## Quality Gate
 
-```
-src/
-  auth/                 Register, login, logout, me — session-based auth
-  me/                   Onboarding state per role
-  listings/             Provider listing management
-  dashboard/            Provider dashboard summary
-  applications/         Apply to listings, view applications
-  applicant-profile/    Applicant profile (used for eligibility)
-  users/                User service and SafeUser type
-  common/               Guards (AuthenticatedGuard, ProviderOnlyGuard, ApplicantOnlyGuard)
-  config/               Env validation
-  prisma/               PrismaService (global)
-  __mocks__/            Jest module mocks
-  app.module.ts
-  main.ts
-prisma/
-  schema.prisma
-prisma.config.ts
-docker-compose.yml
+Before shipping backend changes:
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
 ```
 
-## License
+## Docker
 
-See [LICENSE](./LICENSE).
 ```bash
 docker build -t renyqo-backend .
 docker run --env-file .env -p 3000:3000 renyqo-backend
 ```
 
-## Scripts
+## Project Structure
 
-| Script                 | Purpose                               |
-| ---------------------- | ------------------------------------- |
-| `npm run start:dev`    | Start in watch mode                   |
-| `npm run build`        | Compile to `dist/`                    |
-| `npm run lint`         | Run ESLint                            |
-| `npm run format`       | Format with Prettier                  |
-| `npm run typecheck`    | TypeScript check without emit         |
-| `npm run test`         | Run unit tests                        |
-| `npm run test:e2e`     | Run end-to-end tests                  |
-| `npm run test:cov`     | Run tests with coverage               |
-
-## Project structure
-
-```
+```txt
 src/
-  auth/                 Register, login, logout, me â€” session-based auth
-  me/                   Onboarding state per role
-  listings/             Provider listing management
+  applicant-profile/    Applicant profile used for eligibility
+  applications/         Listing applications
+  auth/                 Session-based auth
+  common/               Shared guards and types
+  config/               Environment validation
   dashboard/            Provider dashboard summary
-  applications/         Apply to listings, view applications
-  applicant-profile/    Applicant profile (used for eligibility)
-  users/                User service and SafeUser type
-  common/               Guards (AuthenticatedGuard, ProviderOnlyGuard, ApplicantOnlyGuard)
-  config/               Env validation
-  prisma/               PrismaService (global)
-  __mocks__/            Jest module mocks
-  app.module.ts
-  main.ts
+  health/               Liveness endpoint
+  listing-images/       Cloudinary-backed listing images
+  listings/             Provider listing management
+  me/                   Current-user onboarding state
+  prisma/               Prisma service
+  users/                User service and safe user mapping
 prisma/
+  migrations/
   schema.prisma
-prisma.config.ts
 docker-compose.yml
 ```
 

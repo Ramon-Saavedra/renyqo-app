@@ -2,15 +2,22 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { UploadApiResponse } from 'cloudinary';
 
-import type { Application, Listing } from '../generated/prisma/client';
+import type {
+  Application,
+  Listing,
+  ListingImage,
+} from '../generated/prisma/client';
 import {
   ApplicationStatus,
   ListingStatus,
   ObjectType,
 } from '../generated/prisma/enums';
+import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListingsService } from './listings.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
@@ -20,6 +27,51 @@ const LISTING_ID = '00000000-0000-4000-8000-000000000002';
 const LISTING_ID_2 = '00000000-0000-4000-8000-000000000003';
 const OTHER_LISTING_ID = '00000000-0000-4000-8000-000000000004';
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000005';
+const CLOUDINARY_FOLDER = 'renyqo';
+
+type ListingsTransactionMock = {
+  listing: {
+    create: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
+    findMany: jest.MockedFunction<(args?: unknown) => Promise<Listing[]>>;
+    findFirst: jest.MockedFunction<(args?: unknown) => Promise<Listing | null>>;
+    update: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
+    count: jest.MockedFunction<(args?: unknown) => Promise<number>>;
+  };
+  listingImage: {
+    create: jest.MockedFunction<(args?: unknown) => Promise<ListingImage>>;
+  };
+  application: {
+    findMany: jest.MockedFunction<(args?: unknown) => Promise<Application[]>>;
+  };
+};
+
+type PrismaTransactionRunner = (
+  fn: (tx: ListingsTransactionMock) => Promise<unknown>,
+) => Promise<unknown>;
+
+type PrismaMock = ListingsTransactionMock & {
+  $transaction: jest.MockedFunction<PrismaTransactionRunner>;
+};
+
+type ListingCreateArgs = {
+  data: {
+    id?: string;
+    providerId?: string;
+    city?: string;
+    zip?: string;
+    photos?: string[];
+  };
+};
+
+type ListingImageCreateArgs = {
+  data: {
+    listingId: string;
+    publicId: string;
+    secureUrl: string;
+    position: number;
+    isCover: boolean;
+  };
+};
 
 const makeRawApplication = (
   overrides: Partial<Application> = {},
@@ -65,24 +117,47 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   ...overrides,
 });
 
+const makeRawListingImage = (
+  overrides: Partial<ListingImage> = {},
+): ListingImage => ({
+  id: '00000000-0000-4000-8000-000000000020',
+  listingId: LISTING_ID,
+  publicId: `${CLOUDINARY_FOLDER}/listings/${LISTING_ID}/abc123`,
+  secureUrl: 'https://res.cloudinary.com/test/image/upload/abc123.jpg',
+  position: 0,
+  isCover: true,
+  createdAt: new Date('2024-01-01'),
+  ...overrides,
+});
+
+const makeMulterFile = (): Express.Multer.File => ({
+  fieldname: 'file',
+  originalname: 'photo.jpg',
+  encoding: '7bit',
+  mimetype: 'image/jpeg',
+  buffer: Buffer.from('fake-image'),
+  size: 10,
+  stream: null as never,
+  destination: '',
+  filename: '',
+  path: '',
+});
+
+const makeUploadResult = (): UploadApiResponse =>
+  ({
+    public_id: `${CLOUDINARY_FOLDER}/listings/${LISTING_ID}/abc`,
+    secure_url: 'https://res.cloudinary.com/test/image/upload/abc.jpg',
+  }) as UploadApiResponse;
+
 describe('ListingsService', () => {
   let service: ListingsService;
-  let prismaMock: {
-    listing: {
-      create: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
-      findMany: jest.MockedFunction<(args?: unknown) => Promise<Listing[]>>;
-      findFirst: jest.MockedFunction<
-        (args?: unknown) => Promise<Listing | null>
-      >;
-      update: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
-      count: jest.MockedFunction<(args?: unknown) => Promise<number>>;
-    };
-    application: {
-      findMany: jest.MockedFunction<(args?: unknown) => Promise<Application[]>>;
-    };
-  };
+  let prismaMock: PrismaMock;
+  let cloudinaryMock: jest.Mocked<CloudinaryService>;
 
   beforeEach(async () => {
+    const transactionRunner: PrismaTransactionRunner = async (fn) =>
+      fn(prismaMock);
+
     prismaMock = {
       listing: {
         create: jest.fn<(args?: unknown) => Promise<Listing>>(),
@@ -91,15 +166,32 @@ describe('ListingsService', () => {
         update: jest.fn<(args?: unknown) => Promise<Listing>>(),
         count: jest.fn<(args?: unknown) => Promise<number>>(),
       },
+      listingImage: {
+        create: jest.fn<(args?: unknown) => Promise<ListingImage>>(),
+      },
       application: {
         findMany: jest.fn<(args?: unknown) => Promise<Application[]>>(),
       },
+      $transaction: jest.fn<PrismaTransactionRunner>(transactionRunner),
     };
+
+    cloudinaryMock = {
+      uploadBuffer:
+        jest.fn<
+          (buffer: Buffer, folder: string) => Promise<UploadApiResponse>
+        >(),
+      deleteByPublicId: jest.fn<(publicId: string) => Promise<void>>(),
+    } as unknown as jest.Mocked<CloudinaryService>;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ListingsService,
         { provide: PrismaService, useValue: prismaMock },
+        { provide: CloudinaryService, useValue: cloudinaryMock },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn(() => CLOUDINARY_FOLDER) },
+        },
       ],
     }).compile();
 
@@ -128,7 +220,80 @@ describe('ListingsService', () => {
           }),
         }),
       );
+      expect(cloudinaryMock.uploadBuffer).not.toHaveBeenCalled();
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
       expect(result).toEqual(listing);
+    });
+
+    it('creates a listing and first image metadata when a file is provided', async () => {
+      const uploadResult = makeUploadResult();
+      const listing = makeRawListing({
+        id: LISTING_ID,
+        photos: [uploadResult.secure_url],
+      });
+      const image = makeRawListingImage({
+        listingId: LISTING_ID,
+        publicId: uploadResult.public_id,
+        secureUrl: uploadResult.secure_url,
+      });
+      const dto: CreateListingDto = {
+        objectType: ObjectType.APARTMENT,
+        city: 'Berlin',
+        zip: '10115',
+      };
+
+      cloudinaryMock.uploadBuffer.mockResolvedValue(uploadResult);
+      prismaMock.listing.create.mockResolvedValue(listing);
+      prismaMock.listingImage.create.mockResolvedValue(image);
+
+      const result = await service.create(PROVIDER_ID, dto, makeMulterFile());
+      const listingCreateArgs = prismaMock.listing.create.mock
+        .calls[0][0] as ListingCreateArgs;
+      const imageCreateArgs = prismaMock.listingImage.create.mock
+        .calls[0][0] as ListingImageCreateArgs;
+
+      expect(cloudinaryMock.uploadBuffer).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        `${CLOUDINARY_FOLDER}/listings/${listingCreateArgs.data.id}`,
+      );
+      expect(listingCreateArgs.data).toEqual(
+        expect.objectContaining({
+          providerId: PROVIDER_ID,
+          city: 'Berlin',
+          zip: '10115',
+          photos: [uploadResult.secure_url],
+        }),
+      );
+      expect(imageCreateArgs.data).toEqual({
+        listingId: listingCreateArgs.data.id,
+        publicId: uploadResult.public_id,
+        secureUrl: uploadResult.secure_url,
+        position: 0,
+        isCover: true,
+      });
+      expect(result).toEqual(listing);
+    });
+
+    it('deletes the uploaded image when database creation fails', async () => {
+      const uploadResult = makeUploadResult();
+      const dbError = new Error('database failed');
+      const dto: CreateListingDto = {
+        objectType: ObjectType.APARTMENT,
+        city: 'Berlin',
+        zip: '10115',
+      };
+
+      cloudinaryMock.uploadBuffer.mockResolvedValue(uploadResult);
+      cloudinaryMock.deleteByPublicId.mockResolvedValue(undefined);
+      prismaMock.listing.create.mockRejectedValue(dbError);
+
+      await expect(
+        service.create(PROVIDER_ID, dto, makeMulterFile()),
+      ).rejects.toThrow(dbError);
+
+      expect(cloudinaryMock.deleteByPublicId).toHaveBeenCalledWith(
+        uploadResult.public_id,
+      );
     });
   });
 

@@ -9,12 +9,40 @@ import {
   IsString,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+import type { TransformFnParams } from 'class-transformer';
 
 import {
   ObjectType,
   PetsPolicy,
   SmokingPolicy,
 } from '../../generated/prisma/enums';
+
+const toOptionalBoolean = ({ value }: TransformFnParams): unknown => {
+  if (value === undefined || value === null || typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  if (normalized === 'true') {
+    return true;
+  }
+
+  if (normalized === 'false') {
+    return false;
+  }
+
+  return value;
+};
 
 export class CreateListingDto {
   @IsEnum(ObjectType)
@@ -34,6 +62,7 @@ export class CreateListingDto {
   street?: string;
 
   @IsOptional()
+  @Transform(toOptionalBoolean)
   @IsBoolean()
   showExactAddress?: boolean;
 
@@ -86,10 +115,12 @@ export class CreateListingDto {
   minimumHouseholdNetIncome?: number;
 
   @IsOptional()
+  @Transform(toOptionalBoolean)
   @IsBoolean()
   schufaRequired?: boolean;
 
   @IsOptional()
+  @Transform(toOptionalBoolean)
   @IsBoolean()
   incomeProofRequired?: boolean;
 
