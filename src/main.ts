@@ -50,7 +50,7 @@ async function bootstrap() {
       store: new PgStore({
         conString: databaseUrl,
         tableName: 'user_sessions',
-        createTableIfMissing: true,
+        createTableIfMissing: false,
       }),
       cookie: {
         httpOnly: true,
