@@ -90,6 +90,15 @@ Global prefix: `/api/v1`
 
 Public registration only accepts `applicant` and `provider`.
 
+Provider registration may also include optional identity fields:
+
+- `providerType`: `private` or `company`
+- `companyName`: required when `providerType` is `company`
+
+If `providerType` is omitted, both `providerType` and `companyName` remain `null` for backwards compatibility. If `providerType` is `private`, `companyName` is stored as `null`.
+
+Safe user responses from `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, and `GET /api/v1/auth/me` include `name`, `email`, `providerType`, and `companyName`, but never `passwordHash`.
+
 ### Me
 
 | Method | Path                          | Auth    | Description                        |

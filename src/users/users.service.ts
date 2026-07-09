@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { User, Prisma } from '../generated/prisma/client';
+import { ProviderType } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
+import type { SafeProviderType } from './types/safe-user.type';
 import type { SafeUser } from './types/safe-user.type';
 
 @Injectable()
@@ -27,6 +29,9 @@ export class UsersService {
       name: user.name,
       email: user.email,
       role: user.role,
+      providerType: this.toSafeProviderType(user.providerType),
+      companyName:
+        user.providerType === ProviderType.COMPANY ? user.companyName : null,
       emailVerified: user.emailVerified,
       status: user.status,
       acceptedTermsAt: user.acceptedTermsAt,
@@ -34,5 +39,19 @@ export class UsersService {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
+  }
+
+  private toSafeProviderType(
+    providerType: ProviderType | null,
+  ): SafeProviderType | null {
+    if (providerType === ProviderType.PRIVATE) {
+      return 'private';
+    }
+
+    if (providerType === ProviderType.COMPANY) {
+      return 'company';
+    }
+
+    return null;
   }
 }
