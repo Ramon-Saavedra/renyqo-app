@@ -10,12 +10,12 @@ import {
 } from '@jest/globals';
 import * as bcrypt from 'bcrypt';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
-import { Role, UserStatus } from '../generated/prisma/enums';
+import { ProviderType, Role, UserStatus } from '../generated/prisma/enums';
 import type { User } from '../generated/prisma/client';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
-import { PublicRole } from './dto/register.dto';
+import { PublicProviderType, PublicRole } from './dto/register.dto';
 
 jest.mock('bcrypt', () => ({
   hash: jest.fn(),
@@ -31,6 +31,8 @@ const makeUser = (): User => ({
   email: 'test@example.com',
   passwordHash: '$2b$12$somehash',
   role: Role.APPLICANT,
+  providerType: null,
+  companyName: null,
   emailVerified: false,
   status: UserStatus.ACTIVE,
   acceptedTermsAt: new Date('2024-01-01'),
@@ -44,6 +46,14 @@ const makeSafeUser = (user: User): SafeUser => ({
   name: user.name,
   email: user.email,
   role: user.role,
+  providerType:
+    user.providerType === ProviderType.COMPANY
+      ? 'company'
+      : user.providerType === ProviderType.PRIVATE
+        ? 'private'
+        : null,
+  companyName:
+    user.providerType === ProviderType.COMPANY ? user.companyName : null,
   emailVerified: user.emailVerified,
   status: user.status,
   acceptedTermsAt: user.acceptedTermsAt,
@@ -53,12 +63,20 @@ const makeSafeUser = (user: User): SafeUser => ({
 });
 
 const makeRegisterDto = (
-  overrides: Partial<{ email: string; name: string }> = {},
+  overrides: Partial<{
+    email: string;
+    name: string;
+    role: PublicRole;
+    providerType: PublicProviderType;
+    companyName: string;
+  }> = {},
 ) => ({
   name: overrides.name ?? 'Test User',
   email: overrides.email ?? 'test@example.com',
   password: 'password123',
-  role: PublicRole.APPLICANT,
+  role: overrides.role ?? PublicRole.APPLICANT,
+  providerType: overrides.providerType,
+  companyName: overrides.companyName,
   acceptedTerms: true as const,
   acceptedPrivacy: true as const,
 });
@@ -128,6 +146,66 @@ describe('AuthService', () => {
       const result = await service.register(makeRegisterDto());
 
       expect(result).toEqual(safeUser);
+    });
+
+    it('stores private provider identity with null company name', async () => {
+      const user = makeUser();
+      const safeUser = makeSafeUser(user);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      usersService.create.mockResolvedValue(safeUser);
+
+      await service.register(
+        makeRegisterDto({
+          role: PublicRole.PROVIDER,
+          providerType: PublicProviderType.PRIVATE,
+          companyName: 'Ignored Company',
+        }),
+      );
+
+      expect(usersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          role: Role.PROVIDER,
+          providerType: ProviderType.PRIVATE,
+          companyName: null,
+        }),
+      );
+    });
+
+    it('stores company provider identity with trimmed company name', async () => {
+      const user = makeUser();
+      const safeUser = makeSafeUser(user);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      usersService.create.mockResolvedValue(safeUser);
+
+      await service.register(
+        makeRegisterDto({
+          role: PublicRole.PROVIDER,
+          providerType: PublicProviderType.COMPANY,
+          companyName: '  Kessler Immobilien GbR  ',
+        }),
+      );
+
+      expect(usersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          role: Role.PROVIDER,
+          providerType: ProviderType.COMPANY,
+          companyName: 'Kessler Immobilien GbR',
+        }),
+      );
+    });
+
+    it('throws BadRequestException when company provider has no company name', async () => {
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+
+      await expect(
+        service.register(
+          makeRegisterDto({
+            role: PublicRole.PROVIDER,
+            providerType: PublicProviderType.COMPANY,
+            companyName: '   ',
+          }),
+        ),
+      ).rejects.toThrow('Company name is required');
     });
 
     it('does not include passwordHash in the returned user', async () => {

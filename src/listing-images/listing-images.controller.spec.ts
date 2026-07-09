@@ -17,6 +17,8 @@ const makeProviderUser = (): SafeUser => ({
   name: 'Provider User',
   email: 'provider@example.com',
   role: Role.PROVIDER,
+  providerType: null,
+  companyName: null,
   emailVerified: false,
   status: UserStatus.ACTIVE,
   acceptedTermsAt: new Date('2024-01-01'),

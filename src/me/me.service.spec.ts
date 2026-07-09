@@ -14,6 +14,8 @@ const makeSafeUser = (role: SafeUser['role']): SafeUser => ({
   name: 'Test User',
   email: 'test@example.com',
   role,
+  providerType: null,
+  companyName: null,
   emailVerified: false,
   status: UserStatus.ACTIVE,
   acceptedTermsAt: new Date(),

@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { Role, UserStatus } from '../generated/prisma/enums';
+import { ProviderType, Role, UserStatus } from '../generated/prisma/enums';
 import type { User } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from './users.service';
@@ -13,6 +13,8 @@ const makeUser = (): User => ({
   email: 'max@example.com',
   passwordHash: '$2b$12$somehash',
   role: Role.APPLICANT,
+  providerType: null,
+  companyName: null,
   emailVerified: false,
   status: UserStatus.ACTIVE,
   acceptedTermsAt: new Date('2024-01-01'),
@@ -52,6 +54,8 @@ describe('UsersService', () => {
       expect(result.name).toBe(user.name);
       expect(result.email).toBe(user.email);
       expect(result.role).toBe(user.role);
+      expect(result.providerType).toBeNull();
+      expect(result.companyName).toBeNull();
       expect(result.emailVerified).toBe(user.emailVerified);
       expect(result.status).toBe(user.status);
       expect(result.acceptedTermsAt).toBe(user.acceptedTermsAt);
@@ -67,6 +71,32 @@ describe('UsersService', () => {
       expect(result).not.toHaveProperty('passwordHash');
     });
 
+    it('returns company identity for company providers', () => {
+      const user = makeUser();
+      const result = service.toSafeUser({
+        ...user,
+        role: Role.PROVIDER,
+        providerType: ProviderType.COMPANY,
+        companyName: 'Kessler Immobilien GbR',
+      });
+
+      expect(result.providerType).toBe('company');
+      expect(result.companyName).toBe('Kessler Immobilien GbR');
+    });
+
+    it('does not expose companyName for private providers', () => {
+      const user = makeUser();
+      const result = service.toSafeUser({
+        ...user,
+        role: Role.PROVIDER,
+        providerType: ProviderType.PRIVATE,
+        companyName: 'Should not be exposed',
+      });
+
+      expect(result.providerType).toBe('private');
+      expect(result.companyName).toBeNull();
+    });
+
     it('returns exactly the expected SafeUser shape', () => {
       const user = makeUser();
       const result = service.toSafeUser(user);
@@ -78,6 +108,8 @@ describe('UsersService', () => {
           'name',
           'email',
           'role',
+          'providerType',
+          'companyName',
           'emailVerified',
           'status',
           'acceptedTermsAt',
