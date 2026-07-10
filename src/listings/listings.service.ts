@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
@@ -9,6 +10,7 @@ import { randomUUID } from 'crypto';
 import type { UploadApiResponse } from 'cloudinary';
 import type { EnvironmentVariables } from '../config/env.validation';
 import type { Application, Listing } from '../generated/prisma/client';
+import type { Prisma } from '../generated/prisma/client';
 import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -43,6 +45,12 @@ export class ListingsService {
     dto: CreateListingDto,
     file?: Express.Multer.File,
   ): Promise<Listing> {
+    if (!this.hasMeaningfulDraftData(dto) && !file) {
+      throw new BadRequestException(
+        'Draft must include at least one listing field',
+      );
+    }
+
     if (file) {
       return this.createWithImage(providerId, dto, file);
     }
@@ -224,8 +232,11 @@ export class ListingsService {
     }
   }
 
-  private buildCreateData(providerId: string, dto: CreateListingDto) {
-    return {
+  private buildCreateData(
+    providerId: string,
+    dto: CreateListingDto,
+  ): Prisma.ListingUncheckedCreateInput {
+    const draftData = this.stripEmptyValues({
       providerId,
       objectType: dto.objectType,
       city: dto.city,
@@ -249,6 +260,45 @@ export class ListingsService {
       suitableForPeopleCount: dto.suitableForPeopleCount,
       petsPolicy: dto.petsPolicy,
       smokingPolicy: dto.smokingPolicy,
+    });
+
+    return {
+      providerId,
+      ...draftData,
     };
+  }
+
+  private hasMeaningfulDraftData(dto: CreateListingDto): boolean {
+    return Object.values(dto).some((value) => {
+      if (value === undefined || value === null) {
+        return false;
+      }
+
+      if (typeof value === 'string') {
+        return value.trim().length > 0;
+      }
+
+      if (typeof value === 'boolean') {
+        return value;
+      }
+
+      return true;
+    });
+  }
+
+  private stripEmptyValues<T extends Record<string, unknown>>(data: T) {
+    return Object.fromEntries(
+      Object.entries(data).filter(([, value]) => {
+        if (value === undefined || value === null) {
+          return false;
+        }
+
+        if (typeof value === 'string' && value.trim().length === 0) {
+          return false;
+        }
+
+        return true;
+      }),
+    ) as Partial<T>;
   }
 }

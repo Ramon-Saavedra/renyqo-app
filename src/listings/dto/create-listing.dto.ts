@@ -45,16 +45,19 @@ const toOptionalBoolean = ({ value }: TransformFnParams): unknown => {
 };
 
 export class CreateListingDto {
+  @IsOptional()
   @IsEnum(ObjectType)
-  objectType!: ObjectType;
+  objectType?: ObjectType;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  city!: string;
+  city?: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  zip!: string;
+  zip?: string;
 
   @IsOptional()
   @IsString()
