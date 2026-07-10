@@ -2,15 +2,14 @@ import {
   Controller,
   Param,
   Post,
-  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import type { Request } from 'express';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ListingImageParamsDto } from './dto/listing-image-params.dto';
@@ -37,9 +36,8 @@ export class ListingImagesController {
   uploadImage(
     @Param() params: ListingImageParamsDto,
     @UploadedFile(REQUIRED_LISTING_IMAGE_FILE_PIPE) file: Express.Multer.File,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<ListingImageResponseDto> {
-    const user = req.user as SafeUser;
     return this.listingImagesService.upload(params.listingId, user.id, file);
   }
 }

@@ -5,12 +5,11 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
-  Req,
   UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
 import type { Application } from '../generated/prisma/client';
 import type { SafeUser } from '../users/types/safe-user.type';
@@ -25,9 +24,8 @@ export class ApplicationsController {
   @HttpCode(HttpStatus.CREATED)
   apply(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<Application> {
-    const user = req.user as SafeUser;
     return this.applicationsService.apply(listingId, user.id);
   }
 }

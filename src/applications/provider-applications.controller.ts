@@ -3,12 +3,11 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
-  Req,
   UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { Application } from '../generated/prisma/client';
 import type { SafeUser } from '../users/types/safe-user.type';
@@ -20,17 +19,15 @@ export class ProviderApplicationsController {
   constructor(private readonly applicationsService: ApplicationsService) {}
 
   @Get('applications')
-  findAll(@Req() req: Request): Promise<Application[]> {
-    const user = req.user as SafeUser;
+  findAll(@CurrentUser() user: SafeUser): Promise<Application[]> {
     return this.applicationsService.findAllByProvider(user.id);
   }
 
   @Get('listings/:id/applications')
   findByListing(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<Application[]> {
-    const user = req.user as SafeUser;
     return this.applicationsService.findAllByListing(listingId, user.id);
   }
 }
