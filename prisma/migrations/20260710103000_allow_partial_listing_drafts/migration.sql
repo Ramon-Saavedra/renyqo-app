@@ -1,0 +1,4 @@
+ALTER TABLE "listings"
+  ALTER COLUMN "city" DROP NOT NULL,
+  ALTER COLUMN "zip" DROP NOT NULL,
+  ALTER COLUMN "object_type" DROP NOT NULL;

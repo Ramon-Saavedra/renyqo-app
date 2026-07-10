@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -57,8 +58,11 @@ type ListingCreateArgs = {
   data: {
     id?: string;
     providerId?: string;
+    objectType?: ObjectType;
     city?: string;
     zip?: string;
+    title?: string;
+    shortDescription?: string;
     photos?: string[];
   };
 };
@@ -222,6 +226,88 @@ describe('ListingsService', () => {
       );
       expect(cloudinaryMock.uploadBuffer).not.toHaveBeenCalled();
       expect(prismaMock.$transaction).not.toHaveBeenCalled();
+      expect(result).toEqual(listing);
+    });
+
+    it('creates a partial draft with a single meaningful field', async () => {
+      const listing = makeRawListing({
+        city: null,
+        zip: null,
+        objectType: null,
+        title: 'Draft title',
+      });
+      const dto: CreateListingDto = { title: 'Draft title' };
+      prismaMock.listing.create.mockResolvedValue(listing);
+
+      const result = await service.create(PROVIDER_ID, dto);
+
+      expect(prismaMock.listing.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            providerId: PROVIDER_ID,
+            title: 'Draft title',
+          }),
+        }),
+      );
+      expect(result).toEqual(listing);
+    });
+
+    it('rejects an empty draft without a file', async () => {
+      await expect(service.create(PROVIDER_ID, {})).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prismaMock.listing.create).not.toHaveBeenCalled();
+    });
+
+    it('omits null and empty string values when creating a draft', async () => {
+      const listing = makeRawListing({
+        city: null,
+        zip: null,
+        objectType: null,
+        title: 'Draft title',
+        shortDescription: null,
+      });
+      const dto = {
+        title: 'Draft title',
+        city: null,
+        zip: '',
+        shortDescription: '',
+      } as unknown as CreateListingDto;
+      prismaMock.listing.create.mockResolvedValue(listing);
+
+      await service.create(PROVIDER_ID, dto);
+
+      const listingCreateArgs = prismaMock.listing.create.mock
+        .calls[0][0] as ListingCreateArgs;
+
+      expect(listingCreateArgs.data).toEqual({
+        providerId: PROVIDER_ID,
+        title: 'Draft title',
+      });
+    });
+
+    it('allows a file-only draft', async () => {
+      const uploadResult = makeUploadResult();
+      const listing = makeRawListing({
+        id: LISTING_ID,
+        city: null,
+        zip: null,
+        objectType: null,
+        photos: [uploadResult.secure_url],
+      });
+      const image = makeRawListingImage({
+        listingId: LISTING_ID,
+        publicId: uploadResult.public_id,
+        secureUrl: uploadResult.secure_url,
+      });
+
+      cloudinaryMock.uploadBuffer.mockResolvedValue(uploadResult);
+      prismaMock.listing.create.mockResolvedValue(listing);
+      prismaMock.listingImage.create.mockResolvedValue(image);
+
+      const result = await service.create(PROVIDER_ID, {}, makeMulterFile());
+
+      expect(cloudinaryMock.uploadBuffer).toHaveBeenCalled();
       expect(result).toEqual(listing);
     });
 

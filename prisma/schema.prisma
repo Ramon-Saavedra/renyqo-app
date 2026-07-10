@@ -90,13 +90,13 @@ model Listing {
   providerId String        @map("provider_id") @db.Uuid
   status     ListingStatus @default(DRAFT)
 
-  city             String
-  zip              String
+  city             String?
+  zip              String?
   street           String?
   country          String  @default("DE")
   showExactAddress Boolean @default(false) @map("show_exact_address")
 
-  objectType      ObjectType @map("object_type")
+  objectType      ObjectType? @map("object_type")
   livingArea      Float?     @map("living_area")
   rooms           Float?
   bedrooms        Int?
