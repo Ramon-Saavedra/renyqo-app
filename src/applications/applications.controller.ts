@@ -3,6 +3,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Post,
   Req,
   UseGuards,
@@ -23,7 +24,7 @@ export class ApplicationsController {
   @Post(':id/apply')
   @HttpCode(HttpStatus.CREATED)
   apply(
-    @Param('id') listingId: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
     @Req() req: Request,
   ): Promise<Application> {
     const user = req.user as SafeUser;

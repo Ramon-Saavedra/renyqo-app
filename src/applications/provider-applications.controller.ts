@@ -1,4 +1,11 @@
-import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request } from 'express';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
@@ -20,7 +27,7 @@ export class ProviderApplicationsController {
 
   @Get('listings/:id/applications')
   findByListing(
-    @Param('id') listingId: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
     @Req() req: Request,
   ): Promise<Application[]> {
     const user = req.user as SafeUser;
