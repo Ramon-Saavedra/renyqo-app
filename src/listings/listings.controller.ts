@@ -6,16 +6,15 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
-  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Request } from 'express';
 import { memoryStorage } from 'multer';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { Application } from '../generated/prisma/client';
 import {
@@ -45,9 +44,8 @@ export class ListingsController {
     @Body() dto: CreateListingDto,
     @UploadedFile(OPTIONAL_LISTING_IMAGE_FILE_PIPE)
     file: Express.Multer.File | undefined,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
-    const user = req.user as SafeUser;
     const listing = await this.listingsService.create(user.id, dto, file);
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
@@ -55,8 +53,7 @@ export class ListingsController {
   }
 
   @Get()
-  async findAll(@Req() req: Request): Promise<ListingResponseDto[]> {
-    const user = req.user as SafeUser;
+  async findAll(@CurrentUser() user: SafeUser): Promise<ListingResponseDto[]> {
     const listings = await this.listingsService.findAllByProvider(user.id);
     return this.listingsService.toListingResponses(listings, {
       exposeExactAddress: true,
@@ -66,9 +63,8 @@ export class ListingsController {
   @Get(':id')
   async findOne(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
-    const user = req.user as SafeUser;
     const listing = await this.listingsService.findOneByProvider(id, user.id);
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
@@ -79,9 +75,8 @@ export class ListingsController {
   async update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateListingDto,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
-    const user = req.user as SafeUser;
     const listing = await this.listingsService.update(id, user.id, dto);
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
@@ -91,9 +86,8 @@ export class ListingsController {
   @Patch(':id/publish')
   async publish(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
-    const user = req.user as SafeUser;
     const listing = await this.listingsService.publish(id, user.id);
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
@@ -103,9 +97,8 @@ export class ListingsController {
   @Patch(':id/draft')
   async moveToDraft(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
-    const user = req.user as SafeUser;
     const listing = await this.listingsService.moveToDraft(id, user.id);
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
@@ -115,9 +108,8 @@ export class ListingsController {
   @Patch(':id/archive')
   async archive(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
-    const user = req.user as SafeUser;
     const listing = await this.listingsService.archive(id, user.id);
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
@@ -127,9 +119,8 @@ export class ListingsController {
   @Get(':id/active-applications')
   getActiveApplications(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
   ): Promise<Application[]> {
-    const user = req.user as SafeUser;
     return this.listingsService.getActiveApplications(id, user.id);
   }
 }

@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { Request } from 'express';
 import type { ListingImage } from '../generated/prisma/client';
 import { Role, UserStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
@@ -26,9 +25,6 @@ const makeProviderUser = (): SafeUser => ({
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 });
-
-const makeReq = (): Request =>
-  ({ user: makeProviderUser() }) as unknown as Request;
 
 const makeFile = (): Express.Multer.File => ({
   fieldname: 'file',
@@ -86,7 +82,7 @@ describe('ListingImagesController', () => {
       const result = await controller.uploadImage(
         { listingId: LISTING_ID },
         file,
-        makeReq(),
+        makeProviderUser(),
       );
 
       expect(listingImagesService.upload).toHaveBeenCalledWith(
@@ -104,7 +100,7 @@ describe('ListingImagesController', () => {
       const result = await controller.uploadImage(
         { listingId: LISTING_ID },
         makeFile(),
-        makeReq(),
+        makeProviderUser(),
       );
 
       expect(result.isCover).toBe(true);

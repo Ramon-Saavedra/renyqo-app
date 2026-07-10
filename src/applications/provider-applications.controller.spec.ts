@@ -2,7 +2,6 @@ import { ParseUUIDPipe } from '@nestjs/common';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { Request } from 'express';
 
 import type { Application } from '../generated/prisma/client';
 import { ApplicationStatus, Role, UserStatus } from '../generated/prisma/enums';
@@ -35,9 +34,6 @@ const makeProviderUser = (): SafeUser => ({
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 });
-
-const makeReq = (): Request =>
-  ({ user: makeProviderUser() }) as unknown as Request;
 
 const makeApplication = (): Application => ({
   id: APPLICATION_ID,
@@ -92,7 +88,7 @@ describe('ProviderApplicationsController', () => {
       const applications = [makeApplication()];
       applicationsService.findAllByProvider.mockResolvedValue(applications);
 
-      const result = await controller.findAll(makeReq());
+      const result = await controller.findAll(makeProviderUser());
 
       expect(applicationsService.findAllByProvider).toHaveBeenCalledWith(
         PROVIDER_ID,
@@ -113,7 +109,10 @@ describe('ProviderApplicationsController', () => {
       const applications = [makeApplication()];
       applicationsService.findAllByListing.mockResolvedValue(applications);
 
-      const result = await controller.findByListing(LISTING_ID, makeReq());
+      const result = await controller.findByListing(
+        LISTING_ID,
+        makeProviderUser(),
+      );
 
       expect(applicationsService.findAllByListing).toHaveBeenCalledWith(
         LISTING_ID,

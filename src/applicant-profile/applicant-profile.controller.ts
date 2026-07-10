@@ -6,12 +6,11 @@ import {
   HttpStatus,
   NotFoundException,
   Patch,
-  Req,
   UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
 import type { ApplicantProfile } from '../generated/prisma/client';
 import type { SafeUser } from '../users/types/safe-user.type';
@@ -26,8 +25,7 @@ export class ApplicantProfileController {
   ) {}
 
   @Get()
-  async getProfile(@Req() req: Request): Promise<ApplicantProfile> {
-    const user = req.user as SafeUser;
+  async getProfile(@CurrentUser() user: SafeUser): Promise<ApplicantProfile> {
     const profile = await this.applicantProfileService.findByApplicant(user.id);
 
     if (!profile) {
@@ -40,10 +38,9 @@ export class ApplicantProfileController {
   @Patch()
   @HttpCode(HttpStatus.OK)
   updateProfile(
-    @Req() req: Request,
+    @CurrentUser() user: SafeUser,
     @Body() dto: UpdateApplicantProfileDto,
   ): Promise<ApplicantProfile> {
-    const user = req.user as SafeUser;
     return this.applicantProfileService.upsert(user.id, dto);
   }
 }

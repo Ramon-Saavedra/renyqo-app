@@ -1,7 +1,7 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
-import type { Request } from 'express';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { DashboardService } from './dashboard.service';
@@ -13,8 +13,7 @@ export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   @Get('summary')
-  getSummary(@Req() req: Request): Promise<DashboardSummary> {
-    const user = req.user as SafeUser;
+  getSummary(@CurrentUser() user: SafeUser): Promise<DashboardSummary> {
     return this.dashboardService.getSummary(user.id);
   }
 }

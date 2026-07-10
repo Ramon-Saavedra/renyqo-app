@@ -2,7 +2,6 @@ import { ParseUUIDPipe } from '@nestjs/common';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { Request } from 'express';
 
 import type { Application } from '../generated/prisma/client';
 import { Role, UserStatus, ApplicationStatus } from '../generated/prisma/enums';
@@ -34,9 +33,6 @@ const makeApplicantUser = (): SafeUser => ({
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 });
-
-const makeReq = (): Request =>
-  ({ user: makeApplicantUser() }) as unknown as Request;
 
 const makeApplication = (): Application => ({
   id: APPLICATION_ID,
@@ -95,7 +91,7 @@ describe('ApplicationsController', () => {
       const application = makeApplication();
       applicationsService.apply.mockResolvedValue(application);
 
-      const result = await controller.apply(LISTING_ID, makeReq());
+      const result = await controller.apply(LISTING_ID, makeApplicantUser());
 
       expect(applicationsService.apply).toHaveBeenCalledWith(
         LISTING_ID,

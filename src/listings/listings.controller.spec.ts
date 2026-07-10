@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ParseUUIDPipe } from '@nestjs/common';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { Request } from 'express';
 
 import {
   ApplicationStatus,
@@ -36,9 +35,6 @@ const makeProviderUser = (): SafeUser => ({
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 });
-
-const makeReq = (): Request =>
-  ({ user: makeProviderUser() }) as unknown as Request;
 
 const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
@@ -152,7 +148,11 @@ describe('ListingsController', () => {
       };
       listingsService.create.mockResolvedValue(listing);
 
-      const result = await controller.create(dto, undefined, makeReq());
+      const result = await controller.create(
+        dto,
+        undefined,
+        makeProviderUser(),
+      );
 
       expect(listingsService.create).toHaveBeenCalledWith(
         PROVIDER_ID,
@@ -171,7 +171,7 @@ describe('ListingsController', () => {
       const listings = [makeListing()];
       listingsService.findAllByProvider.mockResolvedValue(listings);
 
-      const result = await controller.findAll(makeReq());
+      const result = await controller.findAll(makeProviderUser());
 
       expect(listingsService.findAllByProvider).toHaveBeenCalledWith(
         PROVIDER_ID,
@@ -196,7 +196,7 @@ describe('ListingsController', () => {
       const listing = makeListing();
       listingsService.findOneByProvider.mockResolvedValue(listing);
 
-      const result = await controller.findOne(LISTING_ID, makeReq());
+      const result = await controller.findOne(LISTING_ID, makeProviderUser());
 
       expect(listingsService.findOneByProvider).toHaveBeenCalledWith(
         LISTING_ID,
@@ -222,7 +222,11 @@ describe('ListingsController', () => {
       const dto: UpdateListingDto = { title: 'Updated' };
       listingsService.update.mockResolvedValue(listing);
 
-      const result = await controller.update(LISTING_ID, dto, makeReq());
+      const result = await controller.update(
+        LISTING_ID,
+        dto,
+        makeProviderUser(),
+      );
 
       expect(listingsService.update).toHaveBeenCalledWith(
         LISTING_ID,
@@ -248,7 +252,7 @@ describe('ListingsController', () => {
       const listing = makeListing({ status: ListingStatus.PUBLISHED });
       listingsService.publish.mockResolvedValue(listing);
 
-      const result = await controller.publish(LISTING_ID, makeReq());
+      const result = await controller.publish(LISTING_ID, makeProviderUser());
 
       expect(listingsService.publish).toHaveBeenCalledWith(
         LISTING_ID,
@@ -273,7 +277,10 @@ describe('ListingsController', () => {
       const listing = makeListing({ status: ListingStatus.DRAFT });
       listingsService.moveToDraft.mockResolvedValue(listing);
 
-      const result = await controller.moveToDraft(LISTING_ID, makeReq());
+      const result = await controller.moveToDraft(
+        LISTING_ID,
+        makeProviderUser(),
+      );
 
       expect(listingsService.moveToDraft).toHaveBeenCalledWith(
         LISTING_ID,
@@ -298,7 +305,7 @@ describe('ListingsController', () => {
       const listing = makeListing({ status: ListingStatus.ARCHIVED });
       listingsService.archive.mockResolvedValue(listing);
 
-      const result = await controller.archive(LISTING_ID, makeReq());
+      const result = await controller.archive(LISTING_ID, makeProviderUser());
 
       expect(listingsService.archive).toHaveBeenCalledWith(
         LISTING_ID,
@@ -325,7 +332,7 @@ describe('ListingsController', () => {
 
       const result = await controller.getActiveApplications(
         LISTING_ID,
-        makeReq(),
+        makeProviderUser(),
       );
 
       expect(listingsService.getActiveApplications).toHaveBeenCalledWith(

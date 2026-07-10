@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -77,7 +78,7 @@ export class AuthController {
 
   @UseGuards(AuthenticatedGuard)
   @Get('me')
-  me(@Req() req: Request): SafeUser {
-    return req.user as SafeUser;
+  me(@CurrentUser() user: SafeUser): SafeUser {
+    return user;
   }
 }
