@@ -1,4 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ParseUUIDPipe } from '@nestjs/common';
+import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { Request } from 'express';
 
@@ -78,6 +80,27 @@ const makeApplication = (): Application => ({
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 });
+
+type RouteArgMetadata = {
+  index: number;
+  data?: string;
+  pipes?: readonly unknown[];
+};
+
+const getRouteArgMetadata = (
+  methodName: string,
+  parameterIndex: number,
+): RouteArgMetadata | undefined => {
+  const metadata = Reflect.getMetadata(
+    ROUTE_ARGS_METADATA,
+    ListingsController,
+    methodName,
+  ) as Record<string, RouteArgMetadata> | undefined;
+
+  return Object.values(metadata ?? {}).find(
+    (routeArgMetadata) => routeArgMetadata.index === parameterIndex,
+  );
+};
 
 describe('ListingsController', () => {
   let controller: ListingsController;
@@ -162,6 +185,13 @@ describe('ListingsController', () => {
   });
 
   describe('findOne', () => {
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('findOne', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+    });
+
     it('calls listingsService.findOneByProvider with id and provider id', async () => {
       const listing = makeListing();
       listingsService.findOneByProvider.mockResolvedValue(listing);
@@ -180,6 +210,13 @@ describe('ListingsController', () => {
   });
 
   describe('update', () => {
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('update', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+    });
+
     it('calls listingsService.update with id, provider id and dto', async () => {
       const listing = makeListing({ title: 'Updated' });
       const dto: UpdateListingDto = { title: 'Updated' };
@@ -200,6 +237,13 @@ describe('ListingsController', () => {
   });
 
   describe('publish', () => {
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('publish', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+    });
+
     it('calls listingsService.publish with id and provider id', async () => {
       const listing = makeListing({ status: ListingStatus.PUBLISHED });
       listingsService.publish.mockResolvedValue(listing);
@@ -218,6 +262,13 @@ describe('ListingsController', () => {
   });
 
   describe('moveToDraft', () => {
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('moveToDraft', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+    });
+
     it('calls listingsService.moveToDraft with id and provider id', async () => {
       const listing = makeListing({ status: ListingStatus.DRAFT });
       listingsService.moveToDraft.mockResolvedValue(listing);
@@ -236,6 +287,13 @@ describe('ListingsController', () => {
   });
 
   describe('archive', () => {
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('archive', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+    });
+
     it('calls listingsService.archive with id and provider id', async () => {
       const listing = makeListing({ status: ListingStatus.ARCHIVED });
       listingsService.archive.mockResolvedValue(listing);
@@ -254,6 +312,13 @@ describe('ListingsController', () => {
   });
 
   describe('getActiveApplications', () => {
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('getActiveApplications', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+    });
+
     it('calls listingsService.getActiveApplications with id and provider id', async () => {
       const applications = [makeApplication()];
       listingsService.getActiveApplications.mockResolvedValue(applications);

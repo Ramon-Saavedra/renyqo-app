@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  ParseUUIDPipe,
   Req,
   UploadedFile,
   UseGuards,
@@ -64,7 +65,7 @@ export class ListingsController {
 
   @Get(':id')
   async findOne(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Req() req: Request,
   ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
@@ -76,7 +77,7 @@ export class ListingsController {
 
   @Patch(':id')
   async update(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateListingDto,
     @Req() req: Request,
   ): Promise<ListingResponseDto> {
@@ -89,7 +90,7 @@ export class ListingsController {
 
   @Patch(':id/publish')
   async publish(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Req() req: Request,
   ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
@@ -101,7 +102,7 @@ export class ListingsController {
 
   @Patch(':id/draft')
   async moveToDraft(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Req() req: Request,
   ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
@@ -113,7 +114,7 @@ export class ListingsController {
 
   @Patch(':id/archive')
   async archive(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Req() req: Request,
   ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
@@ -125,7 +126,7 @@ export class ListingsController {
 
   @Get(':id/active-applications')
   getActiveApplications(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Req() req: Request,
   ): Promise<Application[]> {
     const user = req.user as SafeUser;
