@@ -333,6 +333,68 @@ describe('ListingsService', () => {
     });
   });
 
+  describe('toListingResponse', () => {
+    it('hides street when showExactAddress is false by default', () => {
+      const listing = makeRawListing({
+        street: 'Hauptstraße 1',
+        showExactAddress: false,
+      });
+
+      const result = service.toListingResponse(listing);
+
+      expect(result.street).toBeNull();
+      expect(result.city).toBe(listing.city);
+      expect(result.showExactAddress).toBe(false);
+    });
+
+    it('keeps street when showExactAddress is true', () => {
+      const listing = makeRawListing({
+        street: 'Hauptstraße 1',
+        showExactAddress: true,
+      });
+
+      const result = service.toListingResponse(listing);
+
+      expect(result.street).toBe('Hauptstraße 1');
+    });
+
+    it('keeps street when exact address exposure is explicitly allowed', () => {
+      const listing = makeRawListing({
+        street: 'Hauptstraße 1',
+        showExactAddress: false,
+      });
+
+      const result = service.toListingResponse(listing, {
+        exposeExactAddress: true,
+      });
+
+      expect(result.street).toBe('Hauptstraße 1');
+    });
+  });
+
+  describe('toListingResponses', () => {
+    it('maps all listings through toListingResponse', () => {
+      const listings = [
+        makeRawListing({
+          id: LISTING_ID,
+          street: 'Hauptstraße 1',
+          showExactAddress: false,
+        }),
+        makeRawListing({
+          id: LISTING_ID_2,
+          street: 'Nebenstraße 2',
+          showExactAddress: true,
+        }),
+      ];
+
+      const result = service.toListingResponses(listings);
+
+      expect(result).toHaveLength(2);
+      expect(result[0]?.street).toBeNull();
+      expect(result[1]?.street).toBe('Nebenstraße 2');
+    });
+  });
+
   describe('publish', () => {
     it('throws UnprocessableEntityException with missingFields when required fields are absent', async () => {
       const listing = makeRawListing();

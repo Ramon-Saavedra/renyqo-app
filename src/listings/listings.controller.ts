@@ -16,7 +16,7 @@ import { memoryStorage } from 'multer';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import type { Application, Listing } from '../generated/prisma/client';
+import type { Application } from '../generated/prisma/client';
 import {
   LISTING_IMAGE_FILE_FIELD,
   MAX_LISTING_IMAGE_FILE_SIZE_BYTES,
@@ -24,6 +24,7 @@ import {
 } from '../listing-images/listing-image-upload.constants';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { CreateListingDto } from './dto/create-listing.dto';
+import { ListingResponseDto } from './dto/listing-response.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsService } from './listings.service';
 
@@ -39,54 +40,87 @@ export class ListingsController {
       limits: { fileSize: MAX_LISTING_IMAGE_FILE_SIZE_BYTES, files: 1 },
     }),
   )
-  create(
+  async create(
     @Body() dto: CreateListingDto,
     @UploadedFile(OPTIONAL_LISTING_IMAGE_FILE_PIPE)
     file: Express.Multer.File | undefined,
     @Req() req: Request,
-  ): Promise<Listing> {
+  ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
-    return this.listingsService.create(user.id, dto, file);
+    const listing = await this.listingsService.create(user.id, dto, file);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
   }
 
   @Get()
-  findAll(@Req() req: Request): Promise<Listing[]> {
+  async findAll(@Req() req: Request): Promise<ListingResponseDto[]> {
     const user = req.user as SafeUser;
-    return this.listingsService.findAllByProvider(user.id);
+    const listings = await this.listingsService.findAllByProvider(user.id);
+    return this.listingsService.toListingResponses(listings, {
+      exposeExactAddress: true,
+    });
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @Req() req: Request): Promise<Listing> {
+  async findOne(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
-    return this.listingsService.findOneByProvider(id, user.id);
+    const listing = await this.listingsService.findOneByProvider(id, user.id);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
   }
 
   @Patch(':id')
-  update(
+  async update(
     @Param('id') id: string,
     @Body() dto: UpdateListingDto,
     @Req() req: Request,
-  ): Promise<Listing> {
+  ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
-    return this.listingsService.update(id, user.id, dto);
+    const listing = await this.listingsService.update(id, user.id, dto);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
   }
 
   @Patch(':id/publish')
-  publish(@Param('id') id: string, @Req() req: Request): Promise<Listing> {
+  async publish(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
-    return this.listingsService.publish(id, user.id);
+    const listing = await this.listingsService.publish(id, user.id);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
   }
 
   @Patch(':id/draft')
-  moveToDraft(@Param('id') id: string, @Req() req: Request): Promise<Listing> {
+  async moveToDraft(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
-    return this.listingsService.moveToDraft(id, user.id);
+    const listing = await this.listingsService.moveToDraft(id, user.id);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
   }
 
   @Patch(':id/archive')
-  archive(@Param('id') id: string, @Req() req: Request): Promise<Listing> {
+  async archive(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<ListingResponseDto> {
     const user = req.user as SafeUser;
-    return this.listingsService.archive(id, user.id);
+    const listing = await this.listingsService.archive(id, user.id);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
   }
 
   @Get(':id/active-applications')

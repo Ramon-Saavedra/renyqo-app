@@ -11,6 +11,7 @@ import type { Application, Listing } from '../generated/prisma/client';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { Role, UserStatus } from '../generated/prisma/enums';
 import { CreateListingDto } from './dto/create-listing.dto';
+import { ListingResponseDto } from './dto/listing-response.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsController } from './listings.controller';
 import { ListingsService } from './listings.service';
@@ -97,6 +98,18 @@ describe('ListingsController', () => {
             moveToDraft: jest.fn(),
             archive: jest.fn(),
             getActiveApplications: jest.fn(),
+            toListingResponse: jest.fn(
+              (listing: Listing) =>
+                new ListingResponseDto(listing, { exposeExactAddress: true }),
+            ),
+            toListingResponses: jest.fn((listings: readonly Listing[]) =>
+              listings.map(
+                (listing) =>
+                  new ListingResponseDto(listing, {
+                    exposeExactAddress: true,
+                  }),
+              ),
+            ),
           },
         },
       ],
@@ -123,6 +136,9 @@ describe('ListingsController', () => {
         dto,
         undefined,
       );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
       expect(result).toEqual(listing);
     });
   });
@@ -136,6 +152,10 @@ describe('ListingsController', () => {
 
       expect(listingsService.findAllByProvider).toHaveBeenCalledWith(
         PROVIDER_ID,
+      );
+      expect(listingsService.toListingResponses).toHaveBeenCalledWith(
+        listings,
+        { exposeExactAddress: true },
       );
       expect(result).toEqual(listings);
     });
@@ -152,6 +172,9 @@ describe('ListingsController', () => {
         LISTING_ID,
         PROVIDER_ID,
       );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
       expect(result).toEqual(listing);
     });
   });
@@ -169,6 +192,9 @@ describe('ListingsController', () => {
         PROVIDER_ID,
         dto,
       );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
       expect(result).toEqual(listing);
     });
   });
@@ -184,6 +210,9 @@ describe('ListingsController', () => {
         LISTING_ID,
         PROVIDER_ID,
       );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
       expect(result.status).toBe(ListingStatus.PUBLISHED);
     });
   });
@@ -199,6 +228,9 @@ describe('ListingsController', () => {
         LISTING_ID,
         PROVIDER_ID,
       );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
       expect(result.status).toBe(ListingStatus.DRAFT);
     });
   });
@@ -214,6 +246,9 @@ describe('ListingsController', () => {
         LISTING_ID,
         PROVIDER_ID,
       );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
       expect(result.status).toBe(ListingStatus.ARCHIVED);
     });
   });
