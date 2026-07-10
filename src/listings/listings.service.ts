@@ -13,6 +13,7 @@ import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
+import { ListingResponseDto } from './dto/listing-response.dto';
 import type { UpdateListingDto } from './dto/update-listing.dto';
 
 const PUBLISH_REQUIRED_FIELDS = [
@@ -150,6 +151,20 @@ export class ListingsService {
       where: { listingId: id, status: ApplicationStatus.ACTIVE },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  toListingResponse(
+    listing: Listing,
+    options: { exposeExactAddress?: boolean } = {},
+  ): ListingResponseDto {
+    return new ListingResponseDto(listing, options);
+  }
+
+  toListingResponses(
+    listings: readonly Listing[],
+    options: { exposeExactAddress?: boolean } = {},
+  ): ListingResponseDto[] {
+    return listings.map((listing) => this.toListingResponse(listing, options));
   }
 
   private async createWithImage(
