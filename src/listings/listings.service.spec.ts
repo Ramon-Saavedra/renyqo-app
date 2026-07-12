@@ -61,9 +61,21 @@ type ListingCreateArgs = {
     objectType?: ObjectType;
     city?: string;
     zip?: string;
+    coldRent?: number;
+    deposit?: number;
+    depositMonths?: number;
     title?: string;
     shortDescription?: string;
     photos?: string[];
+  };
+};
+
+type ListingUpdateArgs = {
+  data: {
+    coldRent?: number;
+    deposit?: number;
+    depositMonths?: number;
+    title?: string;
   };
 };
 
@@ -105,6 +117,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   coldRent: null,
   additionalCosts: null,
   deposit: null,
+  depositMonths: 2,
   availableFrom: null,
   title: null,
   shortDescription: null,
@@ -259,6 +272,74 @@ describe('ListingsService', () => {
       expect(prismaMock.listing.create).not.toHaveBeenCalled();
     });
 
+    it('calculates the default deposit as two cold rent months', async () => {
+      const listing = makeRawListing({
+        coldRent: 1200,
+        deposit: 2400,
+        depositMonths: 2,
+      });
+      const dto: CreateListingDto = { coldRent: 1200 };
+      prismaMock.listing.create.mockResolvedValue(listing);
+
+      await service.create(PROVIDER_ID, dto);
+
+      const listingCreateArgs = prismaMock.listing.create.mock
+        .calls[0][0] as ListingCreateArgs;
+
+      expect(listingCreateArgs.data).toEqual(
+        expect.objectContaining({
+          coldRent: 1200,
+          deposit: 2400,
+          depositMonths: 2,
+        }),
+      );
+    });
+
+    it('calculates deposit from selected deposit months', async () => {
+      const listing = makeRawListing({
+        coldRent: 1200,
+        deposit: 3600,
+        depositMonths: 3,
+      });
+      const dto: CreateListingDto = { coldRent: 1200, depositMonths: 3 };
+      prismaMock.listing.create.mockResolvedValue(listing);
+
+      await service.create(PROVIDER_ID, dto);
+
+      const listingCreateArgs = prismaMock.listing.create.mock
+        .calls[0][0] as ListingCreateArgs;
+
+      expect(listingCreateArgs.data).toEqual(
+        expect.objectContaining({
+          coldRent: 1200,
+          deposit: 3600,
+          depositMonths: 3,
+        }),
+      );
+    });
+
+    it('rejects a provided deposit that does not match cold rent months', async () => {
+      const dto: CreateListingDto = {
+        coldRent: 1200,
+        depositMonths: 2,
+        deposit: 3600,
+      };
+
+      await expect(service.create(PROVIDER_ID, dto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prismaMock.listing.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a deposit without cold rent', async () => {
+      const dto: CreateListingDto = { deposit: 2400 };
+
+      await expect(service.create(PROVIDER_ID, dto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prismaMock.listing.create).not.toHaveBeenCalled();
+    });
+
     it('omits null and empty string values when creating a draft', async () => {
       const listing = makeRawListing({
         city: null,
@@ -380,6 +461,82 @@ describe('ListingsService', () => {
       expect(cloudinaryMock.deleteByPublicId).toHaveBeenCalledWith(
         uploadResult.public_id,
       );
+    });
+  });
+
+  describe('update', () => {
+    it('recalculates deposit when cold rent changes', async () => {
+      const listing = makeRawListing({ coldRent: 1000, depositMonths: 2 });
+      const updated = makeRawListing({
+        coldRent: 1300,
+        deposit: 2600,
+        depositMonths: 2,
+      });
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue(updated);
+
+      const result = await service.update(LISTING_ID, PROVIDER_ID, {
+        coldRent: 1300,
+      });
+
+      const listingUpdateArgs = prismaMock.listing.update.mock
+        .calls[0][0] as ListingUpdateArgs;
+
+      expect(listingUpdateArgs.data).toEqual(
+        expect.objectContaining({
+          coldRent: 1300,
+          deposit: 2600,
+          depositMonths: 2,
+        }),
+      );
+      expect(result).toEqual(updated);
+    });
+
+    it('recalculates deposit when deposit months change', async () => {
+      const listing = makeRawListing({ coldRent: 1000, depositMonths: 2 });
+      const updated = makeRawListing({
+        coldRent: 1000,
+        deposit: 3000,
+        depositMonths: 3,
+      });
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue(updated);
+
+      await service.update(LISTING_ID, PROVIDER_ID, { depositMonths: 3 });
+
+      const listingUpdateArgs = prismaMock.listing.update.mock
+        .calls[0][0] as ListingUpdateArgs;
+
+      expect(listingUpdateArgs.data).toEqual(
+        expect.objectContaining({
+          deposit: 3000,
+          depositMonths: 3,
+        }),
+      );
+    });
+
+    it('stores deposit months without requiring cold rent on a draft', async () => {
+      const listing = makeRawListing({ coldRent: null, depositMonths: 2 });
+      const updated = makeRawListing({ coldRent: null, depositMonths: 1 });
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue(updated);
+
+      await service.update(LISTING_ID, PROVIDER_ID, { depositMonths: 1 });
+
+      const listingUpdateArgs = prismaMock.listing.update.mock
+        .calls[0][0] as ListingUpdateArgs;
+
+      expect(listingUpdateArgs.data).toEqual({ depositMonths: 1 });
+    });
+
+    it('rejects mismatched deposit on update', async () => {
+      const listing = makeRawListing({ coldRent: 1000, depositMonths: 2 });
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+
+      await expect(
+        service.update(LISTING_ID, PROVIDER_ID, { deposit: 3000 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prismaMock.listing.update).not.toHaveBeenCalled();
     });
   });
 

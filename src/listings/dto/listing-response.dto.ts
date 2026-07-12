@@ -16,6 +16,7 @@ export class ListingResponseDto {
   readonly coldRent!: Listing['coldRent'];
   readonly additionalCosts!: Listing['additionalCosts'];
   readonly deposit!: Listing['deposit'];
+  readonly depositMonths!: Listing['depositMonths'];
   readonly availableFrom!: Listing['availableFrom'];
   readonly title!: Listing['title'];
   readonly shortDescription!: Listing['shortDescription'];

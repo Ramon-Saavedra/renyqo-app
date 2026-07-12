@@ -11,7 +11,6 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -19,7 +18,7 @@ import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { Application } from '../generated/prisma/client';
 import {
   LISTING_IMAGE_FILE_FIELD,
-  MAX_LISTING_IMAGE_FILE_SIZE_BYTES,
+  LISTING_IMAGE_MULTER_OPTIONS,
   OPTIONAL_LISTING_IMAGE_FILE_PIPE,
 } from '../listing-images/listing-image-upload.constants';
 import type { SafeUser } from '../users/types/safe-user.type';
@@ -35,10 +34,7 @@ export class ListingsController {
 
   @Post()
   @UseInterceptors(
-    FileInterceptor(LISTING_IMAGE_FILE_FIELD, {
-      storage: memoryStorage(),
-      limits: { fileSize: MAX_LISTING_IMAGE_FILE_SIZE_BYTES, files: 1 },
-    }),
+    FileInterceptor(LISTING_IMAGE_FILE_FIELD, LISTING_IMAGE_MULTER_OPTIONS),
   )
   async create(
     @Body() dto: CreateListingDto,

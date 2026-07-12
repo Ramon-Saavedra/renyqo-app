@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
@@ -98,6 +99,12 @@ export class CreateListingDto {
   @IsNumber()
   @Min(0)
   deposit?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3)
+  depositMonths?: number;
 
   @IsOptional()
   @IsDateString()
