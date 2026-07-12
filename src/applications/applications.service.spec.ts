@@ -37,6 +37,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   coldRent: null,
   additionalCosts: null,
   deposit: null,
+  depositMonths: 2,
   availableFrom: null,
   title: 'Test Listing',
   shortDescription: null,

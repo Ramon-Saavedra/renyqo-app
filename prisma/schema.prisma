@@ -103,6 +103,7 @@ model Listing {
   coldRent        Float?     @map("cold_rent")
   additionalCosts Float?     @map("additional_costs")
   deposit         Float?
+  depositMonths   Int        @default(2) @map("deposit_months")
   availableFrom   DateTime?  @map("available_from")
 
   title            String?
