@@ -40,4 +40,24 @@ describe('CreateListingDto', () => {
 
     expect(errors).toHaveLength(0);
   });
+
+  it('accepts depositMonths values from one to three', async () => {
+    await expect(validateDto({ depositMonths: 1 })).resolves.toHaveLength(0);
+    await expect(validateDto({ depositMonths: 2 })).resolves.toHaveLength(0);
+    await expect(validateDto({ depositMonths: 3 })).resolves.toHaveLength(0);
+  });
+
+  it('rejects depositMonths values outside the allowed range', async () => {
+    const belowRange = await validateDto({ depositMonths: 0 });
+    const aboveRange = await validateDto({ depositMonths: 4 });
+
+    expect(belowRange[0]?.property).toBe('depositMonths');
+    expect(aboveRange[0]?.property).toBe('depositMonths');
+  });
+
+  it('rejects decimal depositMonths values', async () => {
+    const errors = await validateDto({ depositMonths: 1.5 });
+
+    expect(errors[0]?.property).toBe('depositMonths');
+  });
 });

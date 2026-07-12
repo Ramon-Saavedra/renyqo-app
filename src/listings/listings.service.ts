@@ -30,6 +30,11 @@ const PUBLISH_REQUIRED_FIELDS = [
 
 type PublishRequiredField = (typeof PUBLISH_REQUIRED_FIELDS)[number];
 
+const DEFAULT_DEPOSIT_MONTHS = 2;
+const MIN_DEPOSIT_MONTHS = 1;
+const MAX_DEPOSIT_MONTHS = 3;
+const DEPOSIT_AMOUNT_TOLERANCE = 0.01;
+
 @Injectable()
 export class ListingsService {
   private readonly logger = new Logger(ListingsService.name);
@@ -80,16 +85,10 @@ export class ListingsService {
     providerId: string,
     dto: UpdateListingDto,
   ): Promise<Listing> {
-    await this.findOneByProvider(id, providerId);
-    const { availableFrom, ...rest } = dto;
+    const listing = await this.findOneByProvider(id, providerId);
     return this.prisma.listing.update({
       where: { id },
-      data: {
-        ...rest,
-        ...(availableFrom !== undefined
-          ? { availableFrom: new Date(availableFrom) }
-          : {}),
-      },
+      data: this.buildUpdateData(dto, listing),
     });
   }
 
@@ -249,6 +248,7 @@ export class ListingsService {
       coldRent: dto.coldRent,
       additionalCosts: dto.additionalCosts,
       deposit: dto.deposit,
+      depositMonths: dto.depositMonths,
       availableFrom: dto.availableFrom
         ? new Date(dto.availableFrom)
         : undefined,
@@ -265,12 +265,17 @@ export class ListingsService {
     return {
       providerId,
       ...draftData,
+      ...this.buildCreateDepositData(dto),
     };
   }
 
   private hasMeaningfulDraftData(dto: CreateListingDto): boolean {
-    return Object.values(dto).some((value) => {
+    return Object.entries(dto).some(([key, value]) => {
       if (value === undefined || value === null) {
+        return false;
+      }
+
+      if (key === 'depositMonths' && value === DEFAULT_DEPOSIT_MONTHS) {
         return false;
       }
 
@@ -284,6 +289,116 @@ export class ListingsService {
 
       return true;
     });
+  }
+
+  private buildUpdateData(
+    dto: UpdateListingDto,
+    listing: Listing,
+  ): Prisma.ListingUncheckedUpdateInput {
+    const { availableFrom, ...rest } = dto;
+    const draftData = this.stripEmptyValues({
+      ...rest,
+      availableFrom:
+        availableFrom !== undefined ? new Date(availableFrom) : undefined,
+    });
+
+    return {
+      ...draftData,
+      ...this.buildUpdateDepositData(dto, listing),
+    };
+  }
+
+  private buildCreateDepositData(
+    dto: CreateListingDto,
+  ): Partial<
+    Pick<Prisma.ListingUncheckedCreateInput, 'deposit' | 'depositMonths'>
+  > {
+    const depositMonths = dto.depositMonths ?? DEFAULT_DEPOSIT_MONTHS;
+    this.assertDepositMonthsAllowed(depositMonths);
+
+    if (dto.deposit !== undefined && dto.coldRent === undefined) {
+      throw new BadRequestException(
+        'coldRent is required when deposit is provided',
+      );
+    }
+
+    if (dto.coldRent === undefined) {
+      return dto.depositMonths === undefined
+        ? {}
+        : { depositMonths: dto.depositMonths };
+    }
+
+    const deposit = this.calculateDeposit(dto.coldRent, depositMonths);
+    this.assertDepositMatchesCalculation(dto.deposit, deposit);
+
+    return { deposit, depositMonths };
+  }
+
+  private buildUpdateDepositData(
+    dto: UpdateListingDto,
+    listing: Listing,
+  ): Partial<
+    Pick<Prisma.ListingUncheckedUpdateInput, 'deposit' | 'depositMonths'>
+  > {
+    const coldRent = dto.coldRent ?? listing.coldRent;
+    const depositMonths = dto.depositMonths ?? listing.depositMonths;
+    this.assertDepositMonthsAllowed(depositMonths);
+    const touchesDepositFields =
+      dto.coldRent !== undefined ||
+      dto.depositMonths !== undefined ||
+      dto.deposit !== undefined;
+
+    if (!touchesDepositFields) {
+      return {};
+    }
+
+    if (dto.deposit !== undefined && coldRent === null) {
+      throw new BadRequestException(
+        'coldRent is required when deposit is provided',
+      );
+    }
+
+    if (coldRent === null) {
+      return dto.depositMonths === undefined
+        ? {}
+        : { depositMonths: dto.depositMonths };
+    }
+
+    const deposit = this.calculateDeposit(coldRent, depositMonths);
+    this.assertDepositMatchesCalculation(dto.deposit, deposit);
+
+    return { deposit, depositMonths };
+  }
+
+  private calculateDeposit(coldRent: number, depositMonths: number): number {
+    return Math.round(coldRent * depositMonths * 100) / 100;
+  }
+
+  private assertDepositMonthsAllowed(depositMonths: number): void {
+    if (
+      !Number.isInteger(depositMonths) ||
+      depositMonths < MIN_DEPOSIT_MONTHS ||
+      depositMonths > MAX_DEPOSIT_MONTHS
+    ) {
+      throw new BadRequestException('depositMonths must be 1, 2, or 3');
+    }
+  }
+
+  private assertDepositMatchesCalculation(
+    providedDeposit: number | undefined,
+    calculatedDeposit: number,
+  ): void {
+    if (providedDeposit === undefined) {
+      return;
+    }
+
+    if (
+      Math.abs(providedDeposit - calculatedDeposit) > DEPOSIT_AMOUNT_TOLERANCE
+    ) {
+      throw new BadRequestException(
+        'deposit must equal coldRent multiplied by depositMonths',
+      );
+    }
   }
 
   private stripEmptyValues<T extends Record<string, unknown>>(data: T) {
