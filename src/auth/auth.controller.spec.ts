@@ -55,7 +55,9 @@ const makeReq = (loginError?: Error): MockRequest => ({
 
 describe('AuthController', () => {
   let controller: AuthController;
-  let authService: jest.Mocked<Pick<AuthService, 'register' | 'login'>>;
+  let authService: jest.Mocked<
+    Pick<AuthService, 'register' | 'login' | 'forgotPassword' | 'resetPassword'>
+  >;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -66,6 +68,8 @@ describe('AuthController', () => {
           useValue: {
             register: jest.fn(),
             login: jest.fn(),
+            forgotPassword: jest.fn(),
+            resetPassword: jest.fn(),
           },
         },
       ],
@@ -192,6 +196,46 @@ describe('AuthController', () => {
       await expect(
         controller.login(makeLoginDto(), req as unknown as Request),
       ).rejects.toThrow('Session store failed');
+    });
+  });
+
+  describe('forgotPassword', () => {
+    it('passes the dto to authService and returns its neutral response', async () => {
+      authService.forgotPassword.mockResolvedValue({
+        message:
+          'If an account exists for this email, password reset instructions will be sent.',
+      });
+
+      const result = await controller.forgotPassword({
+        email: 'test@example.com',
+      });
+
+      expect(authService.forgotPassword).toHaveBeenCalledWith({
+        email: 'test@example.com',
+      });
+      expect(result).toEqual({
+        message:
+          'If an account exists for this email, password reset instructions will be sent.',
+      });
+    });
+  });
+
+  describe('resetPassword', () => {
+    it('passes the dto to authService and returns success response', async () => {
+      authService.resetPassword.mockResolvedValue({
+        message: 'Password has been reset.',
+      });
+
+      const result = await controller.resetPassword({
+        token: 'token',
+        password: 'newpassword123',
+      });
+
+      expect(authService.resetPassword).toHaveBeenCalledWith({
+        token: 'token',
+        password: 'newpassword123',
+      });
+      expect(result).toEqual({ message: 'Password has been reset.' });
     });
   });
 });
