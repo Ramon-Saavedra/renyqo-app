@@ -64,6 +64,8 @@ npm run start:dev
 | `DATABASE_URL`          | yes                | PostgreSQL connection string                  |
 | `SESSION_SECRET`        | yes                | Session signing secret, minimum 32 characters |
 | `FRONTEND_URL`          | no                 | Allowed frontend origin for CORS              |
+| `AWS_REGION`            | production/email   | AWS region used by Amazon SES                 |
+| `SES_FROM_EMAIL`        | production/email   | Verified SES sender email address             |
 | `CLOUDINARY_CLOUD_NAME` | production/uploads | Cloudinary cloud name                         |
 | `CLOUDINARY_API_KEY`    | production/uploads | Cloudinary API key                            |
 | `CLOUDINARY_API_SECRET` | production/uploads | Cloudinary API secret                         |
@@ -81,12 +83,14 @@ Global prefix: `/api/v1`
 
 ### Auth
 
-| Method | Path                    | Auth    | Description                                      |
-| ------ | ----------------------- | ------- | ------------------------------------------------ |
-| `POST` | `/api/v1/auth/register` | No      | Register as applicant or provider and set cookie |
-| `POST` | `/api/v1/auth/login`    | No      | Login and set cookie                             |
-| `POST` | `/api/v1/auth/logout`   | Session | Logout and clear cookie                          |
-| `GET`  | `/api/v1/auth/me`       | Session | Return current user without password hash        |
+| Method | Path                                | Auth    | Description                                      |
+| ------ | ----------------------------------- | ------- | ------------------------------------------------ |
+| `POST` | `/api/v1/auth/register`             | No      | Register as applicant or provider and set cookie |
+| `POST` | `/api/v1/auth/login`                | No      | Login and set cookie                             |
+| `POST` | `/api/v1/auth/forgot-password`      | No      | Request password reset instructions              |
+| `POST` | `/api/v1/auth/reset-password`       | No      | Reset password with a valid reset token          |
+| `POST` | `/api/v1/auth/logout`               | Session | Logout and clear cookie                          |
+| `GET`  | `/api/v1/auth/me`                   | Session | Return current user without password hash        |
 
 Public registration only accepts `applicant` and `provider`.
 
@@ -98,6 +102,8 @@ Provider registration may also include optional identity fields:
 If `providerType` is omitted, both `providerType` and `companyName` remain `null` for backwards compatibility. If `providerType` is `private`, `companyName` is stored as `null`.
 
 Safe user responses from `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, and `GET /api/v1/auth/me` include `name`, `email`, `providerType`, and `companyName`, but never `passwordHash`.
+
+Password recovery uses Amazon SES. `POST /api/v1/auth/forgot-password` always returns a neutral response whether the email exists or not. Reset tokens are generated securely, stored only as hashes, expire after 60 minutes, and are single-use. A successful reset updates the stored password hash and invalidates existing sessions.
 
 ### Me
 
@@ -237,6 +243,7 @@ src/
   common/               Shared guards and types
   config/               Environment validation
   dashboard/            Provider dashboard summary
+  email/                Amazon SES email delivery
   health/               Liveness endpoint
   listing-images/       Cloudinary-backed listing images
   listings/             Provider listing management

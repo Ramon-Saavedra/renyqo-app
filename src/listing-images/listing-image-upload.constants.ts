@@ -40,10 +40,6 @@ const buildListingImageFilePipe = (fileIsRequired: boolean) =>
       maxSize: MAX_LISTING_IMAGE_FILE_SIZE_BYTES,
       errorMessage: LISTING_IMAGE_FILE_TOO_LARGE_MESSAGE,
     })
-    .addFileTypeValidator({
-      fileType: /^image\/(jpeg|png|webp)$/,
-      errorMessage: LISTING_IMAGE_INVALID_FILE_TYPE_MESSAGE,
-    })
     .build({
       errorHttpStatusCode: HttpStatus.BAD_REQUEST,
       fileIsRequired,

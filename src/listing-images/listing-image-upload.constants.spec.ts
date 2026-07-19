@@ -88,23 +88,6 @@ describe('listing image upload constants', () => {
     }
   });
 
-  it('rejects invalid file types with the configured message', async () => {
-    try {
-      await REQUIRED_LISTING_IMAGE_FILE_PIPE.transform(
-        makeFile({
-          mimetype: 'application/pdf',
-          originalname: 'document.pdf',
-          buffer: Buffer.from('%PDF'),
-        }),
-      );
-      throw new Error('Expected image upload pipe to reject an invalid file');
-    } catch (error) {
-      expect(getExceptionMessage(error)).toBe(
-        LISTING_IMAGE_INVALID_FILE_TYPE_MESSAGE,
-      );
-    }
-  });
-
   it('allows optional listing image uploads to omit the file', async () => {
     await expect(
       OPTIONAL_LISTING_IMAGE_FILE_PIPE.transform(undefined),

@@ -1,6 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import {
   IsEnum,
+  IsEmail,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -42,6 +43,15 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
+  AWS_REGION?: string;
+
+  @IsOptional()
+  @IsEmail()
+  SES_FROM_EMAIL?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
   CLOUDINARY_CLOUD_NAME?: string;
 
   @IsOptional()
@@ -76,6 +86,11 @@ export function validateEnv(
     messages.push(cloudinaryError);
   }
 
+  const sesError = validateSesConfig(validated);
+  if (sesError) {
+    messages.push(sesError);
+  }
+
   if (messages.length > 0) {
     throw new Error(`Invalid environment variables:\n${messages.join('\n')}`);
   }
@@ -97,6 +112,8 @@ function normalizeConfig(
     ),
     CLOUDINARY_FOLDER:
       normalizeOptionalString(config['CLOUDINARY_FOLDER']) ?? 'renyqo',
+    AWS_REGION: normalizeOptionalString(config['AWS_REGION']),
+    SES_FROM_EMAIL: normalizeOptionalString(config['SES_FROM_EMAIL']),
   };
 }
 
@@ -128,6 +145,26 @@ function validateCloudinaryConfig(config: EnvironmentVariables): string | null {
     configuredCount !== credentials.length
   ) {
     return 'Cloudinary credentials must be provided together';
+  }
+
+  return null;
+}
+
+function validateSesConfig(config: EnvironmentVariables): string | null {
+  const values = [config.AWS_REGION, config.SES_FROM_EMAIL];
+  const configuredCount = values.filter(Boolean).length;
+  const requiresSes = config.NODE_ENV === NodeEnv.Production;
+
+  if (requiresSes && configuredCount !== values.length) {
+    return 'Amazon SES configuration is required in production';
+  }
+
+  if (
+    !requiresSes &&
+    configuredCount > 0 &&
+    configuredCount !== values.length
+  ) {
+    return 'Amazon SES configuration must include AWS_REGION and SES_FROM_EMAIL';
   }
 
   return null;
