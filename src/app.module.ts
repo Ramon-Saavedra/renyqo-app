@@ -9,6 +9,7 @@ import { ListingImagesModule } from './listing-images/listing-images.module';
 import { ListingsModule } from './listings/listings.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { EligibilityModule } from './eligibility/eligibility.module';
 import { MeModule } from './me/me.module';
 
 @Module({
@@ -25,6 +26,7 @@ import { MeModule } from './me/me.module';
     DashboardModule,
     ApplicationsModule,
     ApplicantProfileModule,
+    EligibilityModule,
     HealthModule,
   ],
   controllers: [],
