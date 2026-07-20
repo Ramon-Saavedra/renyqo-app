@@ -182,17 +182,30 @@ Response:
 
 ### Applications
 
-| Method | Path                                            | Auth      | Description                                            |
-| ------ | ----------------------------------------------- | --------- | ------------------------------------------------------ |
-| `POST` | `/api/v1/listings/:id/check-eligibility`        | Applicant | Check explainable eligibility before applying          |
-| `POST` | `/api/v1/listings/:id/apply`                    | Applicant | Apply to a published listing                           |
-| `GET`  | `/api/v1/applicant/applications`                | Applicant | Get applications submitted by the current applicant    |
-| `GET`  | `/api/v1/provider/applications`                 | Provider  | Get applications across provider listings              |
-| `GET`  | `/api/v1/provider/listings/:id/applications`    | Provider  | Get applications for an owned listing                  |
-| `GET`  | `/api/v1/provider/listings/:id/waiting-count`   | Provider  | Get the waiting application count for an owned listing |
-| `POST` | `/api/v1/provider/listings/:id/promote-waiting` | Provider  | Promote eligible waiting applications FIFO             |
+| Method | Path                                          | Auth      | Description                                            |
+| ------ | --------------------------------------------- | --------- | ------------------------------------------------------ |
+| `GET`  | `/api/v1/listings/:id/eligibility`            | Applicant | Read explainable eligibility for the current applicant |
+| `POST` | `/api/v1/listings/:id/apply`                  | Applicant | Apply to a published listing                           |
+| `GET`  | `/api/v1/applicant/applications`              | Applicant | Get applications submitted by the current applicant    |
+| `GET`  | `/api/v1/provider/applications`               | Provider  | Get applications across provider listings              |
+| `GET`  | `/api/v1/provider/listings/:id/applications`  | Provider  | Get applications for an owned listing                  |
+| `GET`  | `/api/v1/provider/listings/:id/waiting-count` | Provider  | Get the waiting application count for an owned listing |
 
-Only published listings accept applications. Eligibility checks return `canApply`, `reasons`, and `warnings`. The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING` and promoted FIFO after eligibility is rechecked. Provider application lists never include `WAITING` applications; use the waiting-count endpoint for that count. Duplicate applications return `409`.
+Only published listings accept applications.
+
+`GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns `canApply`, `reasons`, `warnings` and `evaluatedAt`. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
+
+`POST /api/v1/listings/:id/apply` always recalculates eligibility from current database data inside the same transaction that creates the application. A previous frontend eligibility result is never trusted. A rejected application returns `422` with the same explainable payload, where `evaluatedAt` is the timestamp of the evaluation that caused the rejection.
+
+The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING`. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. Duplicate applications return `409`.
+
+### Waiting queue promotion
+
+Promotion is an internal backend operation with no HTTP endpoint. Providers cannot promote a waiting applicant manually, and the queue is never reordered by income, assets, SCHUFA or provider preference.
+
+`ApplicationsService.promoteWaitingApplications(listingId)` promotes the oldest eligible `WAITING` applications by `queueOrder`, rechecks eligibility immediately before each promotion and stops at the five-active limit. It runs in a Serializable transaction with row locks and serialization-conflict retries, so concurrent promotions can never exceed five `ACTIVE` applications.
+
+No application status transition releases an `ACTIVE` slot yet, because reject and withdraw are not part of this phase. When that transition is implemented, it must call the private `promoteWithinTransaction(tx, listing)` inside the same Serializable transaction that writes the `REJECTED` or `WITHDRAWN` status, immediately after that update. That keeps slot release and FIFO promotion atomic. Ownership must be enforced by that transition before the slot is released.
 
 ### Applicant Profile
 
