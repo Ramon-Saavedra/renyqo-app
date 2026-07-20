@@ -1,5 +1,9 @@
-import { ParseUUIDPipe } from '@nestjs/common';
-import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
+import {
+  METHOD_METADATA,
+  PATH_METADATA,
+  ROUTE_ARGS_METADATA,
+} from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -10,7 +14,6 @@ import { ApplicationsService } from './applications.service';
 import { ProviderApplicationsController } from './provider-applications.controller';
 import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
 import { ApplicationResponseDto } from './dto/application-response.dto';
-import { PromotionResponseDto } from './dto/promotion-response.dto';
 
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
@@ -94,7 +97,6 @@ describe('ProviderApplicationsController', () => {
             findAllByListing: jest.fn(),
             findActiveByListing: jest.fn(),
             findWaitingCountByListing: jest.fn(),
-            promoteWaitingApplications: jest.fn(),
           },
         },
       ],
@@ -188,16 +190,46 @@ describe('ProviderApplicationsController', () => {
     });
   });
 
-  describe('promoteWaiting', () => {
-    it('promotes waiting applications for the provider-owned listing', async () => {
-      applicationsService.promoteWaitingApplications.mockResolvedValue(2);
+  describe('waiting queue promotion', () => {
+    const handlerNames = (): string[] =>
+      Object.getOwnPropertyNames(
+        ProviderApplicationsController.prototype,
+      ).filter((name) => name !== 'constructor');
 
-      await expect(
-        controller.promoteWaiting(LISTING_ID, makeProviderUser()),
-      ).resolves.toEqual(new PromotionResponseDto(2));
+    const handler = (name: string): object =>
+      ProviderApplicationsController.prototype[
+        name as keyof ProviderApplicationsController
+      ];
+
+    const routeMethod = (name: string): unknown =>
+      Reflect.getMetadata(METHOD_METADATA, handler(name));
+
+    it('exposes no route that lets a provider promote a waiting applicant', () => {
+      const names = handlerNames();
+
+      expect(names).toEqual([
+        'findAll',
+        'findByListing',
+        'findActiveByListing',
+        'findWaitingCount',
+      ]);
+      expect(names.some((name) => name.toLowerCase().includes('promote'))).toBe(
+        false,
+      );
+    });
+
+    it('exposes only read-only GET routes to the provider', () => {
+      expect(handlerNames().map(routeMethod)).toEqual([
+        RequestMethod.GET,
+        RequestMethod.GET,
+        RequestMethod.GET,
+        RequestMethod.GET,
+      ]);
       expect(
-        applicationsService.promoteWaitingApplications,
-      ).toHaveBeenCalledWith(LISTING_ID, PROVIDER_ID);
+        handlerNames().map((name): unknown =>
+          Reflect.getMetadata(PATH_METADATA, handler(name)),
+        ),
+      ).not.toContain('listings/:id/promote-waiting');
     });
   });
 });

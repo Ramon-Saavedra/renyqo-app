@@ -16,16 +16,19 @@ export class EligibilityResponseDto {
   readonly canApply!: boolean;
   readonly reasons!: EligibilityReason[];
   readonly warnings!: EligibilityWarning[];
+  readonly evaluatedAt!: Date;
 
   constructor(
     canApply: boolean,
     reasons: readonly EligibilityReason[],
     warnings: readonly EligibilityWarning[],
+    evaluatedAt: Date,
   ) {
     Object.assign(this, {
       canApply,
       reasons: [...reasons],
       warnings: [...warnings],
+      evaluatedAt,
     });
   }
 }
