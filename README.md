@@ -233,6 +233,10 @@ docker build -t renyqo-backend .
 docker run --env-file .env -p 3000:3000 renyqo-backend
 ```
 
+The production container runs `node dist/main` with production dependencies only. It requires the same environment variables documented above.
+
+The GitHub Actions `docker-build` check runs for pull requests targeting `main` and pushes to `main`. It uses Docker Buildx with GitHub Actions cache, builds the image without registry authentication or image push, and starts the container against a temporary PostgreSQL service with `NODE_ENV=test` before calling `/api/v1/health`. It does not deploy and does not use AWS secrets.
+
 ## Project Structure
 
 ```txt
