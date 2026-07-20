@@ -43,6 +43,8 @@ Run database migrations:
 npx prisma migrate dev
 ```
 
+The application queue migrations add and backfill a global FIFO sequence and build queue indexes. Run them during a deployment maintenance window with application writes stopped; the backfill and index creation are intentionally not online operations.
+
 Generate the Prisma client:
 
 ```bash
@@ -83,14 +85,14 @@ Global prefix: `/api/v1`
 
 ### Auth
 
-| Method | Path                                | Auth    | Description                                      |
-| ------ | ----------------------------------- | ------- | ------------------------------------------------ |
-| `POST` | `/api/v1/auth/register`             | No      | Register as applicant or provider and set cookie |
-| `POST` | `/api/v1/auth/login`                | No      | Login and set cookie                             |
-| `POST` | `/api/v1/auth/forgot-password`      | No      | Request password reset instructions              |
-| `POST` | `/api/v1/auth/reset-password`       | No      | Reset password with a valid reset token          |
-| `POST` | `/api/v1/auth/logout`               | Session | Logout and clear cookie                          |
-| `GET`  | `/api/v1/auth/me`                   | Session | Return current user without password hash        |
+| Method | Path                           | Auth    | Description                                      |
+| ------ | ------------------------------ | ------- | ------------------------------------------------ |
+| `POST` | `/api/v1/auth/register`        | No      | Register as applicant or provider and set cookie |
+| `POST` | `/api/v1/auth/login`           | No      | Login and set cookie                             |
+| `POST` | `/api/v1/auth/forgot-password` | No      | Request password reset instructions              |
+| `POST` | `/api/v1/auth/reset-password`  | No      | Reset password with a valid reset token          |
+| `POST` | `/api/v1/auth/logout`          | Session | Logout and clear cookie                          |
+| `GET`  | `/api/v1/auth/me`              | Session | Return current user without password hash        |
 
 Public registration only accepts `applicant` and `provider`.
 
@@ -180,14 +182,17 @@ Response:
 
 ### Applications
 
-| Method | Path                                         | Auth      | Description                                         |
-| ------ | -------------------------------------------- | --------- | --------------------------------------------------- |
-| `POST` | `/api/v1/listings/:id/apply`                 | Applicant | Apply to a published listing                        |
-| `GET`  | `/api/v1/applicant/applications`             | Applicant | Get applications submitted by the current applicant |
-| `GET`  | `/api/v1/provider/applications`              | Provider  | Get applications across provider listings           |
-| `GET`  | `/api/v1/provider/listings/:id/applications` | Provider  | Get applications for an owned listing               |
+| Method | Path                                            | Auth      | Description                                            |
+| ------ | ----------------------------------------------- | --------- | ------------------------------------------------------ |
+| `POST` | `/api/v1/listings/:id/check-eligibility`        | Applicant | Check explainable eligibility before applying          |
+| `POST` | `/api/v1/listings/:id/apply`                    | Applicant | Apply to a published listing                           |
+| `GET`  | `/api/v1/applicant/applications`                | Applicant | Get applications submitted by the current applicant    |
+| `GET`  | `/api/v1/provider/applications`                 | Provider  | Get applications across provider listings              |
+| `GET`  | `/api/v1/provider/listings/:id/applications`    | Provider  | Get applications for an owned listing                  |
+| `GET`  | `/api/v1/provider/listings/:id/waiting-count`   | Provider  | Get the waiting application count for an owned listing |
+| `POST` | `/api/v1/provider/listings/:id/promote-waiting` | Provider  | Promote eligible waiting applications FIFO             |
 
-Only published listings accept applications. Duplicate applications return `409`.
+Only published listings accept applications. Eligibility checks return `canApply`, `reasons`, and `warnings`. The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING` and promoted FIFO after eligibility is rechecked. Provider application lists never include `WAITING` applications; use the waiting-count endpoint for that count. Duplicate applications return `409`.
 
 ### Applicant Profile
 
@@ -214,6 +219,24 @@ Only published listings accept applications. Duplicate applications return `409`
 | `npm run test`      | Run unit tests                |
 | `npm run test:e2e`  | Run end-to-end tests          |
 | `npm run test:cov`  | Run tests with coverage       |
+
+## E2E Testing
+
+End-to-end tests require a dedicated temporary PostgreSQL database and fail closed unless both variables are set:
+
+```bash
+E2E_DATABASE_URL=postgresql://<test-user>:<test-password>@localhost:<port>/<project>_e2e
+E2E_DATABASE_ALLOW_RESET=true
+```
+
+The suite clears this dedicated database between tests. The database name must end with `_e2e`; the suite rejects `renyqo_dev`, staging and production database names before connecting or cleaning. Never point these variables at a development or production database.
+
+For local Docker E2E runs, start the isolated database and apply migrations to it:
+
+```bash
+docker compose -f docker-compose.e2e.yml up -d
+DATABASE_URL=postgresql://renyqo:renyqo_dev@localhost:5434/renyqo_e2e?schema=public npx prisma migrate deploy
+```
 
 ## Quality Gate
 

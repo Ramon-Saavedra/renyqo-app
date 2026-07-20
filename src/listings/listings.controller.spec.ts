@@ -3,12 +3,8 @@ import { ParseUUIDPipe } from '@nestjs/common';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import {
-  ApplicationStatus,
-  ListingStatus,
-  ObjectType,
-} from '../generated/prisma/enums';
-import type { Application, Listing } from '../generated/prisma/client';
+import { ListingStatus, ObjectType } from '../generated/prisma/enums';
+import type { Listing } from '../generated/prisma/client';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { Role, UserStatus } from '../generated/prisma/enums';
 import { CreateListingDto } from './dto/create-listing.dto';
@@ -19,7 +15,6 @@ import { ListingsService } from './listings.service';
 
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
-const APPLICANT_ID = '00000000-0000-4000-8000-000000000005';
 
 const makeProviderUser = (): SafeUser => ({
   id: PROVIDER_ID,
@@ -69,15 +64,6 @@ const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   ...overrides,
 });
 
-const makeApplication = (): Application => ({
-  id: '00000000-0000-4000-8000-000000000010',
-  listingId: LISTING_ID,
-  applicantId: APPLICANT_ID,
-  status: ApplicationStatus.ACTIVE,
-  createdAt: new Date('2024-01-01'),
-  updatedAt: new Date('2024-01-01'),
-});
-
 type RouteArgMetadata = {
   index: number;
   data?: string;
@@ -117,7 +103,6 @@ describe('ListingsController', () => {
             publish: jest.fn(),
             moveToDraft: jest.fn(),
             archive: jest.fn(),
-            getActiveApplications: jest.fn(),
             toListingResponse: jest.fn(
               (listing: Listing) =>
                 new ListingResponseDto(listing, { exposeExactAddress: true }),
@@ -316,31 +301,6 @@ describe('ListingsController', () => {
         exposeExactAddress: true,
       });
       expect(result.status).toBe(ListingStatus.ARCHIVED);
-    });
-  });
-
-  describe('getActiveApplications', () => {
-    it('validates id as a UUID v4 route parameter', () => {
-      const metadata = getRouteArgMetadata('getActiveApplications', 0);
-
-      expect(metadata?.data).toBe('id');
-      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
-    });
-
-    it('calls listingsService.getActiveApplications with id and provider id', async () => {
-      const applications = [makeApplication()];
-      listingsService.getActiveApplications.mockResolvedValue(applications);
-
-      const result = await controller.getActiveApplications(
-        LISTING_ID,
-        makeProviderUser(),
-      );
-
-      expect(listingsService.getActiveApplications).toHaveBeenCalledWith(
-        LISTING_ID,
-        PROVIDER_ID,
-      );
-      expect(result).toEqual(applications);
     });
   });
 });

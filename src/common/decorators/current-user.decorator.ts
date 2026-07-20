@@ -1,11 +1,22 @@
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import {
+  createParamDecorator,
+  ExecutionContext,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Request } from 'express';
 
-import type { SafeUser } from '../../users/types/safe-user.type';
+import {
+  isSafeUser,
+  sanitizeSafeUser,
+  type SafeUser,
+} from '../../users/types/safe-user.type';
 
 export const CurrentUser = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): SafeUser => {
     const request = ctx.switchToHttp().getRequest<Request>();
-    return request.user as SafeUser;
+    if (!isSafeUser(request.user)) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    return sanitizeSafeUser(request.user);
   },
 );

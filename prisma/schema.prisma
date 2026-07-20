@@ -48,7 +48,7 @@ enum SmokingPolicy {
 
 enum ApplicationStatus {
   ACTIVE        @map("active")
-  PENDING_QUEUE @map("pending_queue")
+  WAITING       @map("waiting")
   REJECTED      @map("rejected")
   WITHDRAWN     @map("withdrawn")
 }
@@ -165,7 +165,8 @@ model Application {
   id          String            @id @default(uuid()) @db.Uuid
   listingId   String            @map("listing_id") @db.Uuid
   applicantId String            @map("applicant_id") @db.Uuid
-  status      ApplicationStatus @default(PENDING_QUEUE)
+  status      ApplicationStatus @default(WAITING)
+  queueOrder  BigInt            @default(autoincrement()) @map("queue_order")
   createdAt   DateTime          @default(now()) @map("created_at")
   updatedAt   DateTime          @updatedAt @map("updated_at")
 
@@ -173,6 +174,8 @@ model Application {
   applicant User    @relation(fields: [applicantId], references: [id])
 
   @@unique([listingId, applicantId])
+  @@index([listingId, status, queueOrder])
+  @@index([applicantId])
   @@map("applications")
 }
 

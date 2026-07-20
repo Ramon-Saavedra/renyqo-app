@@ -15,7 +15,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import type { Application } from '../generated/prisma/client';
 import {
   LISTING_IMAGE_FILE_FIELD,
   LISTING_IMAGE_MULTER_OPTIONS,
@@ -110,13 +109,5 @@ export class ListingsController {
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
-  }
-
-  @Get(':id/active-applications')
-  getActiveApplications(
-    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: SafeUser,
-  ): Promise<Application[]> {
-    return this.listingsService.getActiveApplications(id, user.id);
   }
 }

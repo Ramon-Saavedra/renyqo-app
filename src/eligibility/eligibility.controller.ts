@@ -12,24 +12,20 @@ import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
 import type { SafeUser } from '../users/types/safe-user.type';
-import { ApplicationsService } from './applications.service';
-import { ApplicationResponseDto } from './dto/application-response.dto';
+import { EligibilityResponseDto } from './dto/eligibility-response.dto';
+import { EligibilityService } from './eligibility.service';
 
 @UseGuards(AuthenticatedGuard, ApplicantOnlyGuard)
 @Controller('listings')
-export class ApplicationsController {
-  constructor(private readonly applicationsService: ApplicationsService) {}
+export class EligibilityController {
+  constructor(private readonly eligibilityService: EligibilityService) {}
 
-  @Post(':id/apply')
-  @HttpCode(HttpStatus.CREATED)
-  async apply(
+  @Post(':id/check-eligibility')
+  @HttpCode(HttpStatus.OK)
+  check(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
     @CurrentUser() user: SafeUser,
-  ): Promise<ApplicationResponseDto> {
-    const application = await this.applicationsService.apply(
-      listingId,
-      user.id,
-    );
-    return new ApplicationResponseDto(application);
+  ): Promise<EligibilityResponseDto> {
+    return this.eligibilityService.check(listingId, user.id);
   }
 }

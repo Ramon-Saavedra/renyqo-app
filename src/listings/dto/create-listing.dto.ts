@@ -122,7 +122,7 @@ export class CreateListingDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  minimumHouseholdNetIncome?: number;
+  minimumHouseholdNetIncome?: number | null;
 
   @IsOptional()
   @Transform(toOptionalBoolean)
@@ -137,13 +137,13 @@ export class CreateListingDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  suitableForPeopleCount?: number;
+  suitableForPeopleCount?: number | null;
 
   @IsOptional()
   @IsEnum(PetsPolicy)
-  petsPolicy?: PetsPolicy;
+  petsPolicy?: PetsPolicy | null;
 
   @IsOptional()
   @IsEnum(SmokingPolicy)
-  smokingPolicy?: SmokingPolicy;
+  smokingPolicy?: SmokingPolicy | null;
 }

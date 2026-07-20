@@ -4,6 +4,7 @@ import { ProviderType, Role, UserStatus } from '../generated/prisma/enums';
 import type { User } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from './users.service';
+import { sanitizeSafeUser } from './types/safe-user.type';
 
 const USER_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -119,5 +120,16 @@ describe('UsersService', () => {
         ].sort(),
       );
     });
+  });
+
+  it('sanitizes extra fields before returning a session user', () => {
+    const userWithExtraField = {
+      ...service.toSafeUser(makeUser()),
+      passwordHash: 'must-not-leak',
+    };
+
+    const result = sanitizeSafeUser(userWithExtraField);
+
+    expect(result).not.toHaveProperty('passwordHash');
   });
 });

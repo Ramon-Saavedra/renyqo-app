@@ -1,0 +1,21 @@
+services:
+  e2e-db:
+    image: postgres:16-alpine
+    ports:
+      - '5434:5432'
+    environment:
+      POSTGRES_USER: renyqo
+      POSTGRES_PASSWORD: renyqo_dev
+      POSTGRES_DB: renyqo_e2e
+    volumes:
+      - postgres_e2e_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U renyqo -d renyqo_e2e']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_e2e_data:

@@ -6,53 +6,192 @@ import {
 } from '@nestjs/common';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 
-import type { Application } from '../generated/prisma/client';
+import { Prisma, type Application } from '../generated/prisma/client';
 import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
+import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const ACTIVE_APPLICATIONS_LIMIT = 5;
+const SERIALIZABLE_TRANSACTION_RETRIES = 8;
+const PROMOTION_BATCH_SIZE = 50;
+const MAX_PROMOTION_CANDIDATES = 500;
+
+type TransactionClient = Prisma.TransactionClient;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasSerializationCode(value: unknown): boolean {
+  return isRecord(value) && value.originalCode === '40001';
+}
+
+function isSerializationConflict(error: unknown): boolean {
+  if (
+    error instanceof PrismaClientKnownRequestError &&
+    error.code === 'P2034'
+  ) {
+    return true;
+  }
+
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  if (error.code === 'P2034' || hasSerializationCode(error.cause)) {
+    return true;
+  }
+
+  const meta = isRecord(error.meta) ? error.meta : undefined;
+  const driverAdapterError = meta?.driverAdapterError;
+  return (
+    isRecord(driverAdapterError) &&
+    hasSerializationCode(driverAdapterError.cause)
+  );
+}
 
 @Injectable()
 export class ApplicationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eligibilityService: EligibilityService,
+  ) {}
 
   async apply(listingId: string, applicantId: string): Promise<Application> {
-    const listing = await this.prisma.listing.findUnique({
-      where: { id: listingId },
-    });
-
-    if (!listing) {
-      throw new NotFoundException('Listing not found');
-    }
-
-    if (listing.status !== ListingStatus.PUBLISHED) {
-      throw new UnprocessableEntityException(
-        'This listing is not accepting applications',
-      );
-    }
-
-    const activeCount = await this.prisma.application.count({
-      where: { listingId, status: ApplicationStatus.ACTIVE },
-    });
-
-    const status =
-      activeCount < ACTIVE_APPLICATIONS_LIMIT
-        ? ApplicationStatus.ACTIVE
-        : ApplicationStatus.PENDING_QUEUE;
-
-    try {
-      return await this.prisma.application.create({
-        data: { listingId, applicantId, status },
+    return this.runSerializableTransaction(async (tx) => {
+      await this.lockListing(tx, listingId);
+      const listing = await tx.listing.findUnique({
+        where: { id: listingId },
       });
-    } catch (err) {
-      if (
-        err instanceof PrismaClientKnownRequestError &&
-        err.code === 'P2002'
-      ) {
-        throw new ConflictException('You have already applied to this listing');
+
+      if (!listing) {
+        throw new NotFoundException('Listing not found');
       }
-      throw err;
-    }
+
+      if (listing.status !== ListingStatus.PUBLISHED) {
+        throw new UnprocessableEntityException(
+          'This listing is not accepting applications',
+        );
+      }
+
+      const profile = await this.lockApplicantProfile(tx, applicantId);
+      const eligibility = this.eligibilityService.evaluate(listing, profile);
+
+      if (!eligibility.canApply) {
+        throw new UnprocessableEntityException({
+          message: 'Applicant is not eligible for this listing',
+          ...eligibility,
+        });
+      }
+
+      const activeCount = await tx.application.count({
+        where: { listingId, status: ApplicationStatus.ACTIVE },
+      });
+      const status =
+        activeCount < ACTIVE_APPLICATIONS_LIMIT
+          ? ApplicationStatus.ACTIVE
+          : ApplicationStatus.WAITING;
+
+      try {
+        return await tx.application.create({
+          data: { listingId, applicantId, status },
+        });
+      } catch (err) {
+        if (
+          err instanceof PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          throw new ConflictException(
+            'You have already applied to this listing',
+          );
+        }
+        throw err;
+      }
+    });
+  }
+
+  async promoteWaitingApplications(
+    listingId: string,
+    providerId: string,
+  ): Promise<number> {
+    return this.runSerializableTransaction(async (tx) => {
+      await this.lockListing(tx, listingId);
+      const listing = await tx.listing.findUnique({
+        where: { id: listingId },
+      });
+
+      if (!listing || listing.providerId !== providerId) {
+        throw new NotFoundException('Listing not found');
+      }
+
+      if (listing.status !== ListingStatus.PUBLISHED) {
+        throw new UnprocessableEntityException(
+          'This listing is not accepting applications',
+        );
+      }
+
+      let activeCount = await tx.application.count({
+        where: { listingId, status: ApplicationStatus.ACTIVE },
+      });
+      if (activeCount >= ACTIVE_APPLICATIONS_LIMIT) {
+        return 0;
+      }
+
+      let promotedCount = 0;
+      let queueCursor: bigint | undefined;
+      let processedCandidates = 0;
+
+      while (
+        activeCount < ACTIVE_APPLICATIONS_LIMIT &&
+        processedCandidates < MAX_PROMOTION_CANDIDATES
+      ) {
+        const waitingApplications = await tx.application.findMany({
+          where: {
+            listingId,
+            status: ApplicationStatus.WAITING,
+            ...(queueCursor === undefined
+              ? {}
+              : { queueOrder: { gt: queueCursor } }),
+          },
+          orderBy: { queueOrder: 'asc' },
+          take: PROMOTION_BATCH_SIZE,
+          select: { id: true, applicantId: true, queueOrder: true },
+        });
+
+        if (waitingApplications.length === 0) {
+          break;
+        }
+
+        for (const application of waitingApplications) {
+          if (activeCount >= ACTIVE_APPLICATIONS_LIMIT) {
+            break;
+          }
+
+          processedCandidates++;
+          queueCursor = application.queueOrder;
+          const profile = await this.lockApplicantProfile(
+            tx,
+            application.applicantId,
+          );
+          if (!this.eligibilityService.evaluate(listing, profile).canApply) {
+            continue;
+          }
+
+          await tx.application.update({
+            where: { id: application.id },
+            data: { status: ApplicationStatus.ACTIVE },
+          });
+          activeCount++;
+          promotedCount++;
+        }
+
+        if (waitingApplications.length < PROMOTION_BATCH_SIZE) {
+          break;
+        }
+      }
+
+      return promotedCount;
+    });
   }
 
   async findAllByApplicant(applicantId: string): Promise<Application[]> {
@@ -64,7 +203,10 @@ export class ApplicationsService {
 
   async findAllByProvider(providerId: string): Promise<Application[]> {
     return this.prisma.application.findMany({
-      where: { listing: { providerId } },
+      where: {
+        listing: { providerId },
+        status: { not: ApplicationStatus.WAITING },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -82,8 +224,29 @@ export class ApplicationsService {
     }
 
     return this.prisma.application.findMany({
-      where: { listingId },
+      where: {
+        listingId,
+        listing: { providerId },
+        status: { not: ApplicationStatus.WAITING },
+      },
       orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async findWaitingCountByListing(
+    listingId: string,
+    providerId: string,
+  ): Promise<number> {
+    const listing = await this.prisma.listing.findFirst({
+      where: { id: listingId, providerId },
+    });
+
+    if (!listing) {
+      throw new NotFoundException('Listing not found');
+    }
+
+    return this.prisma.application.count({
+      where: { listingId, status: ApplicationStatus.WAITING },
     });
   }
 
@@ -100,8 +263,56 @@ export class ApplicationsService {
     }
 
     return this.prisma.application.findMany({
-      where: { listingId, status: ApplicationStatus.ACTIVE },
+      where: {
+        listingId,
+        status: ApplicationStatus.ACTIVE,
+        listing: { providerId },
+      },
       orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  private async runSerializableTransaction<T>(
+    operation: (tx: TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (
+      let attempt = 0;
+      attempt < SERIALIZABLE_TRANSACTION_RETRIES;
+      attempt++
+    ) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: 'Serializable',
+        });
+      } catch (err) {
+        if (
+          !isSerializationConflict(err) ||
+          attempt === SERIALIZABLE_TRANSACTION_RETRIES - 1
+        ) {
+          throw err;
+        }
+        const delayMs = Math.min(250, 10 * 2 ** attempt);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    throw new Error('Application transaction could not be completed');
+  }
+
+  private async lockListing(
+    tx: TransactionClient,
+    listingId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM "listings" WHERE id = ${listingId} FOR UPDATE`;
+  }
+
+  private async lockApplicantProfile(
+    tx: TransactionClient,
+    applicantId: string,
+  ) {
+    await tx.$queryRaw`SELECT id FROM "applicant_profiles" WHERE applicant_id = ${applicantId} FOR UPDATE`;
+    return tx.applicantProfile.findUnique({
+      where: { applicantId },
     });
   }
 }

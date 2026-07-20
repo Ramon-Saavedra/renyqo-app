@@ -85,7 +85,7 @@ Current frontend routes:
 - /register/create-account?role=provider
 
 Current backend phase:
-Build only backend base and auth.
+Phase 7 — Simple Eligibility, built on the completed backend base, authentication, listings, applications and applicant profile modules.
 
 First endpoints:
 - GET /api/v1/health
@@ -95,16 +95,13 @@ First endpoints:
 - GET /api/v1/auth/me
 
 Do not build yet:
-- dashboard
-- listings
-- applications
 - chat
 - OAuth Google/Apple
 - document upload
-- SCHUFA integration
+- real SCHUFA integration
 - admin dashboard
 - payment logic
-- AI scoring
+- complex or opaque AI scoring
 
 Workflow:
 Work in small steps.
