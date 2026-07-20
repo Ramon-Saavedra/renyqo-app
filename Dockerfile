@@ -1,19 +1,22 @@
-﻿FROM node:20-alpine AS builder
+FROM node:20-alpine AS dependencies
 
 WORKDIR /app
 
 COPY package*.json ./
-COPY prisma/ ./prisma/
-COPY prisma.config.ts ./
 
 RUN npm ci
 
-COPY . .
+FROM dependencies AS builder
+
+COPY prisma/ ./prisma/
+COPY prisma.config.ts ./
 
 ARG DATABASE_URL=postgresql://build:build@localhost:5432/build
 ENV DATABASE_URL=${DATABASE_URL}
 
 RUN npx prisma generate
+
+COPY . .
 
 RUN npm run build
 
@@ -28,11 +31,10 @@ RUN addgroup -g 1001 -S nodejs \
 
 COPY package*.json ./
 
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+    && npm cache clean --force
 
-COPY --from=builder /app/dist ./dist
-
-RUN chown -R nestjs:nodejs /app
+COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
 
 USER nestjs
 
