@@ -20,19 +20,20 @@ jobs:
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
-          POSTGRES_DB: ci
+          POSTGRES_DB: renyqo_e2e
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ci -d ci"
+          --health-cmd "pg_isready -U ci -d renyqo_e2e"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
       NODE_ENV: test
       PORT: 3000
-      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
-      E2E_DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/renyqo_e2e
+      E2E_DATABASE_URL: postgresql://ci:ci@localhost:5432/renyqo_e2e
+      E2E_DATABASE_ALLOW_RESET: 'true'
       SESSION_SECRET: ci-session-secret-at-least-thirty-two-characters
       FRONTEND_URL: http://localhost:3001
     steps:
