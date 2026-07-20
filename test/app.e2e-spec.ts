@@ -7,7 +7,12 @@ import passport from 'passport';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
 import type { EnvironmentVariables } from '../src/config/env.validation';
+import { ListingStatus } from '../src/generated/prisma/enums';
 import { PrismaService } from '../src/prisma/prisma.service';
+import {
+  assertSafeE2EDatabaseUrl,
+  getE2EDatabaseName,
+} from './e2e-database-safety';
 
 type RequestTarget = Parameters<typeof request>[0];
 type PgSessionStore = InstanceType<ReturnType<typeof connectPgSimple>>;
@@ -34,7 +39,12 @@ type SafeUserBody = {
   status: string;
 };
 
-const defaultE2eDatabaseUrl = 'postgresql://ci:ci@localhost:5432/ci';
+type ApplicationBody = {
+  id: string;
+  listingId: string;
+  status: string;
+};
+
 const sessionSecret = 'e2e-session-secret-at-least-thirty-two-characters';
 const userPassword = 'StrongPass123';
 
@@ -44,12 +54,62 @@ let sessionStore: PgSessionStore | undefined;
 let emailSequence = 0;
 
 function useE2eEnvironment(): void {
+  const databaseUrl = process.env['E2E_DATABASE_URL'];
+  if (!databaseUrl) {
+    throw new Error('E2E_DATABASE_URL is required for destructive E2E tests.');
+  }
+
+  const e2eDatabaseName = getE2EDatabaseName(databaseUrl);
+
+  if (process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true') {
+    throw new Error(
+      'E2E_DATABASE_ALLOW_RESET=true is required for destructive E2E tests.',
+    );
+  }
+
   process.env['NODE_ENV'] = 'test';
   process.env['PORT'] = '3000';
-  process.env['DATABASE_URL'] =
-    process.env['E2E_DATABASE_URL'] ?? defaultE2eDatabaseUrl;
+  process.env['DATABASE_URL'] = databaseUrl;
+  if (getE2EDatabaseName(process.env['DATABASE_URL']) !== e2eDatabaseName) {
+    throw new Error(
+      'DATABASE_URL and E2E_DATABASE_URL must target the same E2E database.',
+    );
+  }
   process.env['SESSION_SECRET'] = sessionSecret;
   process.env['FRONTEND_URL'] = 'http://localhost:3001';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isRequestTarget(value: unknown): value is RequestTarget {
+  return (
+    typeof value === 'string' ||
+    value instanceof URL ||
+    (typeof value === 'object' && value !== null)
+  );
+}
+
+function isSafeUserBody(value: unknown): value is SafeUserBody {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.email === 'string' &&
+    (value.role === 'APPLICANT' ||
+      value.role === 'PROVIDER' ||
+      value.role === 'ADMIN') &&
+    (value.providerType === null ||
+      value.providerType === 'private' ||
+      value.providerType === 'company') &&
+    (value.companyName === null || typeof value.companyName === 'string') &&
+    typeof value.emailVerified === 'boolean' &&
+    typeof value.status === 'string'
+  );
 }
 
 function getServer(): RequestTarget {
@@ -57,7 +117,31 @@ function getServer(): RequestTarget {
     throw new Error('E2E app has not been initialized.');
   }
 
-  return app.getHttpServer() as RequestTarget;
+  const server: unknown = app.getHttpServer();
+  if (!isRequestTarget(server)) {
+    throw new Error('E2E app server is not a valid request target.');
+  }
+
+  return server;
+}
+
+function getPrisma(): PrismaService {
+  if (!prisma) {
+    throw new Error('Prisma service has not been initialized.');
+  }
+
+  return prisma;
+}
+
+async function createPublishedListing(providerId: string) {
+  return getPrisma().listing.create({
+    data: {
+      providerId,
+      status: ListingStatus.PUBLISHED,
+      city: 'Berlin',
+      title: 'E2E Listing',
+    },
+  });
 }
 
 function uniqueEmail(prefix: string): string {
@@ -89,11 +173,48 @@ function providerPayload(email = uniqueEmail('provider')): RegisterPayload {
 }
 
 function safeUserBody(response: Response): SafeUserBody {
-  return response.body as SafeUserBody;
+  const body = responseBody(response);
+  if (!isSafeUserBody(body)) {
+    throw new Error('E2E response does not contain a safe user.');
+  }
+
+  return body;
 }
 
 function responseBody(response: Response): Record<string, unknown> {
-  return response.body as Record<string, unknown>;
+  const body: unknown = response.body;
+  if (!isRecord(body)) {
+    throw new Error('E2E response body is not an object.');
+  }
+
+  return body;
+}
+
+function isApplicationBody(value: unknown): value is ApplicationBody {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.listingId === 'string' &&
+    typeof value.status === 'string'
+  );
+}
+
+function applicationBodies(response: Response): ApplicationBody[] {
+  const body: unknown = response.body;
+  if (!Array.isArray(body) || !body.every(isApplicationBody)) {
+    throw new Error('E2E response does not contain application records.');
+  }
+
+  return body;
+}
+
+function promotedCount(response: Response): number {
+  const body = responseBody(response);
+  if (typeof body.promotedCount !== 'number') {
+    throw new Error('E2E response does not contain a promotion count.');
+  }
+
+  return body.promotedCount;
 }
 
 function expectSessionCookie(response: Response): void {
@@ -101,8 +222,30 @@ function expectSessionCookie(response: Response): void {
 }
 
 async function clearDatabase(): Promise<void> {
+  const e2eDatabaseUrl = process.env['E2E_DATABASE_URL'];
+  const activeDatabaseUrl = process.env['DATABASE_URL'];
+
+  if (!e2eDatabaseUrl || !activeDatabaseUrl) {
+    throw new Error(
+      'Destructive E2E cleanup requires both database URLs to be configured.',
+    );
+  }
+
+  assertSafeE2EDatabaseUrl(e2eDatabaseUrl);
+  if (
+    getE2EDatabaseName(activeDatabaseUrl) !== getE2EDatabaseName(e2eDatabaseUrl)
+  ) {
+    throw new Error(
+      'DATABASE_URL and E2E_DATABASE_URL must target the same E2E database.',
+    );
+  }
+
   if (process.env['NODE_ENV'] !== 'test') {
     throw new Error('E2E database cleanup is only allowed in test mode.');
+  }
+
+  if (process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true') {
+    throw new Error('E2E database cleanup requires the reset safety marker.');
   }
 
   if (!prisma) {
@@ -296,5 +439,277 @@ describe('Backend API E2E', () => {
 
     await agent.post('/api/v1/auth/logout').expect(200);
     await agent.get('/api/v1/auth/me').expect(403);
+  });
+
+  it('checks eligibility from the applicant profile and enforces it on apply', async () => {
+    const applicantAgent = request.agent(getServer());
+    const applicantResponse = await applicantAgent
+      .post('/api/v1/auth/register')
+      .send(applicantPayload())
+      .expect(201);
+    const applicant = safeUserBody(applicantResponse);
+
+    const providerResponse = await request(getServer())
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    const provider = safeUserBody(providerResponse);
+    const listing = await getPrisma().listing.create({
+      data: {
+        providerId: provider.id,
+        status: ListingStatus.PUBLISHED,
+        city: 'Berlin',
+        title: 'Eligibility E2E Listing',
+        minimumHouseholdNetIncome: 3000,
+        schufaRequired: true,
+      },
+    });
+
+    await getPrisma().applicantProfile.create({
+      data: {
+        applicantId: applicant.id,
+        householdNetIncome: 2500,
+        schufaAvailable: false,
+      },
+    });
+
+    await applicantAgent.post('/api/v1/listings/not-a-uuid/apply').expect(400);
+    await request(getServer())
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(403);
+
+    const blockedResponse = await applicantAgent
+      .post(`/api/v1/listings/${listing.id}/check-eligibility`)
+      .expect(200);
+    expect(blockedResponse.body).toMatchObject({
+      canApply: false,
+      reasons: [
+        'household_income_below_requirement',
+        'schufa_required_but_not_available',
+      ],
+      warnings: [],
+    });
+    await applicantAgent
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(422);
+
+    await getPrisma().applicantProfile.update({
+      where: { applicantId: applicant.id },
+      data: { householdNetIncome: 3500, schufaAvailable: true },
+    });
+
+    await applicantAgent
+      .post(`/api/v1/listings/${listing.id}/check-eligibility`)
+      .expect(200)
+      .expect({ canApply: true, reasons: [], warnings: [] });
+    await applicantAgent
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(201);
+    await applicantAgent
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(409);
+  });
+
+  it('enforces the five active application limit under concurrent requests', async () => {
+    const providerAgent = request.agent(getServer());
+    const providerResponse = await providerAgent
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    const listing = await createPublishedListing(
+      safeUserBody(providerResponse).id,
+    );
+    const agents = Array.from({ length: 8 }, () => request.agent(getServer()));
+
+    await Promise.all(
+      agents.map((agent) =>
+        agent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201),
+      ),
+    );
+
+    const responses = await Promise.all(
+      agents.map((agent) => agent.post(`/api/v1/listings/${listing.id}/apply`)),
+    );
+    expect(responses.every((response) => response.status === 201)).toBe(true);
+    const statuses = responses.map(
+      (response) => responseBody(response)['status'],
+    );
+
+    expect(statuses.filter((status) => status === 'ACTIVE')).toHaveLength(5);
+    expect(statuses.filter((status) => status === 'WAITING')).toHaveLength(3);
+
+    const persisted = await getPrisma().application.findMany({
+      where: { listingId: listing.id },
+      select: { status: true },
+    });
+    expect(persisted).toHaveLength(8);
+    expect(
+      persisted.filter((application) => application.status === 'ACTIVE'),
+    ).toHaveLength(5);
+    expect(
+      persisted.filter((application) => application.status === 'WAITING'),
+    ).toHaveLength(3);
+
+    const waitingApplications = await getPrisma().application.findMany({
+      where: { listingId: listing.id, status: 'WAITING' },
+      orderBy: { queueOrder: 'asc' },
+      select: { id: true, applicantId: true, queueOrder: true },
+    });
+    expect(waitingApplications).toHaveLength(3);
+    const providerApplications = await providerAgent
+      .get('/api/v1/provider/listings/' + listing.id + '/applications')
+      .expect(200);
+    const providerApplicationBodies = applicationBodies(providerApplications);
+    expect(providerApplicationBodies).toHaveLength(5);
+    expect(
+      providerApplicationBodies.some(
+        (application) =>
+          application.id === waitingApplications[0].id ||
+          application.id === waitingApplications[1].id ||
+          application.id === waitingApplications[2].id,
+      ),
+    ).toBe(false);
+    await providerAgent
+      .get('/api/v1/provider/listings/' + listing.id + '/waiting-count')
+      .expect(200)
+      .expect({ waitingCount: 3 });
+
+    await getPrisma().listing.update({
+      where: { id: listing.id },
+      data: { minimumHouseholdNetIncome: 3000 },
+    });
+    await getPrisma().applicantProfile.createMany({
+      data: [
+        {
+          applicantId: waitingApplications[0].applicantId,
+          householdNetIncome: 1000,
+        },
+        {
+          applicantId: waitingApplications[1].applicantId,
+          householdNetIncome: 4000,
+        },
+        {
+          applicantId: waitingApplications[2].applicantId,
+          householdNetIncome: 4000,
+        },
+      ],
+    });
+
+    const activeApplication = await getPrisma().application.findFirstOrThrow({
+      where: { listingId: listing.id, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    await getPrisma().application.update({
+      where: { id: activeApplication.id },
+      data: { status: 'REJECTED' },
+    });
+
+    const promotionResponses = await Promise.all([
+      providerAgent.post(
+        '/api/v1/provider/listings/' + listing.id + '/promote-waiting',
+      ),
+      providerAgent.post(
+        '/api/v1/provider/listings/' + listing.id + '/promote-waiting',
+      ),
+    ]);
+    expect(promotionResponses.map((response) => response.status)).toEqual([
+      200, 200,
+    ]);
+    expect(promotionResponses.map(promotedCount)).toEqual(
+      expect.arrayContaining([0, 1]),
+    );
+
+    const promotedWaitingApplication =
+      await getPrisma().application.findUniqueOrThrow({
+        where: { id: waitingApplications[1].id },
+        select: { status: true },
+      });
+    const ineligibleWaitingApplication =
+      await getPrisma().application.findUniqueOrThrow({
+        where: { id: waitingApplications[0].id },
+        select: { status: true },
+      });
+    expect(promotedWaitingApplication.status).toBe('ACTIVE');
+    expect(ineligibleWaitingApplication.status).toBe('WAITING');
+    const laterWaitingApplication =
+      await getPrisma().application.findUniqueOrThrow({
+        where: { id: waitingApplications[2].id },
+        select: { status: true },
+      });
+    expect(laterWaitingApplication.status).toBe('WAITING');
+    expect(
+      await getPrisma().application.count({
+        where: { listingId: listing.id, status: 'ACTIVE' },
+      }),
+    ).toBe(5);
+    expect(
+      await getPrisma().application.count({
+        where: { listingId: listing.id, status: 'WAITING' },
+      }),
+    ).toBe(2);
+
+    const providerApplicationsAfterPromotion = await providerAgent
+      .get('/api/v1/provider/listings/' + listing.id + '/applications')
+      .expect(200);
+    const providerApplicationBodiesAfterPromotion = applicationBodies(
+      providerApplicationsAfterPromotion,
+    );
+    const promotedApplicationBody =
+      providerApplicationBodiesAfterPromotion.find(
+        (application) => application.id === waitingApplications[1].id,
+      );
+    expect(promotedApplicationBody).toMatchObject({ status: 'ACTIVE' });
+    expect(
+      providerApplicationBodiesAfterPromotion.some(
+        (application) => application.id === waitingApplications[0].id,
+      ),
+    ).toBe(false);
+    await providerAgent
+      .get('/api/v1/provider/listings/' + listing.id + '/waiting-count')
+      .expect(200)
+      .expect({ waitingCount: 2 });
+
+    const otherProviderAgent = request.agent(getServer());
+    const otherProviderResponse = await otherProviderAgent
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    const otherListing = await createPublishedListing(
+      safeUserBody(otherProviderResponse).id,
+    );
+    await agents[0]
+      .post(`/api/v1/listings/${otherListing.id}/apply`)
+      .expect(201);
+    const providerApplicationsAcrossListings = await providerAgent
+      .get('/api/v1/provider/applications')
+      .expect(200);
+    const providerApplicationBodiesAcrossListings = applicationBodies(
+      providerApplicationsAcrossListings,
+    );
+    expect(
+      providerApplicationBodiesAcrossListings.every(
+        (application) => application.listingId !== otherListing.id,
+      ),
+    ).toBe(true);
+    const otherProviderApplications = await otherProviderAgent
+      .get('/api/v1/provider/applications')
+      .expect(200);
+    expect(applicationBodies(otherProviderApplications)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ listingId: otherListing.id }),
+      ]),
+    );
+    await otherProviderAgent
+      .get('/api/v1/provider/listings/' + listing.id + '/applications')
+      .expect(404);
+    await otherProviderAgent
+      .get('/api/v1/provider/listings/' + listing.id + '/waiting-count')
+      .expect(404);
+    await otherProviderAgent
+      .post('/api/v1/provider/listings/' + listing.id + '/promote-waiting')
+      .expect(404);
   });
 });
