@@ -1,11 +1,8 @@
 import {
   Controller,
   Get,
-  HttpCode,
-  HttpStatus,
   Param,
   ParseUUIDPipe,
-  Post,
   UseGuards,
 } from '@nestjs/common';
 
@@ -15,7 +12,6 @@ import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsService } from './applications.service';
 import { ApplicationResponseDto } from './dto/application-response.dto';
-import { PromotionResponseDto } from './dto/promotion-response.dto';
 import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
 
 @UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
@@ -74,19 +70,5 @@ export class ProviderApplicationsController {
         user.id,
       );
     return new WaitingCountResponseDto(waitingCount);
-  }
-
-  @Post('listings/:id/promote-waiting')
-  @HttpCode(HttpStatus.OK)
-  async promoteWaiting(
-    @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @CurrentUser() user: SafeUser,
-  ): Promise<PromotionResponseDto> {
-    const promotedCount =
-      await this.applicationsService.promoteWaitingApplications(
-        listingId,
-        user.id,
-      );
-    return new PromotionResponseDto(promotedCount);
   }
 }

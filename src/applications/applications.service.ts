@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 
-import { Prisma, type Application } from '../generated/prisma/client';
+import {
+  Prisma,
+  type Application,
+  type Listing,
+} from '../generated/prisma/client';
 import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -110,88 +114,90 @@ export class ApplicationsService {
     });
   }
 
-  async promoteWaitingApplications(
-    listingId: string,
-    providerId: string,
-  ): Promise<number> {
+  async promoteWaitingApplications(listingId: string): Promise<number> {
     return this.runSerializableTransaction(async (tx) => {
       await this.lockListing(tx, listingId);
       const listing = await tx.listing.findUnique({
         where: { id: listingId },
       });
 
-      if (!listing || listing.providerId !== providerId) {
-        throw new NotFoundException('Listing not found');
-      }
-
-      if (listing.status !== ListingStatus.PUBLISHED) {
-        throw new UnprocessableEntityException(
-          'This listing is not accepting applications',
-        );
-      }
-
-      let activeCount = await tx.application.count({
-        where: { listingId, status: ApplicationStatus.ACTIVE },
-      });
-      if (activeCount >= ACTIVE_APPLICATIONS_LIMIT) {
+      if (!listing) {
         return 0;
       }
 
-      let promotedCount = 0;
-      let queueCursor: bigint | undefined;
-      let processedCandidates = 0;
+      return this.promoteWithinTransaction(tx, listing);
+    });
+  }
 
-      while (
-        activeCount < ACTIVE_APPLICATIONS_LIMIT &&
-        processedCandidates < MAX_PROMOTION_CANDIDATES
-      ) {
-        const waitingApplications = await tx.application.findMany({
-          where: {
-            listingId,
-            status: ApplicationStatus.WAITING,
-            ...(queueCursor === undefined
-              ? {}
-              : { queueOrder: { gt: queueCursor } }),
-          },
-          orderBy: { queueOrder: 'asc' },
-          take: PROMOTION_BATCH_SIZE,
-          select: { id: true, applicantId: true, queueOrder: true },
-        });
+  private async promoteWithinTransaction(
+    tx: TransactionClient,
+    listing: Listing,
+  ): Promise<number> {
+    if (listing.status !== ListingStatus.PUBLISHED) {
+      return 0;
+    }
 
-        if (waitingApplications.length === 0) {
-          break;
-        }
+    let activeCount = await tx.application.count({
+      where: { listingId: listing.id, status: ApplicationStatus.ACTIVE },
+    });
+    if (activeCount >= ACTIVE_APPLICATIONS_LIMIT) {
+      return 0;
+    }
 
-        for (const application of waitingApplications) {
-          if (activeCount >= ACTIVE_APPLICATIONS_LIMIT) {
-            break;
-          }
+    let promotedCount = 0;
+    let queueCursor: bigint | undefined;
+    let processedCandidates = 0;
 
-          processedCandidates++;
-          queueCursor = application.queueOrder;
-          const profile = await this.lockApplicantProfile(
-            tx,
-            application.applicantId,
-          );
-          if (!this.eligibilityService.evaluate(listing, profile).canApply) {
-            continue;
-          }
+    while (
+      activeCount < ACTIVE_APPLICATIONS_LIMIT &&
+      processedCandidates < MAX_PROMOTION_CANDIDATES
+    ) {
+      const waitingApplications = await tx.application.findMany({
+        where: {
+          listingId: listing.id,
+          status: ApplicationStatus.WAITING,
+          ...(queueCursor === undefined
+            ? {}
+            : { queueOrder: { gt: queueCursor } }),
+        },
+        orderBy: { queueOrder: 'asc' },
+        take: PROMOTION_BATCH_SIZE,
+        select: { id: true, applicantId: true, queueOrder: true },
+      });
 
-          await tx.application.update({
-            where: { id: application.id },
-            data: { status: ApplicationStatus.ACTIVE },
-          });
-          activeCount++;
-          promotedCount++;
-        }
-
-        if (waitingApplications.length < PROMOTION_BATCH_SIZE) {
-          break;
-        }
+      if (waitingApplications.length === 0) {
+        break;
       }
 
-      return promotedCount;
-    });
+      for (const application of waitingApplications) {
+        if (activeCount >= ACTIVE_APPLICATIONS_LIMIT) {
+          break;
+        }
+
+        processedCandidates++;
+        queueCursor = application.queueOrder;
+        const profile = await this.lockApplicantProfile(
+          tx,
+          application.applicantId,
+        );
+        if (!this.eligibilityService.evaluate(listing, profile).canApply) {
+          continue;
+        }
+
+        await tx.application.update({
+          where: { id: application.id },
+          data: { status: ApplicationStatus.ACTIVE },
+        });
+        activeCount++;
+        promotedCount++;
+      }
+
+      if (waitingApplications.length < PROMOTION_BATCH_SIZE) {
+        break;
+      }
+    }
+
+    return promotedCount;
   }
 
   async findAllByApplicant(applicantId: string): Promise<Application[]> {
