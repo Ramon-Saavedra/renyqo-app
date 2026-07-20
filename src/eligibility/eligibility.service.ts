@@ -53,7 +53,12 @@ export class EligibilityService {
     const reasons = this.findReasons(listing, profile);
     const warnings = this.findWarnings(listing, profile);
 
-    return new EligibilityResponseDto(reasons.length === 0, reasons, warnings);
+    return new EligibilityResponseDto(
+      reasons.length === 0,
+      reasons,
+      warnings,
+      new Date(),
+    );
   }
 
   private findReasons(

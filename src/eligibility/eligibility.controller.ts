@@ -1,10 +1,8 @@
 import {
   Controller,
-  HttpCode,
-  HttpStatus,
+  Get,
   Param,
   ParseUUIDPipe,
-  Post,
   UseGuards,
 } from '@nestjs/common';
 
@@ -20,8 +18,7 @@ import { EligibilityService } from './eligibility.service';
 export class EligibilityController {
   constructor(private readonly eligibilityService: EligibilityService) {}
 
-  @Post(':id/check-eligibility')
-  @HttpCode(HttpStatus.OK)
+  @Get(':id/eligibility')
   check(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
     @CurrentUser() user: SafeUser,
