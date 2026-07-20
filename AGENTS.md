@@ -116,6 +116,28 @@ After coding, tell me:
 - how to test it
 - what still needs to be done
 
+### Backend review completion rule
+
+After every significant backend task, the main agent must run the relevant specialized review subagents before declaring the task complete.
+
+The main agent must always consider all five backend review subagents explicitly: `backend-architecture`, `backend-domain-api`, `backend-security`, `backend-database` and `backend-tests`. It must invoke every subagent applicable to the completed task. If a subagent is not applicable, the main agent must state that decision and the concrete reason in the completion report. It must never silently skip a subagent, assume that compilation makes review unnecessary, or declare completion without making this applicability decision.
+
+Use this selection:
+
+- Normal backend feature: `backend-architecture`, `backend-domain-api`, `backend-tests`.
+- Authentication, permissions or sensitive data: `backend-architecture`, `backend-domain-api`, `backend-security`, `backend-tests`.
+- Prisma schema, migrations or transactional logic: `backend-architecture`, `backend-domain-api`, `backend-database`, `backend-tests`; include `backend-security` when personal or sensitive data is involved.
+
+The main agent must:
+
+1. Enumerate all five subagents and record which ones will run and which are not applicable before the review.
+2. Show the findings from every subagent that ran.
+3. Fix every blocking issue.
+4. Rerun every subagent that returned `FAIL — CHANGES REQUIRED`.
+5. Declare completion only when no relevant subagent returns `FAIL — CHANGES REQUIRED` and every non-applicable subagent has a documented reason.
+
+Review subagents are read-only by default and report findings to the main agent. Do not automatically run broad commands, tests, migrations, formatting, commits, pushes or pull-request actions without explicit approval.
+
 Definition of done:
 - TypeScript strict passes
 - lint passes
