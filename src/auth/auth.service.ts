@@ -10,7 +10,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import type { EnvironmentVariables } from '../config/env.validation';
 import { EmailService } from '../email/email.service';
-import { ProviderType, Role } from '../generated/prisma/enums';
+import { ProviderType, Role, UserStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { UsersService } from '../users/users.service';
 import type { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -149,7 +149,7 @@ export class AuthService {
     const user = await this.usersService.findByEmail(normalizedEmail);
     const hash = user ? user.passwordHash : DUMMY_HASH;
     const valid = await bcrypt.compare(password, hash);
-    if (!user || !valid) return null;
+    if (!user || user.status !== UserStatus.ACTIVE || !valid) return null;
     return this.usersService.toSafeUser(user);
   }
 

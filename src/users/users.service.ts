@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { User, Prisma } from '../generated/prisma/client';
-import { ProviderType } from '../generated/prisma/enums';
+import { ProviderType, UserStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SafeProviderType } from './types/safe-user.type';
 import type { SafeUser } from './types/safe-user.type';
@@ -11,7 +11,9 @@ export class UsersService {
 
   async findById(id: string): Promise<SafeUser | null> {
     const user = await this.prisma.user.findUnique({ where: { id } });
-    return user ? this.toSafeUser(user) : null;
+    return user && user.status === UserStatus.ACTIVE
+      ? this.toSafeUser(user)
+      : null;
   }
 
   async findByEmail(email: string): Promise<User | null> {
