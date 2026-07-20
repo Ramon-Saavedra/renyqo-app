@@ -1,5 +1,10 @@
-import { ParseUUIDPipe } from '@nestjs/common';
-import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
+import {
+  GUARDS_METADATA,
+  METHOD_METADATA,
+  PATH_METADATA,
+  ROUTE_ARGS_METADATA,
+} from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -85,6 +90,20 @@ describe('EligibilityController', () => {
     eligibilityService = module.get(EligibilityService);
   });
 
+  it('exposes eligibility as a read-only GET route', () => {
+    const method: unknown = Reflect.getMetadata(
+      METHOD_METADATA,
+      EligibilityController.prototype.check,
+    );
+    const path: unknown = Reflect.getMetadata(
+      PATH_METADATA,
+      EligibilityController.prototype.check,
+    );
+
+    expect(method).toBe(RequestMethod.GET);
+    expect(path).toBe(':id/eligibility');
+  });
+
   it('validates the listing id as a UUID v4 route parameter', () => {
     const metadata = getRouteArgMetadata('check', 0);
 
@@ -105,7 +124,12 @@ describe('EligibilityController', () => {
   });
 
   it('delegates the eligibility check to the service', async () => {
-    const response = new EligibilityResponseDto(true, [], []);
+    const response = new EligibilityResponseDto(
+      true,
+      [],
+      [],
+      new Date('2024-01-01'),
+    );
     eligibilityService.check.mockResolvedValue(response);
 
     await expect(

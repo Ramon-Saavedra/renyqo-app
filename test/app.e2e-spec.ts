@@ -8,6 +8,7 @@ import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
 import type { EnvironmentVariables } from '../src/config/env.validation';
 import { ListingStatus } from '../src/generated/prisma/enums';
+import { ApplicationsService } from '../src/applications/applications.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   assertSafeE2EDatabaseUrl,
@@ -133,6 +134,14 @@ function getPrisma(): PrismaService {
   return prisma;
 }
 
+function getApplicationsService(): ApplicationsService {
+  if (!app) {
+    throw new Error('E2E app has not been initialized.');
+  }
+
+  return app.get(ApplicationsService);
+}
+
 async function createPublishedListing(providerId: string) {
   return getPrisma().listing.create({
     data: {
@@ -206,15 +215,6 @@ function applicationBodies(response: Response): ApplicationBody[] {
   }
 
   return body;
-}
-
-function promotedCount(response: Response): number {
-  const body = responseBody(response);
-  if (typeof body.promotedCount !== 'number') {
-    throw new Error('E2E response does not contain a promotion count.');
-  }
-
-  return body.promotedCount;
 }
 
 function expectSessionCookie(response: Response): void {
@@ -478,8 +478,19 @@ describe('Backend API E2E', () => {
       .post(`/api/v1/listings/${listing.id}/apply`)
       .expect(403);
 
-    const blockedResponse = await applicantAgent
+    await applicantAgent
       .post(`/api/v1/listings/${listing.id}/check-eligibility`)
+      .expect(404);
+
+    const applicationsBeforeEligibilityCheck =
+      await getPrisma().application.count();
+    const profileBeforeEligibilityCheck =
+      await getPrisma().applicantProfile.findUniqueOrThrow({
+        where: { applicantId: applicant.id },
+      });
+
+    const blockedResponse = await applicantAgent
+      .get(`/api/v1/listings/${listing.id}/eligibility`)
       .expect(200);
     expect(blockedResponse.body).toMatchObject({
       canApply: false,
@@ -489,6 +500,17 @@ describe('Backend API E2E', () => {
       ],
       warnings: [],
     });
+    expect(typeof responseBody(blockedResponse)['evaluatedAt']).toBe('string');
+
+    expect(await getPrisma().application.count()).toBe(
+      applicationsBeforeEligibilityCheck,
+    );
+    expect(
+      await getPrisma().applicantProfile.findUniqueOrThrow({
+        where: { applicantId: applicant.id },
+      }),
+    ).toEqual(profileBeforeEligibilityCheck);
+
     await applicantAgent
       .post(`/api/v1/listings/${listing.id}/apply`)
       .expect(422);
@@ -498,16 +520,52 @@ describe('Backend API E2E', () => {
       data: { householdNetIncome: 3500, schufaAvailable: true },
     });
 
-    await applicantAgent
-      .post(`/api/v1/listings/${listing.id}/check-eligibility`)
-      .expect(200)
-      .expect({ canApply: true, reasons: [], warnings: [] });
+    const allowedResponse = await applicantAgent
+      .get(`/api/v1/listings/${listing.id}/eligibility`)
+      .expect(200);
+    expect(allowedResponse.body).toMatchObject({
+      canApply: true,
+      reasons: [],
+      warnings: [],
+    });
+    expect(typeof responseBody(allowedResponse)['evaluatedAt']).toBe('string');
     await applicantAgent
       .post(`/api/v1/listings/${listing.id}/apply`)
       .expect(201);
     await applicantAgent
       .post(`/api/v1/listings/${listing.id}/apply`)
       .expect(409);
+
+    const secondListing = await getPrisma().listing.create({
+      data: {
+        providerId: provider.id,
+        status: ListingStatus.PUBLISHED,
+        city: 'Berlin',
+        title: 'Eligibility Recalculation Listing',
+        minimumHouseholdNetIncome: 3000,
+      },
+    });
+
+    await applicantAgent
+      .get(`/api/v1/listings/${secondListing.id}/eligibility`)
+      .expect(200)
+      .expect((response: Response) => {
+        expect(responseBody(response)['canApply']).toBe(true);
+      });
+
+    await getPrisma().listing.update({
+      where: { id: secondListing.id },
+      data: { minimumHouseholdNetIncome: 9000 },
+    });
+
+    await applicantAgent
+      .post(`/api/v1/listings/${secondListing.id}/apply`)
+      .expect(422);
+    expect(
+      await getPrisma().application.count({
+        where: { listingId: secondListing.id },
+      }),
+    ).toBe(0);
   });
 
   it('enforces the five active application limit under concurrent requests', async () => {
@@ -607,20 +665,15 @@ describe('Backend API E2E', () => {
       data: { status: 'REJECTED' },
     });
 
-    const promotionResponses = await Promise.all([
-      providerAgent.post(
-        '/api/v1/provider/listings/' + listing.id + '/promote-waiting',
-      ),
-      providerAgent.post(
-        '/api/v1/provider/listings/' + listing.id + '/promote-waiting',
-      ),
+    await providerAgent
+      .post('/api/v1/provider/listings/' + listing.id + '/promote-waiting')
+      .expect(404);
+
+    const promotionResults = await Promise.all([
+      getApplicationsService().promoteWaitingApplications(listing.id),
+      getApplicationsService().promoteWaitingApplications(listing.id),
     ]);
-    expect(promotionResponses.map((response) => response.status)).toEqual([
-      200, 200,
-    ]);
-    expect(promotionResponses.map(promotedCount)).toEqual(
-      expect.arrayContaining([0, 1]),
-    );
+    expect(promotionResults).toEqual(expect.arrayContaining([0, 1]));
 
     const promotedWaitingApplication =
       await getPrisma().application.findUniqueOrThrow({
@@ -711,5 +764,12 @@ describe('Backend API E2E', () => {
     await otherProviderAgent
       .post('/api/v1/provider/listings/' + listing.id + '/promote-waiting')
       .expect(404);
+
+    const waitingCountResponse = await providerAgent
+      .get('/api/v1/provider/listings/' + listing.id + '/waiting-count')
+      .expect(200);
+    expect(Object.keys(responseBody(waitingCountResponse))).toEqual([
+      'waitingCount',
+    ]);
   });
 });

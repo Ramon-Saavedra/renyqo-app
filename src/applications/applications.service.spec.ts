@@ -23,6 +23,15 @@ const APPLICANT_ID = '00000000-0000-4000-8000-000000000002';
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000003';
 const APPLICATION_ID = '00000000-0000-4000-8000-000000000004';
 
+type ApplicationFindManyArgs = {
+  orderBy?: unknown;
+  where?: unknown;
+};
+
+type ApplicationUpdateArgs = {
+  where: { id: string };
+};
+
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
   providerId: PROVIDER_ID,
@@ -136,7 +145,7 @@ describe('ApplicationsService', () => {
     service = module.get<ApplicationsService>(ApplicationsService);
     eligibilityService = module.get(EligibilityService);
     eligibilityService.evaluate.mockReturnValue(
-      new EligibilityResponseDto(true, [], []),
+      new EligibilityResponseDto(true, [], [], new Date()),
     );
   });
 
@@ -147,6 +156,7 @@ describe('ApplicationsService', () => {
           false,
           ['household_income_below_requirement'],
           [],
+          new Date(),
         ),
       );
       prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
@@ -401,11 +411,15 @@ describe('ApplicationsService', () => {
         makeRawApplication({ status: ApplicationStatus.ACTIVE }),
       );
       eligibilityService.evaluate
-        .mockReturnValueOnce(new EligibilityResponseDto(false, [], []))
-        .mockReturnValueOnce(new EligibilityResponseDto(true, [], []));
+        .mockReturnValueOnce(
+          new EligibilityResponseDto(false, [], [], new Date()),
+        )
+        .mockReturnValueOnce(
+          new EligibilityResponseDto(true, [], [], new Date()),
+        );
 
       await expect(
-        service.promoteWaitingApplications(LISTING_ID, PROVIDER_ID),
+        service.promoteWaitingApplications(LISTING_ID),
       ).resolves.toBe(1);
       expect(prismaMock.application.findMany).toHaveBeenCalledWith({
         where: { listingId: LISTING_ID, status: ApplicationStatus.WAITING },
@@ -417,6 +431,132 @@ describe('ApplicationsService', () => {
         where: { id: secondWaiting.id },
         data: { status: ApplicationStatus.ACTIVE },
       });
+    });
+
+    it('promotes in FIFO queue order and never ranks by applicant attributes', async () => {
+      prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+      prismaMock.application.count.mockResolvedValue(3);
+      const waiting = [BigInt(7), BigInt(8), BigInt(9)].map((queueOrder, i) =>
+        makeRawApplication({
+          id: `00000000-0000-4000-8000-00000000001${i}`,
+          applicantId: `00000000-0000-4000-8000-00000000002${i}`,
+          status: ApplicationStatus.WAITING,
+          queueOrder,
+        }),
+      );
+      prismaMock.application.findMany.mockResolvedValue(waiting);
+      prismaMock.application.update.mockResolvedValue(makeRawApplication());
+
+      await expect(
+        service.promoteWaitingApplications(LISTING_ID),
+      ).resolves.toBe(2);
+
+      const findManyArgs = prismaMock.application.findMany.mock
+        .calls[0][0] as ApplicationFindManyArgs;
+      expect(findManyArgs.orderBy).toEqual({ queueOrder: 'asc' });
+      expect(
+        prismaMock.application.update.mock.calls.map(
+          (call) => (call[0] as ApplicationUpdateArgs).where.id,
+        ),
+      ).toEqual([waiting[0].id, waiting[1].id]);
+    });
+
+    it('rechecks eligibility with the current listing and profile before each promotion', async () => {
+      const listing = makeRawListing();
+      const waiting = makeRawApplication({
+        id: '00000000-0000-4000-8000-000000000030',
+        applicantId: '00000000-0000-4000-8000-000000000031',
+        status: ApplicationStatus.WAITING,
+        queueOrder: BigInt(4),
+      });
+      prismaMock.listing.findUnique.mockResolvedValue(listing);
+      prismaMock.application.count.mockResolvedValue(4);
+      prismaMock.application.findMany.mockResolvedValue([waiting]);
+      prismaMock.application.update.mockResolvedValue(makeRawApplication());
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(null);
+
+      await service.promoteWaitingApplications(LISTING_ID);
+
+      expect(eligibilityService.evaluate).toHaveBeenCalledWith(listing, null);
+      expect(prismaMock.applicantProfile.findUnique).toHaveBeenCalledWith({
+        where: { applicantId: waiting.applicantId },
+      });
+    });
+
+    it('never promotes beyond the five active applications limit', async () => {
+      prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+      prismaMock.application.count.mockResolvedValue(4);
+      prismaMock.application.findMany.mockResolvedValue(
+        [BigInt(11), BigInt(12), BigInt(13), BigInt(14)].map((queueOrder, i) =>
+          makeRawApplication({
+            id: `00000000-0000-4000-8000-00000000004${i}`,
+            applicantId: `00000000-0000-4000-8000-00000000005${i}`,
+            status: ApplicationStatus.WAITING,
+            queueOrder,
+          }),
+        ),
+      );
+      prismaMock.application.update.mockResolvedValue(makeRawApplication());
+
+      await expect(
+        service.promoteWaitingApplications(LISTING_ID),
+      ).resolves.toBe(1);
+      expect(prismaMock.application.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('promotes nothing when the listing is already at the active limit', async () => {
+      prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+      prismaMock.application.count.mockResolvedValue(5);
+
+      await expect(
+        service.promoteWaitingApplications(LISTING_ID),
+      ).resolves.toBe(0);
+      expect(prismaMock.application.findMany).not.toHaveBeenCalled();
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+
+    it('runs inside a serializable transaction that locks the listing', async () => {
+      prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+      prismaMock.application.count.mockResolvedValue(5);
+
+      await service.promoteWaitingApplications(LISTING_ID);
+
+      expect(prismaMock.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: 'Serializable' },
+      );
+      expect(prismaMock.$queryRaw).toHaveBeenCalled();
+    });
+
+    it('retries serialization conflicts instead of failing the promotion', async () => {
+      prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+      prismaMock.application.count.mockResolvedValue(5);
+      const conflict = new PrismaClientKnownRequestError('conflict', {
+        code: 'P2034',
+        clientVersion: '6.0.0',
+      });
+      prismaMock.$transaction.mockRejectedValueOnce(conflict);
+
+      await expect(
+        service.promoteWaitingApplications(LISTING_ID),
+      ).resolves.toBe(0);
+      expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('promotes nothing when the listing no longer exists or is not published', async () => {
+      prismaMock.listing.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.promoteWaitingApplications(LISTING_ID),
+      ).resolves.toBe(0);
+
+      prismaMock.listing.findUnique.mockResolvedValueOnce(
+        makeRawListing({ status: ListingStatus.ARCHIVED }),
+      );
+      await expect(
+        service.promoteWaitingApplications(LISTING_ID),
+      ).resolves.toBe(0);
+
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
     });
   });
 });

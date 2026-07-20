@@ -116,6 +116,7 @@ describe('EligibilityService', () => {
       canApply: true,
       reasons: [],
       warnings: [],
+      evaluatedAt: expect.any(Date),
     });
   });
 
@@ -147,6 +148,7 @@ describe('EligibilityService', () => {
         'household_size_exceeds_requirement',
       ],
       warnings: [],
+      evaluatedAt: expect.any(Date),
     });
   });
 
@@ -170,6 +172,7 @@ describe('EligibilityService', () => {
         'household_size_not_available',
       ],
       warnings: [],
+      evaluatedAt: expect.any(Date),
     });
   });
 
@@ -188,6 +191,7 @@ describe('EligibilityService', () => {
       canApply: true,
       reasons: [],
       warnings: [],
+      evaluatedAt: expect.any(Date),
     });
   });
 
@@ -209,6 +213,7 @@ describe('EligibilityService', () => {
       canApply: true,
       reasons: [],
       warnings: ['pets_by_arrangement', 'smoking_not_preferred'],
+      evaluatedAt: expect.any(Date),
     });
   });
 
@@ -230,6 +235,7 @@ describe('EligibilityService', () => {
       canApply: true,
       reasons: [],
       warnings: ['pets_not_preferred', 'smoking_by_arrangement'],
+      evaluatedAt: expect.any(Date),
     });
   });
 
@@ -248,6 +254,7 @@ describe('EligibilityService', () => {
       canApply: true,
       reasons: [],
       warnings: [],
+      evaluatedAt: expect.any(Date),
     });
   });
 
@@ -263,6 +270,65 @@ describe('EligibilityService', () => {
       canApply: false,
       reasons: ['household_size_exceeds_requirement'],
       warnings: [],
+      evaluatedAt: expect.any(Date),
+    });
+  });
+
+  it('performs no database mutation while evaluating eligibility', async () => {
+    const accessedMethods = new Set<string>();
+    const readOnlyDelegate = <T>(result: T) =>
+      new Proxy(
+        { findUnique: jest.fn(() => Promise.resolve(result)) },
+        {
+          get(target, property) {
+            if (typeof property === 'string') {
+              accessedMethods.add(property);
+            }
+            return Reflect.get(target, property) as unknown;
+          },
+        },
+      );
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        EligibilityService,
+        {
+          provide: PrismaService,
+          useValue: {
+            listing: readOnlyDelegate(
+              makeListing({ minimumHouseholdNetIncome: 5000 }),
+            ),
+            applicantProfile: readOnlyDelegate(
+              makeProfile({ householdNetIncome: 1000 }),
+            ),
+          },
+        },
+      ],
+    }).compile();
+
+    await module
+      .get<EligibilityService>(EligibilityService)
+      .check(LISTING_ID, APPLICANT_ID);
+
+    expect([...accessedMethods]).toEqual(['findUnique']);
+  });
+
+  it('reads the applicant profile from the database instead of client input', async () => {
+    prismaMock.listing.findUnique.mockResolvedValue(
+      makeListing({ minimumHouseholdNetIncome: 5000 }),
+    );
+    prismaMock.applicantProfile.findUnique.mockResolvedValue(
+      makeProfile({ householdNetIncome: 1000 }),
+    );
+
+    await expect(
+      service.check(LISTING_ID, APPLICANT_ID),
+    ).resolves.toMatchObject({
+      canApply: false,
+      reasons: ['household_income_below_requirement'],
+    });
+    expect(prismaMock.applicantProfile.findUnique).toHaveBeenCalledWith({
+      where: { applicantId: APPLICANT_ID },
     });
   });
 
