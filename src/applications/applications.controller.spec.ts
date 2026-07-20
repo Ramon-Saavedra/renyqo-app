@@ -8,6 +8,7 @@ import { Role, UserStatus, ApplicationStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
+import { ApplicationResponseDto } from './dto/application-response.dto';
 
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
@@ -15,9 +16,21 @@ const APPLICATION_ID = '00000000-0000-4000-8000-000000000003';
 
 type RouteArgMetadata = {
   index: number;
-  data?: string;
-  pipes?: readonly unknown[];
+  data?: unknown;
+  pipes?: unknown;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isRouteArgMetadata(value: unknown): value is RouteArgMetadata {
+  return isRecord(value) && typeof value.index === 'number';
+}
+
+function firstPipe(metadata: RouteArgMetadata | undefined): unknown {
+  return Array.isArray(metadata?.pipes) ? metadata.pipes[0] : undefined;
+}
 
 const makeApplicantUser = (): SafeUser => ({
   id: APPLICANT_ID,
@@ -39,6 +52,7 @@ const makeApplication = (): Application => ({
   listingId: LISTING_ID,
   applicantId: APPLICANT_ID,
   status: ApplicationStatus.ACTIVE,
+  queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 });
@@ -47,15 +61,19 @@ const getRouteArgMetadata = (
   methodName: string,
   parameterIndex: number,
 ): RouteArgMetadata | undefined => {
-  const metadata = Reflect.getMetadata(
+  const metadata: unknown = Reflect.getMetadata(
     ROUTE_ARGS_METADATA,
     ApplicationsController,
     methodName,
-  ) as Record<string, RouteArgMetadata> | undefined;
-
-  return Object.values(metadata ?? {}).find(
-    (routeArgMetadata) => routeArgMetadata.index === parameterIndex,
   );
+
+  if (!isRecord(metadata)) {
+    return undefined;
+  }
+
+  return Object.values(metadata)
+    .filter(isRouteArgMetadata)
+    .find((routeArgMetadata) => routeArgMetadata.index === parameterIndex);
 };
 
 describe('ApplicationsController', () => {
@@ -84,7 +102,7 @@ describe('ApplicationsController', () => {
       const metadata = getRouteArgMetadata('apply', 0);
 
       expect(metadata?.data).toBe('id');
-      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+      expect(firstPipe(metadata)).toBeInstanceOf(ParseUUIDPipe);
     });
 
     it('calls applicationsService.apply with listing id and applicant id', async () => {
@@ -97,7 +115,7 @@ describe('ApplicationsController', () => {
         LISTING_ID,
         APPLICANT_ID,
       );
-      expect(result).toEqual(application);
+      expect(result).toEqual(new ApplicationResponseDto(application));
     });
   });
 });

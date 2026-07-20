@@ -9,9 +9,9 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import type { UploadApiResponse } from 'cloudinary';
 import type { EnvironmentVariables } from '../config/env.validation';
-import type { Application, Listing } from '../generated/prisma/client';
+import type { Listing } from '../generated/prisma/client';
 import type { Prisma } from '../generated/prisma/client';
-import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
+import { ListingStatus } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
@@ -34,6 +34,14 @@ const DEFAULT_DEPOSIT_MONTHS = 2;
 const MIN_DEPOSIT_MONTHS = 1;
 const MAX_DEPOSIT_MONTHS = 3;
 const DEPOSIT_AMOUNT_TOLERANCE = 0.01;
+const ELIGIBILITY_CRITERIA_FIELDS = [
+  'minimumHouseholdNetIncome',
+  'schufaRequired',
+  'incomeProofRequired',
+  'suitableForPeopleCount',
+  'petsPolicy',
+  'smokingPolicy',
+] as const;
 
 @Injectable()
 export class ListingsService {
@@ -146,17 +154,6 @@ export class ListingsService {
       where: { providerId },
       orderBy: { createdAt: 'desc' },
       take: limit,
-    });
-  }
-
-  async getActiveApplications(
-    id: string,
-    providerId: string,
-  ): Promise<Application[]> {
-    await this.findOneByProvider(id, providerId);
-    return this.prisma.application.findMany({
-      where: { listingId: id, status: ApplicationStatus.ACTIVE },
-      orderBy: { createdAt: 'asc' },
     });
   }
 
@@ -296,11 +293,14 @@ export class ListingsService {
     listing: Listing,
   ): Prisma.ListingUncheckedUpdateInput {
     const { availableFrom, ...rest } = dto;
-    const draftData = this.stripEmptyValues({
-      ...rest,
-      availableFrom:
-        availableFrom !== undefined ? new Date(availableFrom) : undefined,
-    });
+    const draftData = this.stripEmptyValues(
+      {
+        ...rest,
+        availableFrom:
+          availableFrom !== undefined ? new Date(availableFrom) : undefined,
+      },
+      ELIGIBILITY_CRITERIA_FIELDS,
+    );
 
     return {
       ...draftData,
@@ -401,10 +401,16 @@ export class ListingsService {
     }
   }
 
-  private stripEmptyValues<T extends Record<string, unknown>>(data: T) {
+  private stripEmptyValues<T extends Record<string, unknown>>(
+    data: T,
+    preserveNullKeys: readonly string[] = [],
+  ) {
     return Object.fromEntries(
-      Object.entries(data).filter(([, value]) => {
-        if (value === undefined || value === null) {
+      Object.entries(data).filter(([key, value]) => {
+        if (
+          value === undefined ||
+          (value === null && !preserveNullKeys.includes(key))
+        ) {
           return false;
         }
 

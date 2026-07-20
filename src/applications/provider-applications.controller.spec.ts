@@ -8,6 +8,9 @@ import { ApplicationStatus, Role, UserStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsService } from './applications.service';
 import { ProviderApplicationsController } from './provider-applications.controller';
+import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
+import { ApplicationResponseDto } from './dto/application-response.dto';
+import { PromotionResponseDto } from './dto/promotion-response.dto';
 
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
@@ -16,9 +19,21 @@ const APPLICATION_ID = '00000000-0000-4000-8000-000000000004';
 
 type RouteArgMetadata = {
   index: number;
-  data?: string;
-  pipes?: readonly unknown[];
+  data?: unknown;
+  pipes?: unknown;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isRouteArgMetadata(value: unknown): value is RouteArgMetadata {
+  return isRecord(value) && typeof value.index === 'number';
+}
+
+function firstPipe(metadata: RouteArgMetadata | undefined): unknown {
+  return Array.isArray(metadata?.pipes) ? metadata.pipes[0] : undefined;
+}
 
 const makeProviderUser = (): SafeUser => ({
   id: PROVIDER_ID,
@@ -40,6 +55,7 @@ const makeApplication = (): Application => ({
   listingId: LISTING_ID,
   applicantId: APPLICANT_ID,
   status: ApplicationStatus.ACTIVE,
+  queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 });
@@ -48,15 +64,19 @@ const getRouteArgMetadata = (
   methodName: string,
   parameterIndex: number,
 ): RouteArgMetadata | undefined => {
-  const metadata = Reflect.getMetadata(
+  const metadata: unknown = Reflect.getMetadata(
     ROUTE_ARGS_METADATA,
     ProviderApplicationsController,
     methodName,
-  ) as Record<string, RouteArgMetadata> | undefined;
-
-  return Object.values(metadata ?? {}).find(
-    (routeArgMetadata) => routeArgMetadata.index === parameterIndex,
   );
+
+  if (!isRecord(metadata)) {
+    return undefined;
+  }
+
+  return Object.values(metadata)
+    .filter(isRouteArgMetadata)
+    .find((routeArgMetadata) => routeArgMetadata.index === parameterIndex);
 };
 
 describe('ProviderApplicationsController', () => {
@@ -72,6 +92,9 @@ describe('ProviderApplicationsController', () => {
           useValue: {
             findAllByProvider: jest.fn(),
             findAllByListing: jest.fn(),
+            findActiveByListing: jest.fn(),
+            findWaitingCountByListing: jest.fn(),
+            promoteWaitingApplications: jest.fn(),
           },
         },
       ],
@@ -93,7 +116,11 @@ describe('ProviderApplicationsController', () => {
       expect(applicationsService.findAllByProvider).toHaveBeenCalledWith(
         PROVIDER_ID,
       );
-      expect(result).toEqual(applications);
+      expect(result).toEqual(
+        applications.map(
+          (application) => new ApplicationResponseDto(application),
+        ),
+      );
     });
   });
 
@@ -102,7 +129,7 @@ describe('ProviderApplicationsController', () => {
       const metadata = getRouteArgMetadata('findByListing', 0);
 
       expect(metadata?.data).toBe('id');
-      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+      expect(firstPipe(metadata)).toBeInstanceOf(ParseUUIDPipe);
     });
 
     it('calls applicationsService.findAllByListing with listing id and provider id', async () => {
@@ -118,7 +145,59 @@ describe('ProviderApplicationsController', () => {
         LISTING_ID,
         PROVIDER_ID,
       );
-      expect(result).toEqual(applications);
+      expect(result).toEqual(
+        applications.map(
+          (application) => new ApplicationResponseDto(application),
+        ),
+      );
+    });
+  });
+
+  describe('findActiveByListing', () => {
+    it('calls applicationsService.findActiveByListing with listing id and provider id', async () => {
+      const applications = [makeApplication()];
+      applicationsService.findActiveByListing.mockResolvedValue(applications);
+
+      const result = await controller.findActiveByListing(
+        LISTING_ID,
+        makeProviderUser(),
+      );
+
+      expect(applicationsService.findActiveByListing).toHaveBeenCalledWith(
+        LISTING_ID,
+        PROVIDER_ID,
+      );
+      expect(result).toEqual(
+        applications.map(
+          (application) => new ApplicationResponseDto(application),
+        ),
+      );
+    });
+  });
+
+  describe('findWaitingCount', () => {
+    it('returns the waiting count for an owned listing', async () => {
+      applicationsService.findWaitingCountByListing.mockResolvedValue(4);
+
+      await expect(
+        controller.findWaitingCount(LISTING_ID, makeProviderUser()),
+      ).resolves.toEqual(new WaitingCountResponseDto(4));
+      expect(
+        applicationsService.findWaitingCountByListing,
+      ).toHaveBeenCalledWith(LISTING_ID, PROVIDER_ID);
+    });
+  });
+
+  describe('promoteWaiting', () => {
+    it('promotes waiting applications for the provider-owned listing', async () => {
+      applicationsService.promoteWaitingApplications.mockResolvedValue(2);
+
+      await expect(
+        controller.promoteWaiting(LISTING_ID, makeProviderUser()),
+      ).resolves.toEqual(new PromotionResponseDto(2));
+      expect(
+        applicationsService.promoteWaitingApplications,
+      ).toHaveBeenCalledWith(LISTING_ID, PROVIDER_ID);
     });
   });
 });

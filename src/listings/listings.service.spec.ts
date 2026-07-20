@@ -8,15 +8,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { UploadApiResponse } from 'cloudinary';
 
-import type {
-  Application,
-  Listing,
-  ListingImage,
-} from '../generated/prisma/client';
+import type { Listing, ListingImage } from '../generated/prisma/client';
 import {
-  ApplicationStatus,
   ListingStatus,
   ObjectType,
+  PetsPolicy,
+  SmokingPolicy,
 } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -27,7 +24,6 @@ const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
 const LISTING_ID_2 = '00000000-0000-4000-8000-000000000003';
 const OTHER_LISTING_ID = '00000000-0000-4000-8000-000000000004';
-const APPLICANT_ID = '00000000-0000-4000-8000-000000000005';
 const CLOUDINARY_FOLDER = 'renyqo';
 
 type ListingsTransactionMock = {
@@ -40,9 +36,6 @@ type ListingsTransactionMock = {
   };
   listingImage: {
     create: jest.MockedFunction<(args?: unknown) => Promise<ListingImage>>;
-  };
-  application: {
-    findMany: jest.MockedFunction<(args?: unknown) => Promise<Application[]>>;
   };
 };
 
@@ -88,18 +81,6 @@ type ListingImageCreateArgs = {
     isCover: boolean;
   };
 };
-
-const makeRawApplication = (
-  overrides: Partial<Application> = {},
-): Application => ({
-  id: '00000000-0000-4000-8000-000000000010',
-  listingId: LISTING_ID,
-  applicantId: APPLICANT_ID,
-  status: ApplicationStatus.ACTIVE,
-  createdAt: new Date('2024-01-01'),
-  updatedAt: new Date('2024-01-01'),
-  ...overrides,
-});
 
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
@@ -185,9 +166,6 @@ describe('ListingsService', () => {
       },
       listingImage: {
         create: jest.fn<(args?: unknown) => Promise<ListingImage>>(),
-      },
-      application: {
-        findMany: jest.fn<(args?: unknown) => Promise<Application[]>>(),
       },
       $transaction: jest.fn<PrismaTransactionRunner>(transactionRunner),
     };
@@ -529,6 +507,50 @@ describe('ListingsService', () => {
       expect(listingUpdateArgs.data).toEqual({ depositMonths: 1 });
     });
 
+    it('clears explicitly unselected eligibility criteria', async () => {
+      const listing = makeRawListing({
+        minimumHouseholdNetIncome: 3000,
+        schufaRequired: true,
+        incomeProofRequired: true,
+        suitableForPeopleCount: 2,
+        petsPolicy: PetsPolicy.ALLOWED,
+        smokingPolicy: SmokingPolicy.ALLOWED,
+      });
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue(
+        makeRawListing({
+          minimumHouseholdNetIncome: null,
+          schufaRequired: false,
+          incomeProofRequired: false,
+          suitableForPeopleCount: null,
+          petsPolicy: null,
+          smokingPolicy: null,
+        }),
+      );
+
+      await service.update(LISTING_ID, PROVIDER_ID, {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: false,
+        incomeProofRequired: false,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      });
+
+      const listingUpdateArgs = prismaMock.listing.update.mock
+        .calls[0][0] as ListingUpdateArgs;
+      expect(listingUpdateArgs.data).toEqual(
+        expect.objectContaining({
+          minimumHouseholdNetIncome: null,
+          schufaRequired: false,
+          incomeProofRequired: false,
+          suitableForPeopleCount: null,
+          petsPolicy: null,
+          smokingPolicy: null,
+        }),
+      );
+    });
+
     it('rejects mismatched deposit on update', async () => {
       const listing = makeRawListing({ coldRent: 1000, depositMonths: 2 });
       prismaMock.listing.findFirst.mockResolvedValue(listing);
@@ -760,35 +782,6 @@ describe('ListingsService', () => {
         }),
       );
       expect(result).toEqual(listings);
-    });
-  });
-
-  describe('getActiveApplications', () => {
-    it('returns active applications when listing belongs to the provider', async () => {
-      const listing = makeRawListing();
-      const applications = [makeRawApplication()];
-      prismaMock.listing.findFirst.mockResolvedValue(listing);
-      prismaMock.application.findMany.mockResolvedValue(applications);
-
-      const result = await service.getActiveApplications(
-        LISTING_ID,
-        PROVIDER_ID,
-      );
-
-      expect(prismaMock.application.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { listingId: LISTING_ID, status: ApplicationStatus.ACTIVE },
-        }),
-      );
-      expect(result).toEqual(applications);
-    });
-
-    it('throws NotFoundException when listing does not belong to the provider', async () => {
-      prismaMock.listing.findFirst.mockResolvedValue(null);
-
-      await expect(
-        service.getActiveApplications(OTHER_LISTING_ID, PROVIDER_ID),
-      ).rejects.toThrow(NotFoundException);
     });
   });
 });

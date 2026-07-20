@@ -11,9 +11,9 @@ import {
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import type { Application } from '../generated/prisma/client';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsService } from './applications.service';
+import { ApplicationResponseDto } from './dto/application-response.dto';
 
 @UseGuards(AuthenticatedGuard, ApplicantOnlyGuard)
 @Controller('listings')
@@ -22,10 +22,14 @@ export class ApplicationsController {
 
   @Post(':id/apply')
   @HttpCode(HttpStatus.CREATED)
-  apply(
+  async apply(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
     @CurrentUser() user: SafeUser,
-  ): Promise<Application> {
-    return this.applicationsService.apply(listingId, user.id);
+  ): Promise<ApplicationResponseDto> {
+    const application = await this.applicationsService.apply(
+      listingId,
+      user.id,
+    );
+    return new ApplicationResponseDto(application);
   }
 }
