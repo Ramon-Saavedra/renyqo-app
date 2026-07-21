@@ -45,6 +45,26 @@ const toOptionalBoolean = ({ value }: TransformFnParams): unknown => {
   return value;
 };
 
+const toOptionalNumber = ({ value }: TransformFnParams): unknown => {
+  if (value === undefined || value === null || typeof value === 'number') {
+    return value;
+  }
+
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number(normalized);
+
+  return Number.isFinite(parsed) ? parsed : value;
+};
+
 export class CreateListingDto {
   @IsOptional()
   @IsEnum(ObjectType)
@@ -120,6 +140,7 @@ export class CreateListingDto {
   shortDescription?: string;
 
   @IsOptional()
+  @Transform(toOptionalNumber)
   @IsNumber()
   @Min(0)
   minimumHouseholdNetIncome?: number | null;
@@ -135,6 +156,7 @@ export class CreateListingDto {
   incomeProofRequired?: boolean;
 
   @IsOptional()
+  @Transform(toOptionalNumber)
   @IsInt()
   @Min(1)
   suitableForPeopleCount?: number | null;

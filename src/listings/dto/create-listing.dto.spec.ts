@@ -60,4 +60,129 @@ describe('CreateListingDto', () => {
 
     expect(errors[0]?.property).toBe('depositMonths');
   });
+
+  describe('optional eligibility criteria', () => {
+    it('accepts omitted eligibility criteria', async () => {
+      const errors = await validateDto({ title: 'Draft title' });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('accepts empty strings and normalizes them to undefined', async () => {
+      const instance = plainToInstance(CreateListingDto, {
+        minimumHouseholdNetIncome: '',
+        suitableForPeopleCount: '',
+      });
+
+      await expect(validate(instance)).resolves.toHaveLength(0);
+      expect(instance.minimumHouseholdNetIncome).toBeUndefined();
+      expect(instance.suitableForPeopleCount).toBeUndefined();
+    });
+
+    it('accepts whitespace-only strings and normalizes them to undefined', async () => {
+      const instance = plainToInstance(CreateListingDto, {
+        minimumHouseholdNetIncome: '   ',
+        suitableForPeopleCount: '\t ',
+      });
+
+      await expect(validate(instance)).resolves.toHaveLength(0);
+      expect(instance.minimumHouseholdNetIncome).toBeUndefined();
+      expect(instance.suitableForPeopleCount).toBeUndefined();
+    });
+
+    it('accepts null for eligibility criteria', async () => {
+      const instance = plainToInstance(CreateListingDto, {
+        minimumHouseholdNetIncome: null,
+        suitableForPeopleCount: null,
+      });
+
+      await expect(validate(instance)).resolves.toHaveLength(0);
+      expect(instance.minimumHouseholdNetIncome).toBeNull();
+      expect(instance.suitableForPeopleCount).toBeNull();
+    });
+
+    it('accepts numeric values', async () => {
+      const errors = await validateDto({
+        minimumHouseholdNetIncome: 3000,
+        suitableForPeopleCount: 2,
+      });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('converts valid numeric strings to numbers', async () => {
+      const instance = plainToInstance(CreateListingDto, {
+        minimumHouseholdNetIncome: '3000.50',
+        suitableForPeopleCount: '2',
+      });
+
+      await expect(validate(instance)).resolves.toHaveLength(0);
+      expect(instance.minimumHouseholdNetIncome).toBe(3000.5);
+      expect(instance.suitableForPeopleCount).toBe(2);
+    });
+
+    it('accepts an income of zero', async () => {
+      const errors = await validateDto({ minimumHouseholdNetIncome: 0 });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('accepts a people count of one', async () => {
+      const errors = await validateDto({ suitableForPeopleCount: 1 });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('rejects invalid numeric strings', async () => {
+      const income = await validateDto({ minimumHouseholdNetIncome: 'abc' });
+      const peopleCount = await validateDto({ suitableForPeopleCount: 'abc' });
+
+      expect(income).toHaveLength(1);
+      expect(income[0]?.property).toBe('minimumHouseholdNetIncome');
+      expect(peopleCount).toHaveLength(1);
+      expect(peopleCount[0]?.property).toBe('suitableForPeopleCount');
+    });
+
+    it('rejects a negative income', async () => {
+      const errors = await validateDto({ minimumHouseholdNetIncome: -1 });
+
+      expect(errors[0]?.property).toBe('minimumHouseholdNetIncome');
+      expect(errors[0]?.constraints).toHaveProperty('min');
+    });
+
+    it('rejects a negative income sent as a string', async () => {
+      const errors = await validateDto({ minimumHouseholdNetIncome: '-1' });
+
+      expect(errors[0]?.property).toBe('minimumHouseholdNetIncome');
+      expect(errors[0]?.constraints).toHaveProperty('min');
+    });
+
+    it('rejects a people count of zero', async () => {
+      const errors = await validateDto({ suitableForPeopleCount: 0 });
+
+      expect(errors[0]?.property).toBe('suitableForPeopleCount');
+      expect(errors[0]?.constraints).toHaveProperty('min');
+    });
+
+    it('rejects a negative people count', async () => {
+      const errors = await validateDto({ suitableForPeopleCount: -2 });
+
+      expect(errors[0]?.property).toBe('suitableForPeopleCount');
+      expect(errors[0]?.constraints).toHaveProperty('min');
+    });
+
+    it('rejects a decimal people count', async () => {
+      const errors = await validateDto({ suitableForPeopleCount: 1.5 });
+
+      expect(errors[0]?.property).toBe('suitableForPeopleCount');
+      expect(errors[0]?.constraints).toHaveProperty('isInt');
+    });
+
+    it('rejects a decimal people count sent as a string', async () => {
+      const errors = await validateDto({ suitableForPeopleCount: '1.5' });
+
+      expect(errors[0]?.property).toBe('suitableForPeopleCount');
+      expect(errors[0]?.constraints).toHaveProperty('isInt');
+    });
+  });
 });
