@@ -507,6 +507,28 @@ describe('ListingsService', () => {
       expect(listingUpdateArgs.data).toEqual({ depositMonths: 1 });
     });
 
+    it('keeps existing eligibility criteria when they are omitted', async () => {
+      const listing = makeRawListing({
+        minimumHouseholdNetIncome: 3000,
+        suitableForPeopleCount: 2,
+      });
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue(
+        makeRawListing({
+          minimumHouseholdNetIncome: 3000,
+          suitableForPeopleCount: 2,
+          title: 'Updated title',
+        }),
+      );
+
+      await service.update(LISTING_ID, PROVIDER_ID, { title: 'Updated title' });
+
+      const listingUpdateArgs = prismaMock.listing.update.mock
+        .calls[0][0] as ListingUpdateArgs;
+
+      expect(listingUpdateArgs.data).toEqual({ title: 'Updated title' });
+    });
+
     it('clears explicitly unselected eligibility criteria', async () => {
       const listing = makeRawListing({
         minimumHouseholdNetIncome: 3000,
