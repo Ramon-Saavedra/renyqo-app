@@ -117,13 +117,13 @@ After coding, tell me:
 
 After every significant backend task, the main agent must run the relevant specialized review subagents before declaring the task complete.
 
-The main agent must always consider all five backend review subagents explicitly: `backend-architecture`, `backend-domain-api`, `backend-security`, `backend-database` and `backend-tests`. It must invoke every subagent applicable to the completed task. If a subagent is not applicable, the main agent must state that decision and the concrete reason in the completion report. It must never silently skip a subagent, assume that compilation makes review unnecessary, or declare completion without making this applicability decision.
+The main agent must always consider the three backend review subagents explicitly: `backend-architecture`, `backend-security` and `backend-tests`. It must invoke every subagent applicable to the completed task. If a subagent is not applicable, the main agent must state that decision and the concrete reason in the completion report. It must never silently skip a subagent, assume that compilation makes review unnecessary, or declare completion without making this applicability decision.
 
 Use this selection:
 
-- Normal backend feature: `backend-architecture`, `backend-domain-api`, `backend-tests`.
-- Authentication, permissions or sensitive data: `backend-architecture`, `backend-domain-api`, `backend-security`, `backend-tests`.
-- Prisma schema, migrations or transactional logic: `backend-architecture`, `backend-domain-api`, `backend-database`, `backend-tests`; include `backend-security` when personal or sensitive data is involved.
+- Normal backend feature: `backend-architecture`, `backend-tests`.
+- Authentication, permissions or sensitive data: `backend-architecture`, `backend-security`, `backend-tests`.
+- Prisma schema, migrations or transactional logic: `backend-architecture`, `backend-tests`; include `backend-security` when personal or sensitive data is involved.
 
 The main agent must:
 
