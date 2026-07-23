@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ListingImage } from '../generated/prisma/client';
 import { Role, UserStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
+import { ListingImageItemDto } from './dto/listing-image-item.dto';
 import { ListingImageResponseDto } from './dto/listing-image-response.dto';
 import { ListingImagesController } from './listing-images.controller';
 import { ListingImagesService } from './listing-images.service';
@@ -64,6 +65,9 @@ describe('ListingImagesController', () => {
           provide: ListingImagesService,
           useValue: {
             upload: jest.fn(),
+            findAllByListing: jest.fn(),
+            remove: jest.fn(),
+            reorder: jest.fn(),
           },
         },
       ],
@@ -106,6 +110,62 @@ describe('ListingImagesController', () => {
       expect(result.isCover).toBe(true);
       expect(result.position).toBe(0);
       expect(result.secureUrl).toBe(image.secureUrl);
+    });
+  });
+
+  describe('findAll', () => {
+    it('calls listingImagesService.findAllByListing with listing id and provider id', async () => {
+      const items = [ListingImageItemDto.fromListingImage(makeListingImage())];
+      listingImagesService.findAllByListing.mockResolvedValue(items);
+
+      const result = await controller.findAll(
+        { listingId: LISTING_ID },
+        makeProviderUser(),
+      );
+
+      expect(listingImagesService.findAllByListing).toHaveBeenCalledWith(
+        LISTING_ID,
+        PROVIDER_ID,
+      );
+      expect(result).toEqual(items);
+    });
+  });
+
+  describe('reorder', () => {
+    it('calls listingImagesService.reorder with listing id, provider id and dto', async () => {
+      const dto = { imageIds: [IMAGE_ID] };
+      const items = [ListingImageItemDto.fromListingImage(makeListingImage())];
+      listingImagesService.reorder.mockResolvedValue(items);
+
+      const result = await controller.reorder(
+        { listingId: LISTING_ID },
+        dto,
+        makeProviderUser(),
+      );
+
+      expect(listingImagesService.reorder).toHaveBeenCalledWith(
+        LISTING_ID,
+        PROVIDER_ID,
+        dto,
+      );
+      expect(result).toEqual(items);
+    });
+  });
+
+  describe('remove', () => {
+    it('calls listingImagesService.remove with listing id, image id and provider id', async () => {
+      listingImagesService.remove.mockResolvedValue(undefined);
+
+      await controller.remove(
+        { listingId: LISTING_ID, imageId: IMAGE_ID },
+        makeProviderUser(),
+      );
+
+      expect(listingImagesService.remove).toHaveBeenCalledWith(
+        LISTING_ID,
+        IMAGE_ID,
+        PROVIDER_ID,
+      );
     });
   });
 });

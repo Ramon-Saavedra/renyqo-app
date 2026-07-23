@@ -99,6 +99,7 @@ describe('ListingsController', () => {
             create: jest.fn(),
             findAllByProvider: jest.fn(),
             findOneByProvider: jest.fn(),
+            findOneDetailByProvider: jest.fn(),
             update: jest.fn(),
             publish: jest.fn(),
             moveToDraft: jest.fn(),
@@ -178,13 +179,13 @@ describe('ListingsController', () => {
       expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
     });
 
-    it('calls listingsService.findOneByProvider with id and provider id', async () => {
-      const listing = makeListing();
-      listingsService.findOneByProvider.mockResolvedValue(listing);
+    it('calls listingsService.findOneDetailByProvider with id and provider id', async () => {
+      const listing = { ...makeListing(), images: [] };
+      listingsService.findOneDetailByProvider.mockResolvedValue(listing);
 
       const result = await controller.findOne(LISTING_ID, makeProviderUser());
 
-      expect(listingsService.findOneByProvider).toHaveBeenCalledWith(
+      expect(listingsService.findOneDetailByProvider).toHaveBeenCalledWith(
         LISTING_ID,
         PROVIDER_ID,
       );
@@ -192,6 +193,31 @@ describe('ListingsController', () => {
         exposeExactAddress: true,
       });
       expect(result).toEqual(listing);
+    });
+
+    it('returns the listing images with real ids and metadata', async () => {
+      const image = {
+        id: '00000000-0000-4000-8000-000000000009',
+        listingId: LISTING_ID,
+        publicId: 'renyqo/listings/abc/xyz',
+        secureUrl: 'https://res.cloudinary.com/test/image/upload/xyz.jpg',
+        position: 0,
+        isCover: true,
+        createdAt: new Date('2024-01-01'),
+      };
+      const listing = { ...makeListing(), images: [image] };
+      listingsService.findOneDetailByProvider.mockResolvedValue(listing);
+
+      const result = await controller.findOne(LISTING_ID, makeProviderUser());
+
+      expect(result.images).toEqual([
+        {
+          id: image.id,
+          secureUrl: image.secureUrl,
+          position: 0,
+          isCover: true,
+        },
+      ]);
     });
   });
 
