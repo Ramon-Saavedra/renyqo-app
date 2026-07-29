@@ -1045,4 +1045,287 @@ describe('Backend API E2E', () => {
       seeded[1].secureUrl,
     ]);
   });
+
+  describe('applicant profile HTTP contract', () => {
+    it('creates and reads a profile through HTTP', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent.get('/api/v1/applicant/profile').expect(404);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ householdNetIncome: 3000, hasPets: false })
+        .expect(200);
+
+      const getResponse = await applicantAgent
+        .get('/api/v1/applicant/profile')
+        .expect(200);
+
+      const body = responseBody(getResponse);
+      expect(body).toMatchObject({
+        householdNetIncome: 3000,
+        hasPets: false,
+      });
+    });
+
+    it('returns only business fields, not internal fields', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ householdNetIncome: 3000 })
+        .expect(200);
+
+      const response = await applicantAgent
+        .get('/api/v1/applicant/profile')
+        .expect(200);
+
+      const body = responseBody(response);
+      expect(body).not.toHaveProperty('id');
+      expect(body).not.toHaveProperty('applicantId');
+      expect(body).not.toHaveProperty('createdAt');
+      expect(body).not.toHaveProperty('updatedAt');
+    });
+
+    it('calculates peopleCount from adultsCount and childrenCount', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ adultsCount: 2, childrenCount: 1 })
+        .expect(200);
+
+      const response = await applicantAgent
+        .get('/api/v1/applicant/profile')
+        .expect(200);
+
+      const body = responseBody(response);
+      expect(body.adultsCount).toBe(2);
+      expect(body.childrenCount).toBe(1);
+      expect(body.peopleCount).toBe(3);
+    });
+
+    it('rejects incomplete household counts', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ adultsCount: 2 })
+        .expect(400);
+    });
+
+    it('rejects client-supplied peopleCount', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ peopleCount: 5 })
+        .expect(400);
+    });
+
+    it('clears fields with explicit null', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ householdNetIncome: 3000, adultsCount: 2, childrenCount: 1 })
+        .expect(200);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({
+          householdNetIncome: null,
+          adultsCount: null,
+          childrenCount: null,
+        })
+        .expect(200);
+
+      const response = await applicantAgent
+        .get('/api/v1/applicant/profile')
+        .expect(200);
+
+      const body = responseBody(response);
+      expect(body.householdNetIncome).toBeNull();
+      expect(body.adultsCount).toBeNull();
+      expect(body.childrenCount).toBeNull();
+      expect(body.peopleCount).toBeNull();
+    });
+
+    it('normalizes empty and whitespace petsNote strings to null', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ petsNote: '' })
+        .expect(200);
+
+      let response = await applicantAgent
+        .get('/api/v1/applicant/profile')
+        .expect(200);
+      expect(responseBody(response).petsNote).toBeNull();
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ petsNote: '   ' })
+        .expect(200);
+
+      response = await applicantAgent
+        .get('/api/v1/applicant/profile')
+        .expect(200);
+      expect(responseBody(response).petsNote).toBeNull();
+    });
+
+    it('preserves omitted fields on PATCH', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ householdNetIncome: 3000, hasPets: true })
+        .expect(200);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ householdNetIncome: 4000 })
+        .expect(200);
+
+      const response = await applicantAgent
+        .get('/api/v1/applicant/profile')
+        .expect(200);
+
+      const body = responseBody(response);
+      expect(body.householdNetIncome).toBe(4000);
+      expect(body.hasPets).toBe(true);
+    });
+
+    it('rejects empty PATCH body', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({})
+        .expect(400);
+    });
+
+    it('updates eligibility from HTTP-updated profile', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      const providerAgent = request.agent(getServer());
+      const provider = safeUserBody(
+        await providerAgent
+          .post('/api/v1/auth/register')
+          .send(providerPayload())
+          .expect(201),
+      );
+
+      const listing = await getPrisma().listing.create({
+        data: {
+          providerId: provider.id,
+          status: ListingStatus.PUBLISHED,
+          city: 'Berlin',
+          title: 'Eligibility E2E Listing',
+          minimumHouseholdNetIncome: 3000,
+        },
+      });
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ householdNetIncome: 2500 })
+        .expect(200);
+
+      const blocked = await applicantAgent
+        .get(`/api/v1/listings/${listing.id}/eligibility`)
+        .expect(200);
+      expect(responseBody(blocked)['canApply']).toBe(false);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ householdNetIncome: 3500 })
+        .expect(200);
+
+      const allowed = await applicantAgent
+        .get(`/api/v1/listings/${listing.id}/eligibility`)
+        .expect(200);
+      expect(responseBody(allowed)['canApply']).toBe(true);
+    });
+  });
+
+  describe('unpublished listing rejection', () => {
+    it.each([
+      ListingStatus.DRAFT,
+      ListingStatus.PAUSED,
+      ListingStatus.ARCHIVED,
+    ])('rejects applications to a listing with status %s', async (status) => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      const providerAgent = request.agent(getServer());
+      const provider = safeUserBody(
+        await providerAgent
+          .post('/api/v1/auth/register')
+          .send(providerPayload())
+          .expect(201),
+      );
+
+      const listing = await getPrisma().listing.create({
+        data: {
+          providerId: provider.id,
+          status,
+          city: 'Berlin',
+          title: 'Unpublished Listing',
+        },
+      });
+
+      await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(422);
+
+      const count = await getPrisma().application.count({
+        where: { listingId: listing.id },
+      });
+      expect(count).toBe(0);
+    });
+  });
 });

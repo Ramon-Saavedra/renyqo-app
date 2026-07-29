@@ -238,6 +238,34 @@ No application status transition releases an `ACTIVE` slot yet, because reject a
 | `GET`   | `/api/v1/applicant/profile` | Applicant | Get the applicant profile, or `404` if missing |
 | `PATCH` | `/api/v1/applicant/profile` | Applicant | Create or update the applicant profile         |
 
+**PATCH contract:**
+
+- Omitted fields retain their existing value.
+- `null` explicitly clears a field.
+- Empty or whitespace-only strings normalize to `null`.
+- An empty body returns `400`.
+- `peopleCount` is read-only and derived by the backend; submitting it returns `400`.
+
+**Household invariant:**
+
+`adultsCount` and `childrenCount` must be provided together or neither. When both are present, `peopleCount` is calculated as `adultsCount + childrenCount`. The database enforces this with a `CHECK` constraint, and the service validates merged state inside a Serializable transaction with retries.
+
+**Response:**
+
+Both `GET` and `PATCH` return only business fields:
+
+```text
+householdNetIncome, incomeProofAvailable, schufaAvailable,
+peopleCount, adultsCount, childrenCount,
+hasPets, petsNote, smokingStatus
+```
+
+Internal identifiers and timestamps are not exposed.
+
+**Migration:**
+
+Existing profiles with incomplete household counts are cleaned up: rows with both `adultsCount` and `childrenCount` get `peopleCount` recalculated; ambiguous rows are cleared. A database constraint prevents future invalid states.
+
 ### Dashboard
 
 | Method | Path                                 | Auth     | Description                      |
