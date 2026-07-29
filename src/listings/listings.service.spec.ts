@@ -26,11 +26,15 @@ const LISTING_ID_2 = '00000000-0000-4000-8000-000000000003';
 const OTHER_LISTING_ID = '00000000-0000-4000-8000-000000000004';
 const CLOUDINARY_FOLDER = 'renyqo';
 
+type ListingWithImagesRecord = Listing & { images?: ListingImage[] };
+
 type ListingsTransactionMock = {
   listing: {
     create: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
     findMany: jest.MockedFunction<(args?: unknown) => Promise<Listing[]>>;
-    findFirst: jest.MockedFunction<(args?: unknown) => Promise<Listing | null>>;
+    findFirst: jest.MockedFunction<
+      (args?: unknown) => Promise<ListingWithImagesRecord | null>
+    >;
     update: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
     count: jest.MockedFunction<(args?: unknown) => Promise<number>>;
   };
@@ -160,7 +164,10 @@ describe('ListingsService', () => {
       listing: {
         create: jest.fn<(args?: unknown) => Promise<Listing>>(),
         findMany: jest.fn<(args?: unknown) => Promise<Listing[]>>(),
-        findFirst: jest.fn<(args?: unknown) => Promise<Listing | null>>(),
+        findFirst:
+          jest.fn<
+            (args?: unknown) => Promise<ListingWithImagesRecord | null>
+          >(),
         update: jest.fn<(args?: unknown) => Promise<Listing>>(),
         count: jest.fn<(args?: unknown) => Promise<number>>(),
       },
@@ -582,6 +589,45 @@ describe('ListingsService', () => {
       ).rejects.toThrow(BadRequestException);
       expect(prismaMock.listing.update).not.toHaveBeenCalled();
     });
+
+    it('rejects bedrooms greater than rooms on update', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+
+      await expect(
+        service.update(LISTING_ID, PROVIDER_ID, { rooms: 2, bedrooms: 5 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prismaMock.listing.update).not.toHaveBeenCalled();
+    });
+
+    it('allows bedrooms equal to rooms on update', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue({
+        ...listing,
+        rooms: 3,
+        bedrooms: 3,
+      });
+
+      await expect(
+        service.update(LISTING_ID, PROVIDER_ID, { rooms: 3, bedrooms: 3 }),
+      ).resolves.toBeDefined();
+      expect(prismaMock.listing.update).toHaveBeenCalled();
+    });
+
+    it('allows bedrooms less than rooms on update', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue({
+        ...listing,
+        rooms: 4,
+        bedrooms: 2,
+      });
+
+      await expect(
+        service.update(LISTING_ID, PROVIDER_ID, { rooms: 4, bedrooms: 2 }),
+      ).resolves.toBeDefined();
+    });
   });
 
   describe('findAllByProvider', () => {
@@ -620,7 +666,65 @@ describe('ListingsService', () => {
     });
   });
 
+  describe('findOneDetailByProvider', () => {
+    it('returns the listing with its images ordered by position', async () => {
+      const images = [
+        makeRawListingImage(),
+        makeRawListingImage({
+          id: '00000000-0000-4000-8000-000000000021',
+          position: 1,
+          isCover: false,
+        }),
+      ];
+      const listing = { ...makeRawListing(), images };
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+
+      const result = await service.findOneDetailByProvider(
+        LISTING_ID,
+        PROVIDER_ID,
+      );
+
+      expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
+        where: { id: LISTING_ID, providerId: PROVIDER_ID },
+        include: { images: { orderBy: { position: 'asc' } } },
+      });
+      expect(result).toEqual(listing);
+    });
+
+    it('throws NotFoundException when listing does not belong to the provider', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.findOneDetailByProvider(OTHER_LISTING_ID, PROVIDER_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('toListingResponse', () => {
+    it('maps images to id, secureUrl, position and isCover only', () => {
+      const listing = {
+        ...makeRawListing(),
+        images: [makeRawListingImage()],
+      };
+
+      const result = service.toListingResponse(listing);
+
+      expect(result.images).toEqual([
+        {
+          id: '00000000-0000-4000-8000-000000000020',
+          secureUrl: 'https://res.cloudinary.com/test/image/upload/abc123.jpg',
+          position: 0,
+          isCover: true,
+        },
+      ]);
+    });
+
+    it('omits images when the listing record has none loaded', () => {
+      const result = service.toListingResponse(makeRawListing());
+
+      expect(result.images).toBeUndefined();
+    });
+
     it('hides street when showExactAddress is false by default', () => {
       const listing = makeRawListing({
         street: 'Hauptstraße 1',

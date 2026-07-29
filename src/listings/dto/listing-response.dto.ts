@@ -1,4 +1,7 @@
-import type { Listing } from '../../generated/prisma/client';
+import type { Listing, ListingImage } from '../../generated/prisma/client';
+import { ListingImageItemDto } from '../../listing-images/dto/listing-image-item.dto';
+
+export type ListingWithImages = Listing & { images?: ListingImage[] };
 
 export class ListingResponseDto {
   readonly id!: Listing['id'];
@@ -30,9 +33,10 @@ export class ListingResponseDto {
   readonly createdAt!: Listing['createdAt'];
   readonly updatedAt!: Listing['updatedAt'];
   readonly publishedAt!: Listing['publishedAt'];
+  readonly images?: ListingImageItemDto[];
 
   constructor(
-    listing: Listing,
+    listing: ListingWithImages,
     options: { exposeExactAddress?: boolean } = {},
   ) {
     Object.assign(this, {
@@ -41,6 +45,9 @@ export class ListingResponseDto {
         options.exposeExactAddress || listing.showExactAddress
           ? listing.street
           : null,
+      images: listing.images?.map((image) =>
+        ListingImageItemDto.fromListingImage(image),
+      ),
     });
   }
 }

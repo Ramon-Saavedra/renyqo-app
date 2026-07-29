@@ -16,6 +16,7 @@ import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
+import type { ListingWithImages } from './dto/listing-response.dto';
 import type { UpdateListingDto } from './dto/update-listing.dto';
 
 const PUBLISH_REQUIRED_FIELDS = [
@@ -83,6 +84,18 @@ export class ListingsService {
   async findOneByProvider(id: string, providerId: string): Promise<Listing> {
     const listing = await this.prisma.listing.findFirst({
       where: { id, providerId },
+    });
+    if (!listing) throw new NotFoundException('Listing not found');
+    return listing;
+  }
+
+  async findOneDetailByProvider(
+    id: string,
+    providerId: string,
+  ): Promise<ListingWithImages> {
+    const listing = await this.prisma.listing.findFirst({
+      where: { id, providerId },
+      include: { images: { orderBy: { position: 'asc' } } },
     });
     if (!listing) throw new NotFoundException('Listing not found');
     return listing;
@@ -158,14 +171,14 @@ export class ListingsService {
   }
 
   toListingResponse(
-    listing: Listing,
+    listing: ListingWithImages,
     options: { exposeExactAddress?: boolean } = {},
   ): ListingResponseDto {
     return new ListingResponseDto(listing, options);
   }
 
   toListingResponses(
-    listings: readonly Listing[],
+    listings: readonly ListingWithImages[],
     options: { exposeExactAddress?: boolean } = {},
   ): ListingResponseDto[] {
     return listings.map((listing) => this.toListingResponse(listing, options));
@@ -292,6 +305,8 @@ export class ListingsService {
     dto: UpdateListingDto,
     listing: Listing,
   ): Prisma.ListingUncheckedUpdateInput {
+    this.assertBedroomsNotGreaterThanRooms(dto);
+
     const { availableFrom, ...rest } = dto;
     const draftData = this.stripEmptyValues(
       {
@@ -421,5 +436,27 @@ export class ListingsService {
         return true;
       }),
     ) as Partial<T>;
+  }
+
+  private assertBedroomsNotGreaterThanRooms(
+    dto: CreateListingDto | UpdateListingDto,
+  ): void {
+    const { rooms, bedrooms } = dto;
+
+    if (rooms === undefined || rooms === null) {
+      return;
+    }
+
+    if (bedrooms === undefined || bedrooms === null) {
+      return;
+    }
+
+    if (typeof rooms !== 'number' || typeof bedrooms !== 'number') {
+      return;
+    }
+
+    if (bedrooms > rooms) {
+      throw new BadRequestException('bedrooms must not be greater than rooms');
+    }
   }
 }

@@ -60,7 +60,10 @@ export class ListingsController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.findOneByProvider(id, user.id);
+    const listing = await this.listingsService.findOneDetailByProvider(
+      id,
+      user.id,
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });

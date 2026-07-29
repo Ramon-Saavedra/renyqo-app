@@ -148,9 +148,12 @@ curl -X POST http://localhost:3000/api/v1/provider/listings \
 Listing image uploads are stored in Cloudinary and persisted as listing image metadata in PostgreSQL.
 In development, the API can start without Cloudinary credentials. Uploading images still requires the three Cloudinary credential variables; otherwise the upload endpoint returns `503`.
 
-| Method | Path                                          | Auth     | Description                                     |
-| ------ | --------------------------------------------- | -------- | ----------------------------------------------- |
-| `POST` | `/api/v1/provider/listings/:listingId/images` | Provider | Upload an additional image for an owned listing |
+| Method   | Path                                                   | Auth     | Description                                     |
+| -------- | ------------------------------------------------------ | -------- | ----------------------------------------------- |
+| `POST`   | `/api/v1/provider/listings/:listingId/images`          | Provider | Upload an additional image for an owned listing |
+| `GET`    | `/api/v1/provider/listings/:listingId/images`          | Provider | Get the images of an owned listing              |
+| `PATCH`  | `/api/v1/provider/listings/:listingId/images/order`    | Provider | Reorder the images of an owned listing          |
+| `DELETE` | `/api/v1/provider/listings/:listingId/images/:imageId` | Provider | Delete one image of an owned listing            |
 
 Request format:
 
@@ -179,6 +182,27 @@ Response:
   "createdAt": "2026-07-06T10:00:00.000Z"
 }
 ```
+
+`GET /api/v1/provider/listings/:listingId/images` returns the images ordered by `position`:
+
+```json
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "secureUrl": "https://res.cloudinary.com/example/image/upload/abc.jpg",
+    "position": 0,
+    "isCover": true
+  }
+]
+```
+
+`GET /api/v1/provider/listings/:id` includes the same `images` array in the listing detail response.
+
+`PATCH /api/v1/provider/listings/:listingId/images/order` accepts `{ "imageIds": ["..."] }` and requires the complete current image set: duplicated, missing or foreign image IDs are rejected with `400`. It returns the reordered images.
+
+`DELETE /api/v1/provider/listings/:listingId/images/:imageId` removes the image record and compacts the remaining positions in one transaction, then deletes the Cloudinary asset, and returns `204`. If the database transaction fails, the Cloudinary asset is kept untouched; if the Cloudinary deletion fails afterwards, the failure is logged and the image stays removed.
+
+After every delete or reorder, the image at `position` `0` becomes the only cover and the listing `photos` array is kept in sync for existing consumers. `ListingImage` records are the authoritative source for listing images.
 
 ### Applications
 

@@ -5,10 +5,12 @@ import connectPgSimple from 'connect-pg-simple';
 import session from 'express-session';
 import passport from 'passport';
 import request, { type Response } from 'supertest';
+import type { UploadApiResponse } from 'cloudinary';
 import { AppModule } from '../src/app.module';
 import type { EnvironmentVariables } from '../src/config/env.validation';
 import { ListingStatus } from '../src/generated/prisma/enums';
 import { ApplicationsService } from '../src/applications/applications.service';
+import { CloudinaryService } from '../src/listing-images/cloudinary.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   assertSafeE2EDatabaseUrl,
@@ -46,12 +48,35 @@ type ApplicationBody = {
   status: string;
 };
 
+type ListingImageItemBody = {
+  id: string;
+  secureUrl: string;
+  position: number;
+  isCover: boolean;
+};
+
+class CloudinaryServiceStub {
+  readonly deletedPublicIds: string[] = [];
+
+  uploadBuffer(): Promise<UploadApiResponse> {
+    return Promise.reject(
+      new Error('Cloudinary uploads are not available in E2E tests.'),
+    );
+  }
+
+  deleteByPublicId(publicId: string): Promise<void> {
+    this.deletedPublicIds.push(publicId);
+    return Promise.resolve();
+  }
+}
+
 const sessionSecret = 'e2e-session-secret-at-least-thirty-two-characters';
 const userPassword = 'StrongPass123';
 
 let app: INestApplication | undefined;
 let prisma: PrismaService | undefined;
 let sessionStore: PgSessionStore | undefined;
+let cloudinaryStub: CloudinaryServiceStub | undefined;
 let emailSequence = 0;
 
 function useE2eEnvironment(): void {
@@ -140,6 +165,57 @@ function getApplicationsService(): ApplicationsService {
   }
 
   return app.get(ApplicationsService);
+}
+
+function getCloudinaryStub(): CloudinaryServiceStub {
+  if (!cloudinaryStub) {
+    throw new Error('Cloudinary stub has not been initialized.');
+  }
+
+  return cloudinaryStub;
+}
+
+async function seedListingImages(listingId: string, count: number) {
+  const images = [];
+  for (let index = 0; index < count; index += 1) {
+    images.push(
+      await getPrisma().listingImage.create({
+        data: {
+          listingId,
+          publicId: `e2e/listings/${listingId}/img-${index}`,
+          secureUrl: `https://res.cloudinary.com/e2e/image/upload/${listingId}-${index}.jpg`,
+          position: index,
+          isCover: index === 0,
+        },
+      }),
+    );
+  }
+
+  await getPrisma().listing.update({
+    where: { id: listingId },
+    data: { photos: images.map((image) => image.secureUrl) },
+  });
+
+  return images;
+}
+
+function isListingImageItemBody(value: unknown): value is ListingImageItemBody {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.secureUrl === 'string' &&
+    typeof value.position === 'number' &&
+    typeof value.isCover === 'boolean'
+  );
+}
+
+function listingImageBodies(response: Response): ListingImageItemBody[] {
+  const body: unknown = response.body;
+  if (!Array.isArray(body) || !body.every(isListingImageItemBody)) {
+    throw new Error('E2E response does not contain listing image records.');
+  }
+
+  return body;
 }
 
 async function createPublishedListing(providerId: string) {
@@ -265,9 +341,13 @@ describe('Backend API E2E', () => {
   beforeAll(async () => {
     useE2eEnvironment();
 
+    cloudinaryStub = new CloudinaryServiceStub();
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(CloudinaryService)
+      .useValue(cloudinaryStub)
+      .compile();
 
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api/v1');
@@ -315,6 +395,7 @@ describe('Backend API E2E', () => {
 
   beforeEach(async () => {
     await clearDatabase();
+    getCloudinaryStub().deletedPublicIds.length = 0;
   });
 
   afterAll(async () => {
@@ -770,6 +851,198 @@ describe('Backend API E2E', () => {
       .expect(200);
     expect(Object.keys(responseBody(waitingCountResponse))).toEqual([
       'waitingCount',
+    ]);
+  });
+
+  it('manages listing images with ownership checks, delete compaction and reorder', async () => {
+    const providerAgent = request.agent(getServer());
+    const providerResponse = await providerAgent
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    const provider = safeUserBody(providerResponse);
+
+    const otherProviderAgent = request.agent(getServer());
+    await otherProviderAgent
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+
+    const applicantAgent = request.agent(getServer());
+    await applicantAgent
+      .post('/api/v1/auth/register')
+      .send(applicantPayload())
+      .expect(201);
+
+    const listing = await createPublishedListing(provider.id);
+    const seeded = await seedListingImages(listing.id, 3);
+
+    const listResponse = await providerAgent
+      .get(`/api/v1/provider/listings/${listing.id}/images`)
+      .expect(200);
+    const listedImages = listingImageBodies(listResponse);
+    expect(listedImages).toEqual([
+      {
+        id: seeded[0].id,
+        secureUrl: seeded[0].secureUrl,
+        position: 0,
+        isCover: true,
+      },
+      {
+        id: seeded[1].id,
+        secureUrl: seeded[1].secureUrl,
+        position: 1,
+        isCover: false,
+      },
+      {
+        id: seeded[2].id,
+        secureUrl: seeded[2].secureUrl,
+        position: 2,
+        isCover: false,
+      },
+    ]);
+
+    const detailResponse = await providerAgent
+      .get(`/api/v1/provider/listings/${listing.id}`)
+      .expect(200);
+    expect(responseBody(detailResponse)['images']).toEqual(listedImages);
+
+    await request(getServer())
+      .get(`/api/v1/provider/listings/${listing.id}/images`)
+      .expect(403);
+    await applicantAgent
+      .get(`/api/v1/provider/listings/${listing.id}/images`)
+      .expect(403);
+    await otherProviderAgent
+      .get(`/api/v1/provider/listings/${listing.id}/images`)
+      .expect(404);
+    await otherProviderAgent
+      .delete(`/api/v1/provider/listings/${listing.id}/images/${seeded[0].id}`)
+      .expect(404);
+    await otherProviderAgent
+      .patch(`/api/v1/provider/listings/${listing.id}/images/order`)
+      .send({ imageIds: [seeded[2].id, seeded[1].id, seeded[0].id] })
+      .expect(404);
+    expect(getCloudinaryStub().deletedPublicIds).toHaveLength(0);
+
+    await providerAgent
+      .delete(`/api/v1/provider/listings/${listing.id}/images/${seeded[0].id}`)
+      .expect(204);
+
+    expect(getCloudinaryStub().deletedPublicIds).toEqual([seeded[0].publicId]);
+
+    const afterDelete = await getPrisma().listingImage.findMany({
+      where: { listingId: listing.id },
+      orderBy: { position: 'asc' },
+    });
+    expect(afterDelete).toHaveLength(2);
+    expect(afterDelete[0]).toMatchObject({
+      id: seeded[1].id,
+      position: 0,
+      isCover: true,
+    });
+    expect(afterDelete[1]).toMatchObject({
+      id: seeded[2].id,
+      position: 1,
+      isCover: false,
+    });
+
+    const listingAfterDelete = await getPrisma().listing.findUniqueOrThrow({
+      where: { id: listing.id },
+    });
+    expect(listingAfterDelete.photos).toEqual([
+      seeded[1].secureUrl,
+      seeded[2].secureUrl,
+    ]);
+
+    await providerAgent
+      .delete(`/api/v1/provider/listings/${listing.id}/images/${seeded[0].id}`)
+      .expect(404);
+
+    const reorderResponse = await providerAgent
+      .patch(`/api/v1/provider/listings/${listing.id}/images/order`)
+      .send({ imageIds: [seeded[2].id, seeded[1].id] })
+      .expect(200);
+    expect(listingImageBodies(reorderResponse)).toEqual([
+      {
+        id: seeded[2].id,
+        secureUrl: seeded[2].secureUrl,
+        position: 0,
+        isCover: true,
+      },
+      {
+        id: seeded[1].id,
+        secureUrl: seeded[1].secureUrl,
+        position: 1,
+        isCover: false,
+      },
+    ]);
+
+    const listingAfterReorder = await getPrisma().listing.findUniqueOrThrow({
+      where: { id: listing.id },
+    });
+    expect(listingAfterReorder.photos).toEqual([
+      seeded[2].secureUrl,
+      seeded[1].secureUrl,
+    ]);
+    expect(
+      await getPrisma().listingImage.count({
+        where: { listingId: listing.id, isCover: true },
+      }),
+    ).toBe(1);
+  });
+
+  it('rejects invalid image sets on reorder without changing the stored order', async () => {
+    const providerAgent = request.agent(getServer());
+    const providerResponse = await providerAgent
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    const provider = safeUserBody(providerResponse);
+
+    const listing = await createPublishedListing(provider.id);
+    const otherListing = await createPublishedListing(provider.id);
+    const seeded = await seedListingImages(listing.id, 2);
+    const foreign = await seedListingImages(otherListing.id, 1);
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${listing.id}/images/order`)
+      .send({ imageIds: [seeded[0].id, seeded[0].id] })
+      .expect(400);
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${listing.id}/images/order`)
+      .send({ imageIds: [seeded[1].id] })
+      .expect(400);
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${listing.id}/images/order`)
+      .send({ imageIds: [seeded[0].id, foreign[0].id] })
+      .expect(400);
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${listing.id}/images/order`)
+      .send({ imageIds: [] })
+      .expect(400);
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${listing.id}/images/order`)
+      .send({ imageIds: ['not-a-uuid', seeded[0].id] })
+      .expect(400);
+
+    const unchanged = await getPrisma().listingImage.findMany({
+      where: { listingId: listing.id },
+      orderBy: { position: 'asc' },
+    });
+    expect(unchanged.map((image) => image.id)).toEqual([
+      seeded[0].id,
+      seeded[1].id,
+    ]);
+    expect(unchanged[0]).toMatchObject({ position: 0, isCover: true });
+    expect(unchanged[1]).toMatchObject({ position: 1, isCover: false });
+
+    const unchangedListing = await getPrisma().listing.findUniqueOrThrow({
+      where: { id: listing.id },
+    });
+    expect(unchangedListing.photos).toEqual([
+      seeded[0].secureUrl,
+      seeded[1].secureUrl,
     ]);
   });
 });

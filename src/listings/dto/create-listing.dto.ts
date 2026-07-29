@@ -12,6 +12,7 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import type { TransformFnParams } from 'class-transformer';
+import { BedroomsNotGreaterThanRooms } from '../validators/bedrooms-not-greater-than-rooms.validator';
 
 import {
   ObjectType,
@@ -65,6 +66,7 @@ const toOptionalNumber = ({ value }: TransformFnParams): unknown => {
   return Number.isFinite(parsed) ? parsed : value;
 };
 
+@BedroomsNotGreaterThanRooms()
 export class CreateListingDto {
   @IsOptional()
   @IsEnum(ObjectType)
