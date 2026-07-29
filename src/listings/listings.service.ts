@@ -305,6 +305,8 @@ export class ListingsService {
     dto: UpdateListingDto,
     listing: Listing,
   ): Prisma.ListingUncheckedUpdateInput {
+    this.assertBedroomsNotGreaterThanRooms(dto);
+
     const { availableFrom, ...rest } = dto;
     const draftData = this.stripEmptyValues(
       {
@@ -434,5 +436,27 @@ export class ListingsService {
         return true;
       }),
     ) as Partial<T>;
+  }
+
+  private assertBedroomsNotGreaterThanRooms(
+    dto: CreateListingDto | UpdateListingDto,
+  ): void {
+    const { rooms, bedrooms } = dto;
+
+    if (rooms === undefined || rooms === null) {
+      return;
+    }
+
+    if (bedrooms === undefined || bedrooms === null) {
+      return;
+    }
+
+    if (typeof rooms !== 'number' || typeof bedrooms !== 'number') {
+      return;
+    }
+
+    if (bedrooms > rooms) {
+      throw new BadRequestException('bedrooms must not be greater than rooms');
+    }
   }
 }

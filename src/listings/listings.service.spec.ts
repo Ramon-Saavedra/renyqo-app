@@ -589,6 +589,45 @@ describe('ListingsService', () => {
       ).rejects.toThrow(BadRequestException);
       expect(prismaMock.listing.update).not.toHaveBeenCalled();
     });
+
+    it('rejects bedrooms greater than rooms on update', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+
+      await expect(
+        service.update(LISTING_ID, PROVIDER_ID, { rooms: 2, bedrooms: 5 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prismaMock.listing.update).not.toHaveBeenCalled();
+    });
+
+    it('allows bedrooms equal to rooms on update', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue({
+        ...listing,
+        rooms: 3,
+        bedrooms: 3,
+      });
+
+      await expect(
+        service.update(LISTING_ID, PROVIDER_ID, { rooms: 3, bedrooms: 3 }),
+      ).resolves.toBeDefined();
+      expect(prismaMock.listing.update).toHaveBeenCalled();
+    });
+
+    it('allows bedrooms less than rooms on update', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.update.mockResolvedValue({
+        ...listing,
+        rooms: 4,
+        bedrooms: 2,
+      });
+
+      await expect(
+        service.update(LISTING_ID, PROVIDER_ID, { rooms: 4, bedrooms: 2 }),
+      ).resolves.toBeDefined();
+    });
   });
 
   describe('findAllByProvider', () => {

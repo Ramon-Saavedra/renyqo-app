@@ -185,4 +185,54 @@ describe('CreateListingDto', () => {
       expect(errors[0]?.constraints).toHaveProperty('isInt');
     });
   });
+
+  describe('bedrooms and rooms cross-field validation', () => {
+    it('accepts bedrooms equal to rooms', async () => {
+      const errors = await validateDto({ rooms: 3, bedrooms: 3 });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('accepts bedrooms less than rooms', async () => {
+      const errors = await validateDto({ rooms: 4, bedrooms: 2 });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('accepts bedrooms set to zero', async () => {
+      const errors = await validateDto({ rooms: 3, bedrooms: 0 });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('accepts only rooms without bedrooms', async () => {
+      const errors = await validateDto({ rooms: 3 });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('accepts only bedrooms without rooms', async () => {
+      const errors = await validateDto({ bedrooms: 2 });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('rejects bedrooms greater than rooms', async () => {
+      const errors = await validateDto({ rooms: 3, bedrooms: 5 });
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.constraints).toHaveProperty(
+        'bedroomsNotGreaterThanRooms',
+      );
+    });
+
+    it('rejects bedrooms greater than rooms with decimals', async () => {
+      const errors = await validateDto({ rooms: 2.5, bedrooms: 3 });
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.constraints).toHaveProperty(
+        'bedroomsNotGreaterThanRooms',
+      );
+    });
+  });
 });
