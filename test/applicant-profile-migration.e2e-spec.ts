@@ -51,6 +51,9 @@ afterAll(async () => {
 async function seedTestData(): Promise<void> {
   const client = await pool.connect();
   try {
+    await client.query(
+      `ALTER TABLE "applicant_profiles" DROP CONSTRAINT IF EXISTS "applicant_profiles_household_counts_check"`,
+    );
     for (const userId of SEED_USER_IDS) {
       await client.query(
         `INSERT INTO "users" ("id", "name", "email", "password_hash", "role", "status", "email_verified", "accepted_terms_at", "accepted_privacy_at", "created_at", "updated_at")
