@@ -54,9 +54,9 @@ async function seedTestData(): Promise<void> {
     for (const userId of SEED_USER_IDS) {
       await client.query(
         `INSERT INTO "users" ("id", "name", "email", "password_hash", "role", "status", "created_at", "updated_at")
-         VALUES ($1, 'Test', 'test_' || $1 || '@test.local', '$2b$10$placeholderhash', 'applicant', 'active', NOW(), NOW())
+         VALUES ($1::uuid, 'Test', 'test_' || $1 || '@test.local', $2, 'applicant', 'active', NOW(), NOW())
          ON CONFLICT ("id") DO NOTHING`,
-        [userId],
+        [userId, '$2b$10$placeholderhash'],
       );
     }
 
