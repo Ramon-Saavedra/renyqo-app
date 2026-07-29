@@ -320,6 +320,22 @@ prisma/
 docker-compose.yml
 ```
 
+## Security
+
+Security is a priority. We follow secure backend practices, validate all inputs, hash passwords, and never store or expose secrets.
+
+### Dependency audit
+
+Production dependencies are audited on every CI run. Development-only vulnerabilities (from tooling such as Jest, ESLint, @nestjs/cli) do not expose the production application and are tracked separately.
+
+```bash
+npm run audit:prod
+```
+
+This script checks production dependencies only and exits with a non-zero code if any high or critical vulnerability is found.
+
+The 25 `brace-expansion` advisories reported by `npm audit` at the time of writing are confined to `jest` and `eslint` development tooling. These tools process source code, not untrusted user input, and the affected transitive lines (`brace-expansion@1.x` and `brace-expansion@2.x`) have no compatible patched release. They are resolved by following the upstream package updates.
+
 ## License
 
 See [LICENSE](./LICENSE).
