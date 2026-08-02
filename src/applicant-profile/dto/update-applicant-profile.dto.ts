@@ -25,29 +25,29 @@ export class UpdateApplicantProfileDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  householdNetIncome?: number;
+  householdNetIncome?: number | null;
 
   @IsOptional()
   @IsBoolean()
-  incomeProofAvailable?: boolean;
+  incomeProofAvailable?: boolean | null;
 
   @IsOptional()
   @IsBoolean()
-  schufaAvailable?: boolean;
+  schufaAvailable?: boolean | null;
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  adultsCount?: number;
+  adultsCount?: number | null;
 
   @IsOptional()
   @IsInt()
   @Min(0)
-  childrenCount?: number;
+  childrenCount?: number | null;
 
   @IsOptional()
   @IsBoolean()
-  hasPets?: boolean;
+  hasPets?: boolean | null;
 
   @IsOptional()
   @IsString()
@@ -57,5 +57,5 @@ export class UpdateApplicantProfileDto {
 
   @IsOptional()
   @IsEnum(SmokingStatus)
-  smokingStatus?: SmokingStatus;
+  smokingStatus?: SmokingStatus | null;
 }
