@@ -56,14 +56,12 @@ export class ApplicantProfileService {
   ): Promise<ApplicantProfile> {
     this.assertHasMeaningfulData(dto);
 
-    const normalized = this.normalizeDto(dto);
-
     return this.runSerializableTransaction(async (tx) => {
       const existing = await tx.applicantProfile.findUnique({
         where: { applicantId },
       });
 
-      const merged = this.mergeProfile(existing, normalized);
+      const merged = this.mergeProfile(existing, dto);
       this.assertHouseholdConsistency(merged);
       const peopleCount = this.calculatePeopleCount(merged);
 
@@ -81,22 +79,6 @@ export class ApplicantProfileService {
     if (!hasData) {
       throw new BadRequestException('At least one profile field is required');
     }
-  }
-
-  private normalizeDto(
-    dto: UpdateApplicantProfileDto,
-  ): UpdateApplicantProfileDto {
-    const normalized: UpdateApplicantProfileDto = {};
-
-    for (const [key, value] of Object.entries(dto)) {
-      if (value === undefined) {
-        continue;
-      }
-
-      normalized[key as keyof UpdateApplicantProfileDto] = value as never;
-    }
-
-    return normalized;
   }
 
   private mergeProfile(

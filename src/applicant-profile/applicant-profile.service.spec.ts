@@ -160,8 +160,8 @@ describe('ApplicantProfileService', () => {
         peopleCount: 3,
       });
       const dto: UpdateApplicantProfileDto = {
-        adultsCount: null as unknown as number,
-        childrenCount: null as unknown as number,
+        adultsCount: null,
+        childrenCount: null,
       };
       const cleared = makeRawProfile({
         adultsCount: null,

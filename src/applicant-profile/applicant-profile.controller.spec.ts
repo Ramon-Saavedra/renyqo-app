@@ -89,12 +89,10 @@ describe('ApplicantProfileController', () => {
       applicantProfileService.findByApplicant.mockResolvedValue(profile);
 
       const result = await controller.getProfile(makeApplicantUser());
-      const body = result as unknown as Record<string, unknown>;
-
-      expect(body).not.toHaveProperty('id');
-      expect(body).not.toHaveProperty('applicantId');
-      expect(body).not.toHaveProperty('createdAt');
-      expect(body).not.toHaveProperty('updatedAt');
+      expect(result).not.toHaveProperty('id');
+      expect(result).not.toHaveProperty('applicantId');
+      expect(result).not.toHaveProperty('createdAt');
+      expect(result).not.toHaveProperty('updatedAt');
     });
 
     it('throws NotFoundException when profile is missing', async () => {
@@ -128,10 +126,8 @@ describe('ApplicantProfileController', () => {
       const result = await controller.updateProfile(makeApplicantUser(), {
         householdNetIncome: 4000,
       });
-      const body = result as unknown as Record<string, unknown>;
-
-      expect(body).not.toHaveProperty('id');
-      expect(body).not.toHaveProperty('applicantId');
+      expect(result).not.toHaveProperty('id');
+      expect(result).not.toHaveProperty('applicantId');
     });
   });
 });
