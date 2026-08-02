@@ -11,9 +11,14 @@ import {
   type Application,
   type Listing,
 } from '../generated/prisma/client';
-import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
+import {
+  ApplicationRejectionReason,
+  ApplicationStatus,
+  ListingStatus,
+} from '../generated/prisma/enums';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
+import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
 
 const ACTIVE_APPLICATIONS_LIMIT = 5;
 const SERIALIZABLE_TRANSACTION_RETRIES = 8;
@@ -114,6 +119,111 @@ export class ApplicationsService {
     });
   }
 
+  async withdraw(
+    applicationId: string,
+    applicantId: string,
+  ): Promise<Application> {
+    return this.runSerializableTransaction(async (tx) => {
+      const applicationReference = await tx.application.findUnique({
+        where: { id: applicationId },
+        select: { listingId: true },
+      });
+
+      if (!applicationReference) {
+        throw new NotFoundException('Application not found');
+      }
+
+      await this.lockListing(tx, applicationReference.listingId);
+      await this.lockApplication(tx, applicationId);
+
+      const application = await tx.application.findUnique({
+        where: { id: applicationId },
+      });
+
+      if (!application || application.applicantId !== applicantId) {
+        throw new NotFoundException('Application not found');
+      }
+
+      if (application.status === ApplicationStatus.WITHDRAWN) {
+        return application;
+      }
+
+      if (
+        application.status !== ApplicationStatus.ACTIVE &&
+        application.status !== ApplicationStatus.WAITING
+      ) {
+        throw new ConflictException('This application cannot be withdrawn');
+      }
+
+      const withdrawn = await tx.application.update({
+        where: { id: applicationId },
+        data: { status: ApplicationStatus.WITHDRAWN },
+      });
+
+      if (application.status === ApplicationStatus.ACTIVE) {
+        const listing = await tx.listing.findUnique({
+          where: { id: application.listingId },
+        });
+
+        if (listing) {
+          await this.promoteWithinTransaction(tx, listing);
+        }
+      }
+
+      return withdrawn;
+    });
+  }
+
+  async reject(
+    applicationId: string,
+    providerId: string,
+  ): Promise<Application> {
+    return this.runSerializableTransaction(async (tx) => {
+      const application = await tx.application.findUnique({
+        where: { id: applicationId },
+        include: {
+          listing: { select: { id: true, providerId: true, status: true } },
+        },
+      });
+
+      if (!application) {
+        throw new NotFoundException('Application not found');
+      }
+
+      if (application.listing.providerId !== providerId) {
+        throw new NotFoundException('Application not found');
+      }
+
+      if (application.status !== ApplicationStatus.ACTIVE) {
+        throw new ConflictException('This application cannot be rejected');
+      }
+
+      await this.lockListing(tx, application.listingId);
+      await this.lockApplication(tx, applicationId);
+
+      const rejected = await tx.application.update({
+        where: { id: applicationId },
+        data: {
+          status: ApplicationStatus.REJECTED,
+          rejectedAt: new Date(),
+          publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        },
+      });
+
+      if (application.listing.status === ListingStatus.PUBLISHED) {
+        const listing = await tx.listing.findUnique({
+          where: { id: application.listingId },
+        });
+
+        if (listing) {
+          await this.promoteWithinTransaction(tx, listing);
+        }
+      }
+
+      return rejected;
+    });
+  }
+
   async promoteWaitingApplications(listingId: string): Promise<number> {
     return this.runSerializableTransaction(async (tx) => {
       await this.lockListing(tx, listingId);
@@ -205,6 +315,31 @@ export class ApplicationsService {
       where: { applicantId },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async findAllByApplicantWithListing(
+    applicantId: string,
+  ): Promise<ApplicantApplicationRecord[]> {
+    const applications = await this.prisma.application.findMany({
+      where: { applicantId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        listing: {
+          select: {
+            id: true,
+            title: true,
+            city: true,
+            coldRent: true,
+            images: {
+              select: { secureUrl: true, isCover: true, position: true },
+              orderBy: { position: 'asc' },
+            },
+          },
+        },
+      },
+    });
+
+    return applications;
   }
 
   async findAllByProvider(providerId: string): Promise<Application[]> {
@@ -310,6 +445,13 @@ export class ApplicationsService {
     listingId: string,
   ): Promise<void> {
     await tx.$queryRaw`SELECT id FROM "listings" WHERE id = ${listingId} FOR UPDATE`;
+  }
+
+  private async lockApplication(
+    tx: TransactionClient,
+    applicationId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM "applications" WHERE id = ${applicationId} FOR UPDATE`;
   }
 
   private async lockApplicantProfile(

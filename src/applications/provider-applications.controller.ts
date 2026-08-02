@@ -1,8 +1,11 @@
 import {
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   UseGuards,
 } from '@nestjs/common';
 
@@ -70,5 +73,18 @@ export class ProviderApplicationsController {
         user.id,
       );
     return new WaitingCountResponseDto(waitingCount);
+  }
+
+  @Patch('applications/:id/reject')
+  @HttpCode(HttpStatus.OK)
+  async reject(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) applicationId: string,
+    @CurrentUser() user: SafeUser,
+  ): Promise<ApplicationResponseDto> {
+    const application = await this.applicationsService.reject(
+      applicationId,
+      user.id,
+    );
+    return new ApplicationResponseDto(application);
   }
 }

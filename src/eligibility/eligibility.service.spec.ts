@@ -50,6 +50,7 @@ const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
   publishedAt: new Date('2024-01-01'),
+  rentedAt: null,
   ...overrides,
 });
 
