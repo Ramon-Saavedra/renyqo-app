@@ -1,10 +1,9 @@
 import type { Application } from '../../generated/prisma/client';
 import type { ApplicationRejectionReason } from '../../generated/prisma/enums';
 
-export class ApplicationResponseDto {
+export class ApplicantApplicationStatusResponseDto {
   readonly id: string;
   readonly listingId: string;
-  readonly applicantId: string;
   readonly status: Application['status'];
   readonly rejectedAt: Date | null;
   readonly publicReason: ApplicationRejectionReason | null;
@@ -14,7 +13,6 @@ export class ApplicationResponseDto {
   constructor(application: Application) {
     this.id = application.id;
     this.listingId = application.listingId;
-    this.applicantId = application.applicantId;
     this.status = application.status;
     this.rejectedAt = application.rejectedAt;
     this.publicReason = application.publicReason;
