@@ -522,6 +522,53 @@ describe('Backend API E2E', () => {
     await agent.get('/api/v1/auth/me').expect(403);
   });
 
+  it('returns the Applicant onboarding step from the authenticated HTTP route', async () => {
+    await request(getServer()).get('/api/v1/me/onboarding-state').expect(403);
+
+    const applicantAgent = request.agent(getServer());
+    await applicantAgent
+      .post('/api/v1/auth/register')
+      .send(applicantPayload())
+      .expect(201);
+
+    await applicantAgent
+      .get('/api/v1/me/onboarding-state')
+      .expect(200)
+      .expect((response: Response) => {
+        expect(responseBody(response)).toEqual({
+          role: 'applicant',
+          nextStep: 'browse_listings',
+        });
+      });
+
+    await applicantAgent
+      .patch('/api/v1/applicant/profile')
+      .send({ householdNetIncome: 2500 })
+      .expect(200);
+
+    await applicantAgent
+      .get('/api/v1/me/onboarding-state')
+      .expect(200)
+      .expect((response: Response) => {
+        expect(responseBody(response)).toEqual({
+          role: 'applicant',
+          nextStep: 'browse_listings',
+        });
+      });
+
+    const providerAgent = request.agent(getServer());
+    await providerAgent
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    await providerAgent
+      .get('/api/v1/me/onboarding-state')
+      .expect(200)
+      .expect((response: Response) => {
+        expect(responseBody(response)['nextStep']).toBe('create_first_listing');
+      });
+  });
+
   it('checks eligibility from the applicant profile and enforces it on apply', async () => {
     const applicantAgent = request.agent(getServer());
     const applicantResponse = await applicantAgent

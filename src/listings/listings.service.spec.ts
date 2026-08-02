@@ -20,6 +20,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ListingsService } from './listings.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
 
+function serialized<T>(value: T): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
 const LISTING_ID_2 = '00000000-0000-4000-8000-000000000003';
@@ -150,6 +154,75 @@ const makeUploadResult = (): UploadApiResponse =>
     public_id: `${CLOUDINARY_FOLDER}/listings/${LISTING_ID}/abc`,
     secure_url: 'https://res.cloudinary.com/test/image/upload/abc.jpg',
   }) as UploadApiResponse;
+
+type DiscoveryListing = {
+  id: string;
+  title: string | null;
+  city: string | null;
+  zip: string | null;
+  objectType: string | null;
+  livingArea: number | null;
+  rooms: number | null;
+  bedrooms: number | null;
+  coldRent: number | null;
+  additionalCosts: number | null;
+  deposit: number | null;
+  depositMonths: number | null;
+  availableFrom: Date | null;
+  shortDescription: string | null;
+  publishedAt: Date | null;
+  images: { secureUrl: string; position: number; isCover: boolean }[];
+};
+
+type DiscoveryDetail = DiscoveryListing & {
+  street: string | null;
+  showExactAddress: boolean;
+  minimumHouseholdNetIncome: number | null;
+  schufaRequired: boolean;
+  incomeProofRequired: boolean;
+  suitableForPeopleCount: number | null;
+  petsPolicy: string | null;
+  smokingPolicy: string | null;
+};
+
+const makeDiscoveryListing = (
+  overrides: Partial<DiscoveryListing> = {},
+): DiscoveryListing => ({
+  id: LISTING_ID,
+  title: 'Test Listing',
+  city: 'Berlin',
+  zip: '10115',
+  objectType: 'apartment',
+  livingArea: 62.5,
+  rooms: 2,
+  bedrooms: 1,
+  coldRent: 1200,
+  additionalCosts: 250,
+  deposit: 2400,
+  depositMonths: 2,
+  availableFrom: new Date('2026-09-01'),
+  shortDescription: 'Nice place',
+  publishedAt: new Date('2026-07-01'),
+  images: [
+    { secureUrl: 'https://example.com/cover.jpg', position: 0, isCover: true },
+  ],
+  ...overrides,
+});
+
+const makeDiscoveryDetail = (
+  overrides: Partial<DiscoveryDetail> = {},
+): DiscoveryDetail => ({
+  ...makeDiscoveryListing(),
+  street: 'Hauptstrasse 1',
+  showExactAddress: false,
+  minimumHouseholdNetIncome: 3000,
+  schufaRequired: true,
+  incomeProofRequired: false,
+  suitableForPeopleCount: 2,
+  petsPolicy: 'allowed',
+  smokingPolicy: 'non_smokers_preferred',
+  ...overrides,
+});
 
 describe('ListingsService', () => {
   let service: ListingsService;
@@ -908,6 +981,258 @@ describe('ListingsService', () => {
         }),
       );
       expect(result).toEqual(listings);
+    });
+  });
+
+  describe('findPublishedForApplicant', () => {
+    const discoveryListing = makeDiscoveryListing();
+
+    it('returns only PUBLISHED listings with publishedAt', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      const result = await service.findPublishedForApplicant({});
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: ListingStatus.PUBLISHED,
+            publishedAt: { not: null },
+          }),
+        }),
+      );
+      expect(result.items).toHaveLength(0);
+    });
+
+    it('returns summaries with cover image', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({});
+
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].id).toBe(LISTING_ID);
+      expect(result.items[0].title).toBe('Test Listing');
+      expect(result.items[0].coverImage).toEqual({
+        secureUrl: 'https://example.com/cover.jpg',
+      });
+    });
+
+    it('handles null coverImage when no images exist', async () => {
+      const noImage = makeDiscoveryListing({
+        images: [],
+      });
+      prismaMock.listing.findMany.mockResolvedValue([noImage] as never);
+
+      const result = await service.findPublishedForApplicant({});
+
+      expect(result.items[0].coverImage).toBeNull();
+    });
+
+    it('applies city filter', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      await service.findPublishedForApplicant({ city: 'Berlin' });
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            city: { equals: 'Berlin', mode: 'insensitive' },
+          }),
+        }),
+      );
+    });
+
+    it('applies rent range filter', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      await service.findPublishedForApplicant({ minRent: 500, maxRent: 2000 });
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            coldRent: { gte: 500, lte: 2000 },
+          }),
+        }),
+      );
+    });
+
+    it('applies rooms range filter', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      await service.findPublishedForApplicant({
+        minRooms: 1,
+        maxRooms: 4,
+      });
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            rooms: { gte: 1, lte: 4 },
+          }),
+        }),
+      );
+    });
+
+    it('applies living area range filter', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      await service.findPublishedForApplicant({
+        minLivingArea: 20,
+        maxLivingArea: 100,
+      });
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            livingArea: { gte: 20, lte: 100 },
+          }),
+        }),
+      );
+    });
+
+    it('returns null nextCursor when there are no more pages', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({ limit: 50 });
+
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it('returns nextCursor when there is a next page', async () => {
+      const pageItems = Array.from({ length: 6 }, (_, i) =>
+        makeDiscoveryListing({
+          id: `00000000-0000-4000-8000-00000000000${i}`,
+          publishedAt: new Date(2026, 6, 1 + i),
+        }),
+      );
+      prismaMock.listing.findMany.mockResolvedValue(pageItems as never);
+
+      const result = await service.findPublishedForApplicant({ limit: 5 });
+
+      expect(result.items).toHaveLength(5);
+      expect(result.nextCursor).not.toBeNull();
+      expect(typeof result.nextCursor).toBe('string');
+    });
+
+    it('rejects invalid cursor', async () => {
+      await expect(
+        service.findPublishedForApplicant({ cursor: 'not-valid-base64' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('returns empty page for no results', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      const result = await service.findPublishedForApplicant({});
+
+      expect(result.items).toHaveLength(0);
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it('excludes private fields from summaries', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({});
+
+      const summary = serialized(result.items[0]);
+      expect(summary).not.toHaveProperty('providerId');
+      expect(summary).not.toHaveProperty('minimumHouseholdNetIncome');
+      expect(summary).not.toHaveProperty('schufaRequired');
+      expect(summary).not.toHaveProperty('showExactAddress');
+    });
+  });
+
+  describe('findPublishedDetailForApplicant', () => {
+    const discoveryDetail = makeDiscoveryDetail();
+
+    it('returns a published listing detail', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
+
+      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+
+      expect(result.id).toBe(LISTING_ID);
+      expect(result.title).toBe('Test Listing');
+    });
+
+    it('hides street when showExactAddress is false', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(
+        makeDiscoveryDetail({
+          showExactAddress: false,
+          street: 'Hauptstrasse 1',
+        }) as never,
+      );
+
+      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+
+      expect(result.street).toBeNull();
+    });
+
+    it('shows street when showExactAddress is true', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(
+        makeDiscoveryDetail({
+          showExactAddress: true,
+          street: 'Hauptstrasse 1',
+        }) as never,
+      );
+
+      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+
+      expect(result.street).toBe('Hauptstrasse 1');
+    });
+
+    it('includes public application requirements', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
+
+      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+
+      expect(result.requirements.minimumHouseholdNetIncome).toBe(3000);
+      expect(result.requirements.schufaRequired).toBe(true);
+      expect(result.requirements.incomeProofRequired).toBe(false);
+      expect(result.requirements.suitableForPeopleCount).toBe(2);
+    });
+
+    it('returns 404 for non-published listing', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.findPublishedDetailForApplicant(LISTING_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('never exposes showExactAddress flag', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
+
+      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+
+      const serialized_ = serialized(result);
+      expect(serialized_).not.toHaveProperty('showExactAddress');
+    });
+
+    it('never exposes providerId', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
+
+      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+
+      const serialized_ = serialized(result);
+      expect(serialized_).not.toHaveProperty('providerId');
+    });
+
+    it('includes images without publicId', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
+
+      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+
+      const serialized_ = serialized(result);
+      const images = serialized_.images as Record<string, unknown>[];
+      for (const image of images) {
+        expect(image).not.toHaveProperty('publicId');
+        expect(image.secureUrl).toBeDefined();
+      }
     });
   });
 });

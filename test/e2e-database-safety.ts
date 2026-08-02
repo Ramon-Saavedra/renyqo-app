@@ -1,3 +1,9 @@
+const E2E_DATABASE_NAME = 'renyqo_e2e';
+
+function isSafeE2EDatabaseName(name: string): boolean {
+  return name.toLowerCase() === E2E_DATABASE_NAME;
+}
+
 export function getE2EDatabaseName(databaseUrl: string): string {
   let parsedUrl: URL;
 
@@ -12,9 +18,9 @@ export function getE2EDatabaseName(databaseUrl: string): string {
     .filter(Boolean)
     .at(-1);
 
-  if (!databaseName || !databaseName.toLowerCase().endsWith('_e2e')) {
+  if (!databaseName || !isSafeE2EDatabaseName(databaseName)) {
     throw new Error(
-      'Destructive E2E cleanup requires a database name ending with "_e2e".',
+      `Destructive E2E cleanup requires a database named "${E2E_DATABASE_NAME}".`,
     );
   }
 
