@@ -33,6 +33,7 @@ export class ListingResponseDto {
   readonly createdAt!: Listing['createdAt'];
   readonly updatedAt!: Listing['updatedAt'];
   readonly publishedAt!: Listing['publishedAt'];
+  readonly rentedAt!: Listing['rentedAt'];
   readonly images?: ListingImageItemDto[];
 
   constructor(
