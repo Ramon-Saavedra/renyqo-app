@@ -5,7 +5,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsService } from './applications.service';
-import { ApplicationResponseDto } from './dto/application-response.dto';
+import { ApplicantApplicationResponseDto } from './dto/applicant-application-response.dto';
 
 @UseGuards(AuthenticatedGuard, ApplicantOnlyGuard)
 @Controller('applicant/applications')
@@ -15,12 +15,11 @@ export class ApplicantApplicationsController {
   @Get()
   async findAll(
     @CurrentUser() user: SafeUser,
-  ): Promise<ApplicationResponseDto[]> {
-    const applications = await this.applicationsService.findAllByApplicant(
-      user.id,
-    );
+  ): Promise<ApplicantApplicationResponseDto[]> {
+    const applications =
+      await this.applicationsService.findAllByApplicantWithListing(user.id);
     return applications.map(
-      (application) => new ApplicationResponseDto(application),
+      (application) => new ApplicantApplicationResponseDto(application),
     );
   }
 }

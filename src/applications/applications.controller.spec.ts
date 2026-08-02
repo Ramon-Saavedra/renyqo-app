@@ -52,6 +52,8 @@ const makeApplication = (): Application => ({
   listingId: LISTING_ID,
   applicantId: APPLICANT_ID,
   status: ApplicationStatus.ACTIVE,
+  rejectedAt: null,
+  publicReason: null,
   queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),

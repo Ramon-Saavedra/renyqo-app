@@ -58,6 +58,8 @@ const makeApplication = (): Application => ({
   listingId: LISTING_ID,
   applicantId: APPLICANT_ID,
   status: ApplicationStatus.ACTIVE,
+  rejectedAt: null,
+  publicReason: null,
   queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
@@ -97,6 +99,7 @@ describe('ProviderApplicationsController', () => {
             findAllByListing: jest.fn(),
             findActiveByListing: jest.fn(),
             findWaitingCountByListing: jest.fn(),
+            reject: jest.fn(),
           },
         },
       ],
@@ -190,6 +193,24 @@ describe('ProviderApplicationsController', () => {
     });
   });
 
+  describe('reject', () => {
+    it('rejects an application for the authenticated provider', async () => {
+      const application = makeApplication();
+      applicationsService.reject.mockResolvedValue(application);
+
+      const result = await controller.reject(
+        APPLICATION_ID,
+        makeProviderUser(),
+      );
+
+      expect(applicationsService.reject).toHaveBeenCalledWith(
+        APPLICATION_ID,
+        PROVIDER_ID,
+      );
+      expect(result).toEqual(new ApplicationResponseDto(application));
+    });
+  });
+
   describe('waiting queue promotion', () => {
     const handlerNames = (): string[] =>
       Object.getOwnPropertyNames(
@@ -212,6 +233,7 @@ describe('ProviderApplicationsController', () => {
         'findByListing',
         'findActiveByListing',
         'findWaitingCount',
+        'reject',
       ]);
       expect(names.some((name) => name.toLowerCase().includes('promote'))).toBe(
         false,
@@ -224,6 +246,7 @@ describe('ProviderApplicationsController', () => {
         RequestMethod.GET,
         RequestMethod.GET,
         RequestMethod.GET,
+        RequestMethod.PATCH,
       ]);
       expect(
         handlerNames().map((name): unknown =>

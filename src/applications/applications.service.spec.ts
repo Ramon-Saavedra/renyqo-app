@@ -23,15 +23,6 @@ const APPLICANT_ID = '00000000-0000-4000-8000-000000000002';
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000003';
 const APPLICATION_ID = '00000000-0000-4000-8000-000000000004';
 
-type ApplicationFindManyArgs = {
-  orderBy?: unknown;
-  where?: unknown;
-};
-
-type ApplicationUpdateArgs = {
-  where: { id: string };
-};
-
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
   providerId: PROVIDER_ID,
@@ -62,6 +53,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
   publishedAt: new Date('2024-01-01'),
+  rentedAt: null,
   ...overrides,
 });
 
@@ -72,6 +64,8 @@ const makeRawApplication = (
   listingId: LISTING_ID,
   applicantId: APPLICANT_ID,
   status: ApplicationStatus.ACTIVE,
+  rejectedAt: null,
+  publicReason: null,
   queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
@@ -94,6 +88,7 @@ describe('ApplicationsService', () => {
       count: jest.MockedFunction<(args?: unknown) => Promise<number>>;
       create: jest.MockedFunction<(args?: unknown) => Promise<Application>>;
       update: jest.MockedFunction<(args?: unknown) => Promise<Application>>;
+      findUnique: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
       findMany: jest.MockedFunction<(args?: unknown) => Promise<Application[]>>;
     };
     applicantProfile: {
@@ -118,6 +113,7 @@ describe('ApplicationsService', () => {
         count: jest.fn<(args?: unknown) => Promise<number>>(),
         create: jest.fn<(args?: unknown) => Promise<Application>>(),
         update: jest.fn<(args?: unknown) => Promise<Application>>(),
+        findUnique: jest.fn<(args?: unknown) => Promise<unknown>>(),
         findMany: jest.fn<(args?: unknown) => Promise<Application[]>>(),
       },
       applicantProfile: {
@@ -321,6 +317,182 @@ describe('ApplicationsService', () => {
     });
   });
 
+  describe('withdraw', () => {
+    it('withdraws an active application and promotes the waiting queue', async () => {
+      const application = makeRawApplication({
+        status: ApplicationStatus.ACTIVE,
+      });
+      const withdrawn = makeRawApplication({
+        status: ApplicationStatus.WITHDRAWN,
+      });
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({ listingId: LISTING_ID })
+        .mockResolvedValueOnce(application);
+      prismaMock.application.update.mockResolvedValue(withdrawn);
+      prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+      prismaMock.application.count.mockResolvedValue(4);
+      prismaMock.application.findMany.mockResolvedValue([]);
+
+      const result = await service.withdraw(APPLICATION_ID, APPLICANT_ID);
+
+      expect(result.status).toBe(ApplicationStatus.WITHDRAWN);
+      expect(prismaMock.application.update).toHaveBeenCalledWith({
+        where: { id: APPLICATION_ID },
+        data: { status: ApplicationStatus.WITHDRAWN },
+      });
+      expect(prismaMock.application.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { listingId: LISTING_ID, status: ApplicationStatus.WAITING },
+        }),
+      );
+      expect(prismaMock.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: 'Serializable' },
+      );
+    });
+
+    it('withdraws a waiting application without promoting the queue', async () => {
+      const application = makeRawApplication({
+        status: ApplicationStatus.WAITING,
+      });
+      const withdrawn = makeRawApplication({
+        status: ApplicationStatus.WITHDRAWN,
+      });
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({ listingId: LISTING_ID })
+        .mockResolvedValueOnce(application);
+      prismaMock.application.update.mockResolvedValue(withdrawn);
+
+      await expect(
+        service.withdraw(APPLICATION_ID, APPLICANT_ID),
+      ).resolves.toEqual(withdrawn);
+      expect(prismaMock.listing.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.application.findMany).not.toHaveBeenCalled();
+    });
+
+    it('does not reveal an application owned by another applicant', async () => {
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({ listingId: LISTING_ID })
+        .mockResolvedValueOnce(
+          makeRawApplication({
+            applicantId: '00000000-0000-4000-8000-000000000099',
+          }),
+        );
+
+      await expect(
+        service.withdraw(APPLICATION_ID, APPLICANT_ID),
+      ).rejects.toThrow(NotFoundException);
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+
+    it('handles repeated withdrawal idempotently', async () => {
+      const withdrawn = makeRawApplication({
+        status: ApplicationStatus.WITHDRAWN,
+      });
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({ listingId: LISTING_ID })
+        .mockResolvedValueOnce(withdrawn);
+
+      await expect(
+        service.withdraw(APPLICATION_ID, APPLICANT_ID),
+      ).resolves.toEqual(withdrawn);
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects applications that are not active or waiting', async () => {
+      const rejected = makeRawApplication({
+        status: ApplicationStatus.REJECTED,
+      });
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({ listingId: LISTING_ID })
+        .mockResolvedValueOnce(rejected);
+
+      await expect(
+        service.withdraw(APPLICATION_ID, APPLICANT_ID),
+      ).rejects.toThrow(ConflictException);
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+      expect(prismaMock.application.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reject', () => {
+    it('rejects an ACTIVE application with NOT_SELECTED', async () => {
+      const application = makeRawApplication({
+        status: ApplicationStatus.ACTIVE,
+      });
+      const rejected = makeRawApplication({
+        status: ApplicationStatus.REJECTED,
+        rejectedAt: expect.any(Date) as unknown as Date,
+        publicReason: 'NOT_SELECTED' as unknown as Application['publicReason'],
+      });
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({
+          ...application,
+          listing: {
+            id: LISTING_ID,
+            providerId: PROVIDER_ID,
+            status: ListingStatus.PUBLISHED,
+          },
+        })
+        .mockResolvedValueOnce(application);
+      prismaMock.application.update.mockResolvedValue(rejected);
+      prismaMock.application.count.mockResolvedValue(4);
+      prismaMock.application.findMany.mockResolvedValue([]);
+
+      const result = await service.reject(APPLICATION_ID, PROVIDER_ID);
+
+      expect(result.status).toBe(ApplicationStatus.REJECTED);
+      expect(prismaMock.application.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: APPLICATION_ID },
+          data: expect.objectContaining({
+            status: ApplicationStatus.REJECTED,
+            rejectedAt: expect.any(Date),
+          }),
+        }),
+      );
+      expect(prismaMock.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: 'Serializable' },
+      );
+    });
+
+    it('hides applications belonging to other providers', async () => {
+      prismaMock.application.findUnique.mockResolvedValueOnce({
+        id: APPLICATION_ID,
+        listing: {
+          id: LISTING_ID,
+          providerId: '00000000-0000-4000-8000-000000000099',
+          status: ListingStatus.PUBLISHED,
+        },
+      });
+
+      await expect(service.reject(APPLICATION_ID, PROVIDER_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects applications that are not ACTIVE', async () => {
+      const application = makeRawApplication({
+        status: ApplicationStatus.REJECTED,
+      });
+      prismaMock.application.findUnique.mockResolvedValueOnce({
+        ...application,
+        listing: {
+          id: LISTING_ID,
+          providerId: PROVIDER_ID,
+          status: ListingStatus.PUBLISHED,
+        },
+      });
+
+      await expect(service.reject(APPLICATION_ID, PROVIDER_ID)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('findAllByProvider', () => {
     it('returns non-waiting applications for all listings owned by the provider', async () => {
       const applications = [makeRawApplication()];
@@ -451,14 +623,17 @@ describe('ApplicationsService', () => {
         service.promoteWaitingApplications(LISTING_ID),
       ).resolves.toBe(2);
 
-      const findManyArgs = prismaMock.application.findMany.mock
-        .calls[0][0] as ApplicationFindManyArgs;
-      expect(findManyArgs.orderBy).toEqual({ queueOrder: 'asc' });
-      expect(
-        prismaMock.application.update.mock.calls.map(
-          (call) => (call[0] as ApplicationUpdateArgs).where.id,
-        ),
-      ).toEqual([waiting[0].id, waiting[1].id]);
+      expect(prismaMock.application.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: { queueOrder: 'asc' } }),
+      );
+      expect(prismaMock.application.update).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ where: { id: waiting[0].id } }),
+      );
+      expect(prismaMock.application.update).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ where: { id: waiting[1].id } }),
+      );
     });
 
     it('rechecks eligibility with the current listing and profile before each promotion', async () => {

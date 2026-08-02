@@ -9,6 +9,7 @@ import type { SafeUser } from '../users/types/safe-user.type';
 import { Role, UserStatus } from '../generated/prisma/enums';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
+import { RentListingDto } from './dto/rent-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsController } from './listings.controller';
 import { ListingsService } from './listings.service';
@@ -61,6 +62,7 @@ const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
   publishedAt: null,
+  rentedAt: null,
   ...overrides,
 });
 
@@ -104,6 +106,7 @@ describe('ListingsController', () => {
             publish: jest.fn(),
             moveToDraft: jest.fn(),
             archive: jest.fn(),
+            rentListing: jest.fn(),
             toListingResponse: jest.fn(
               (listing: Listing) =>
                 new ListingResponseDto(listing, { exposeExactAddress: true }),
@@ -327,6 +330,28 @@ describe('ListingsController', () => {
         exposeExactAddress: true,
       });
       expect(result.status).toBe(ListingStatus.ARCHIVED);
+    });
+  });
+
+  describe('rent', () => {
+    it('calls listingsService.rentListing with id, provider id and dto', async () => {
+      const dto: RentListingDto = {
+        selectedApplicationId: '00000000-0000-4000-8000-000000000099',
+      };
+      const listing = makeListing({ status: ListingStatus.RENTED });
+      listingsService.rentListing.mockResolvedValue(listing);
+
+      const result = await controller.rent(LISTING_ID, dto, makeProviderUser());
+
+      expect(listingsService.rentListing).toHaveBeenCalledWith(
+        LISTING_ID,
+        PROVIDER_ID,
+        dto,
+      );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
+      expect(result.status).toBe(ListingStatus.RENTED);
     });
   });
 });

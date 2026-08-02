@@ -164,6 +164,7 @@ Provider endpoints require an authenticated provider session and enforce listing
 | `PATCH` | `/api/v1/provider/listings/:id/publish`             | Provider | Publish an owned listing                                |
 | `PATCH` | `/api/v1/provider/listings/:id/draft`               | Provider | Move a listing back to draft                            |
 | `PATCH` | `/api/v1/provider/listings/:id/archive`             | Provider | Archive an owned listing                                |
+| `PATCH` | `/api/v1/provider/listings/:id/rent`                | Provider | Mark a listing as rented and finalize applications      |
 | `GET`   | `/api/v1/provider/listings/:id/active-applications` | Provider | Get active applications for one listing                 |
 
 Required fields to publish: `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
@@ -253,8 +254,9 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 | `GET`  | `/api/v1/provider/applications`               | Provider  | Get applications across provider listings              |
 | `GET`  | `/api/v1/provider/listings/:id/applications`  | Provider  | Get applications for an owned listing                  |
 | `GET`  | `/api/v1/provider/listings/:id/waiting-count` | Provider  | Get the waiting application count for an owned listing |
+| `PATCH`| `/api/v1/provider/applications/:id/reject`    | Provider  | Reject one owned ACTIVE application                   |
 
-Only published listings accept applications.
+Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 
 `GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns `canApply`, `reasons`, `warnings` and `evaluatedAt`. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
 
@@ -271,6 +273,23 @@ Promotion is an internal backend operation with no HTTP endpoint. Providers cann
 `ApplicationsService.promoteWaitingApplications(listingId)` promotes the oldest eligible `WAITING` applications by `queueOrder`, rechecks eligibility immediately before each promotion and stops at the five-active limit. It runs in a Serializable transaction with row locks and serialization-conflict retries, so concurrent promotions can never exceed five `ACTIVE` applications.
 
 Withdrawing an `ACTIVE` application calls the private `promoteWithinTransaction(tx, listing)` inside the same Serializable transaction that writes the `WITHDRAWN` status, immediately after that update. That keeps slot release and FIFO promotion atomic. Ownership is enforced before the slot is released.
+
+### Application lifecycle: reject, rent and terminal states
+
+`PATCH /api/v1/provider/applications/:id/reject` requires an authenticated provider session that owns the listing. Only `ACTIVE` applications may be rejected; `WAITING` applications are not visible to the provider and return `404`. The rejection reason is always `NOT_SELECTED` and is stored in `publicReason` alongside `rejectedAt`. Invalid state transitions return `409`. Rejecting an `ACTIVE` application promotes the oldest still-eligible `WAITING` application in the same Serializable transaction.
+
+`PATCH /api/v1/provider/listings/:id/rent` requires `{ "selectedApplicationId": "uuid" }`. The listing must be `PUBLISHED` or `PAUSED`, and the selected application must be `ACTIVE` and belong to the listing. In one atomic Serializable transaction:
+
+- Listing changes to `RENTED` with `rentedAt` set.
+- The selected application changes to `ACCEPTED`.
+- Every other `ACTIVE` and `WAITING` application changes to `REJECTED` with `publicReason` set to `LISTING_RENTED` and `rejectedAt` set.
+- No waiting application is promoted.
+
+RENTED listings disappear from applicant discovery and do not accept new applications.
+
+Application terminal states are `REJECTED`, `WITHDRAWN`, `ACCEPTED` and listing `RENTED`. These states serve as the authoritative source for downstream features such as view restrictions and chat availability.
+
+`GET /api/v1/applicant/applications` returns for each application: `status`, `createdAt`, `updatedAt`, `rejectedAt`, `publicReason` and a safe listing summary with the listing title, city, cold rent and cover image URL. It never exposes queue position, provider identity, private address, internal eligibility data or provider comments.
 
 ### Applicant Profile
 

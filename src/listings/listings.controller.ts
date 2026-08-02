@@ -23,6 +23,7 @@ import {
 import type { SafeUser } from '../users/types/safe-user.type';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
+import { RentListingDto } from './dto/rent-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsService } from './listings.service';
 
@@ -109,6 +110,18 @@ export class ListingsController {
     @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
     const listing = await this.listingsService.archive(id, user.id);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
+  }
+
+  @Patch(':id/rent')
+  async rent(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: RentListingDto,
+    @CurrentUser() user: SafeUser,
+  ): Promise<ListingResponseDto> {
+    const listing = await this.listingsService.rentListing(id, user.id, dto);
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });

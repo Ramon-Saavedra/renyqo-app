@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -11,9 +12,14 @@ import type { UploadApiResponse } from 'cloudinary';
 import type { EnvironmentVariables } from '../config/env.validation';
 import type { Listing } from '../generated/prisma/client';
 import type { Prisma } from '../generated/prisma/client';
-import { ListingStatus } from '../generated/prisma/enums';
+import {
+  ApplicationRejectionReason,
+  ApplicationStatus,
+  ListingStatus,
+} from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import type { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
 import type { ListingWithImages } from './dto/listing-response.dto';
@@ -22,6 +28,7 @@ import { ApplicantListingDetailDto } from './dto/applicant-listing-detail.dto';
 import { ApplicantListingSummaryDto } from './dto/applicant-listing-summary.dto';
 import { ApplicantListingsPageDto } from './dto/applicant-listings-page.dto';
 import type { ApplicantListingsQueryDto } from './dto/applicant-listings-query.dto';
+import type { RentListingDto } from './dto/rent-listing.dto';
 
 const PUBLISH_REQUIRED_FIELDS = [
   'title',
@@ -39,6 +46,41 @@ const DEFAULT_DEPOSIT_MONTHS = 2;
 const MIN_DEPOSIT_MONTHS = 1;
 const MAX_DEPOSIT_MONTHS = 3;
 const DEPOSIT_AMOUNT_TOLERANCE = 0.01;
+const SERIALIZABLE_TRANSACTION_RETRIES = 8;
+
+type TransactionClient = Prisma.TransactionClient;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasSerializationCode(value: unknown): boolean {
+  return isRecord(value) && value.originalCode === '40001';
+}
+
+function isSerializationConflict(error: unknown): boolean {
+  if (
+    error instanceof PrismaClientKnownRequestError &&
+    error.code === 'P2034'
+  ) {
+    return true;
+  }
+
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  if (error.code === 'P2034' || hasSerializationCode(error.cause)) {
+    return true;
+  }
+
+  const meta = isRecord(error.meta) ? error.meta : undefined;
+  const driverAdapterError = meta?.driverAdapterError;
+  return (
+    isRecord(driverAdapterError) &&
+    hasSerializationCode(driverAdapterError.cause)
+  );
+}
 const ELIGIBILITY_CRITERIA_FIELDS = [
   'minimumHouseholdNetIncome',
   'schufaRequired',
@@ -229,6 +271,79 @@ export class ListingsService {
     return this.prisma.listing.update({
       where: { id },
       data: { status: ListingStatus.ARCHIVED },
+    });
+  }
+
+  async rentListing(
+    id: string,
+    providerId: string,
+    dto: RentListingDto,
+  ): Promise<Listing> {
+    return this.runSerializableTransaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "listings" WHERE id = ${id} FOR UPDATE`;
+
+      const listing = await tx.listing.findFirst({
+        where: { id, providerId },
+      });
+
+      if (!listing) {
+        throw new NotFoundException('Listing not found');
+      }
+
+      if (
+        listing.status !== ListingStatus.PUBLISHED &&
+        listing.status !== ListingStatus.PAUSED
+      ) {
+        throw new ConflictException('This listing cannot be marked as rented');
+      }
+
+      const selectedApplication = await tx.application.findUnique({
+        where: { id: dto.selectedApplicationId },
+      });
+
+      if (
+        !selectedApplication ||
+        selectedApplication.listingId !== id ||
+        selectedApplication.status !== ApplicationStatus.ACTIVE
+      ) {
+        throw new ConflictException(
+          'The selected application is not valid for this listing',
+        );
+      }
+
+      const nonSelectedIds = (
+        await tx.application.findMany({
+          where: {
+            listingId: id,
+            id: { not: dto.selectedApplicationId },
+            status: {
+              in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING],
+            },
+          },
+          select: { id: true },
+        })
+      ).map((a) => a.id);
+
+      if (nonSelectedIds.length > 0) {
+        await tx.application.updateMany({
+          where: { id: { in: nonSelectedIds } },
+          data: {
+            status: ApplicationStatus.REJECTED,
+            rejectedAt: new Date(),
+            publicReason: ApplicationRejectionReason.LISTING_RENTED,
+          },
+        });
+      }
+
+      await tx.application.update({
+        where: { id: dto.selectedApplicationId },
+        data: { status: ApplicationStatus.ACCEPTED },
+      });
+
+      return tx.listing.update({
+        where: { id },
+        data: { status: ListingStatus.RENTED, rentedAt: new Date() },
+      });
     });
   }
 
@@ -713,5 +828,32 @@ export class ListingsService {
     if (bedrooms > rooms) {
       throw new BadRequestException('bedrooms must not be greater than rooms');
     }
+  }
+
+  private async runSerializableTransaction<T>(
+    operation: (tx: TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (
+      let attempt = 0;
+      attempt < SERIALIZABLE_TRANSACTION_RETRIES;
+      attempt++
+    ) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: 'Serializable',
+        });
+      } catch (err) {
+        if (
+          !isSerializationConflict(err) ||
+          attempt === SERIALIZABLE_TRANSACTION_RETRIES - 1
+        ) {
+          throw err;
+        }
+        const delayMs = Math.min(250, 10 * 2 ** attempt);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    throw new Error('Rent listing transaction could not be completed');
   }
 }
