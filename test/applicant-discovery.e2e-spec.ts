@@ -299,17 +299,21 @@ describe('Applicant Discovery E2E', () => {
   });
 
   describe('GET /api/v1/listings', () => {
-    it('returns 403 for unauthenticated requests', async () => {
-      await request(getServer()).get('/api/v1/listings').expect(403);
+    it('returns an empty page for unauthenticated requests', async () => {
+      const response = await request(getServer())
+        .get('/api/v1/listings')
+        .expect(200);
+
+      expect(responseBody(response).items).toEqual([]);
     });
 
-    it('returns 403 for provider requests', async () => {
+    it('allows provider requests', async () => {
       const cookies = await registerAndGetCookies(providerPayload());
 
       await request(getServer())
         .get('/api/v1/listings')
         .set('Cookie', cookies)
-        .expect(403);
+        .expect(200);
     });
 
     it('returns an empty page when no listings are published', async () => {
@@ -536,13 +540,13 @@ describe('Applicant Discovery E2E', () => {
   });
 
   describe('GET /api/v1/listings/:id', () => {
-    it('returns 403 for unauthenticated requests', async () => {
+    it('returns 404 for an unauthenticated request for a missing listing', async () => {
       await request(getServer())
         .get('/api/v1/listings/00000000-0000-4000-8000-000000000001')
-        .expect(403);
+        .expect(404);
     });
 
-    it('returns 403 for provider requests', async () => {
+    it('allows provider requests for published listings', async () => {
       const providerCookies = await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
@@ -554,7 +558,7 @@ describe('Applicant Discovery E2E', () => {
       await request(getServer())
         .get(`/api/v1/listings/${listing.id}`)
         .set('Cookie', providerCookies)
-        .expect(403);
+        .expect(200);
     });
 
     it('returns 404 for non-published listings', async () => {
