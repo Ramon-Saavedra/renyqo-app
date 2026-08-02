@@ -8,7 +8,10 @@ import request, { type Response } from 'supertest';
 import type { UploadApiResponse } from 'cloudinary';
 import { AppModule } from '../src/app.module';
 import type { EnvironmentVariables } from '../src/config/env.validation';
-import { ListingStatus } from '../src/generated/prisma/enums';
+import {
+  ApplicationStatus,
+  ListingStatus,
+} from '../src/generated/prisma/enums';
 import { ApplicationsService } from '../src/applications/applications.service';
 import { CloudinaryService } from '../src/listing-images/cloudinary.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -694,6 +697,207 @@ describe('Backend API E2E', () => {
         where: { listingId: secondListing.id },
       }),
     ).toBe(0);
+  });
+
+  it('returns a safe listing summary for applicant applications', async () => {
+    const applicantAgent = request.agent(getServer());
+    const applicantResponse = await applicantAgent
+      .post('/api/v1/auth/register')
+      .send(applicantPayload())
+      .expect(201);
+    safeUserBody(applicantResponse);
+
+    const providerResponse = await request(getServer())
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    const provider = safeUserBody(providerResponse);
+    const listing = await getPrisma().listing.create({
+      data: {
+        providerId: provider.id,
+        status: ListingStatus.PUBLISHED,
+        city: 'Berlin',
+        street: 'Private Street 1',
+        title: 'Applicant Summary Listing',
+        coldRent: 1200,
+      },
+    });
+    await getPrisma().listingImage.create({
+      data: {
+        listingId: listing.id,
+        publicId: `e2e/applications/${listing.id}/cover`,
+        secureUrl: 'https://example.com/cover.jpg',
+        position: 0,
+        isCover: true,
+      },
+    });
+
+    await applicantAgent
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(201);
+
+    const response = await applicantAgent
+      .get('/api/v1/applicant/applications')
+      .expect(200);
+    const responseValue: unknown = response.body;
+    if (
+      !Array.isArray(responseValue) ||
+      responseValue.length !== 1 ||
+      !isRecord(responseValue[0]) ||
+      !isRecord(responseValue[0].listing)
+    ) {
+      throw new Error('E2E applications response has an unexpected shape.');
+    }
+    const body = responseValue[0];
+    const listingBody = responseValue[0].listing;
+    expect(body).toMatchObject({
+      listingId: listing.id,
+      status: 'ACTIVE',
+      listing: {
+        title: 'Applicant Summary Listing',
+        city: 'Berlin',
+        coldRent: 1200,
+        imageUrl: 'https://example.com/cover.jpg',
+      },
+    });
+    expect(body).not.toHaveProperty('applicantId');
+    expect(body).not.toHaveProperty('queueOrder');
+    expect(listingBody).not.toHaveProperty('providerId');
+    expect(listingBody).not.toHaveProperty('street');
+    expect(listingBody).not.toHaveProperty('minimumHouseholdNetIncome');
+  });
+
+  it('protects applicant application routes and validates withdrawal ids', async () => {
+    await request(getServer())
+      .get('/api/v1/applicant/applications')
+      .expect(403);
+
+    const applicantAgent = request.agent(getServer());
+    await applicantAgent
+      .post('/api/v1/auth/register')
+      .send(applicantPayload())
+      .expect(201);
+
+    const providerAgent = request.agent(getServer());
+    const providerResponse = await providerAgent
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    const listing = await createPublishedListing(
+      safeUserBody(providerResponse).id,
+    );
+
+    const applicationResponse = await applicantAgent
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(201);
+    const applicationId = responseBody(applicationResponse)['id'];
+    if (typeof applicationId !== 'string') {
+      throw new Error('Application response did not include an id.');
+    }
+
+    await providerAgent.get('/api/v1/applicant/applications').expect(403);
+    await providerAgent
+      .delete(`/api/v1/applicant/applications/${applicationId}`)
+      .expect(403);
+    await applicantAgent
+      .delete('/api/v1/applicant/applications/not-a-uuid')
+      .expect(400);
+
+    await getPrisma().application.update({
+      where: { id: applicationId },
+      data: { status: ApplicationStatus.REJECTED },
+    });
+    await applicantAgent
+      .delete(`/api/v1/applicant/applications/${applicationId}`)
+      .expect(409)
+      .expect((response: Response) => {
+        expect(responseBody(response)['message']).toBe(
+          'This application cannot be withdrawn',
+        );
+      });
+    expect(
+      await getPrisma().application.findUniqueOrThrow({
+        where: { id: applicationId },
+      }),
+    ).toMatchObject({ status: ApplicationStatus.REJECTED });
+  });
+
+  it('allows an applicant to withdraw and promotes the oldest eligible waiting application', async () => {
+    const providerAgent = request.agent(getServer());
+    const providerResponse = await providerAgent
+      .post('/api/v1/auth/register')
+      .send(providerPayload())
+      .expect(201);
+    const listing = await createPublishedListing(
+      safeUserBody(providerResponse).id,
+    );
+    const agents = Array.from({ length: 7 }, () => request.agent(getServer()));
+
+    await Promise.all(
+      agents.map((agent) =>
+        agent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201),
+      ),
+    );
+
+    const applications = [] as Array<{
+      agent: ReturnType<typeof request.agent>;
+      id: string;
+      status: string;
+    }>;
+    for (const agent of agents.slice(0, 6)) {
+      const response = await agent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const body = responseBody(response);
+      if (typeof body.id !== 'string' || typeof body.status !== 'string') {
+        throw new Error('E2E application response has an unexpected shape.');
+      }
+      applications.push({ agent, id: body.id, status: body.status });
+    }
+
+    expect(
+      applications
+        .slice(0, 5)
+        .every((application) => application.status === 'ACTIVE'),
+    ).toBe(true);
+    expect(applications[5].status).toBe('WAITING');
+
+    const withdrawalResponse = await applications[0].agent
+      .delete(`/api/v1/applicant/applications/${applications[0].id}`)
+      .expect(200);
+    expect(responseBody(withdrawalResponse)).toMatchObject({
+      id: applications[0].id,
+      listingId: listing.id,
+      status: 'WITHDRAWN',
+    });
+
+    const promotedApplicationsResponse = await applications[5].agent
+      .get('/api/v1/applicant/applications')
+      .expect(200);
+    const promotedApplications: unknown = promotedApplicationsResponse.body;
+    if (
+      !Array.isArray(promotedApplications) ||
+      !isRecord(promotedApplications[0])
+    ) {
+      throw new Error(
+        'E2E applicant applications response has an unexpected shape.',
+      );
+    }
+    expect(promotedApplications[0].status).toBe('ACTIVE');
+
+    await applications[0].agent
+      .delete(`/api/v1/applicant/applications/${applications[0].id}`)
+      .expect(200)
+      .expect((response: Response) => {
+        expect(responseBody(response)['status']).toBe('WITHDRAWN');
+      });
+
+    await agents[6]
+      .delete(`/api/v1/applicant/applications/${applications[0].id}`)
+      .expect(404);
   });
 
   it('enforces the five active application limit under concurrent requests', async () => {
