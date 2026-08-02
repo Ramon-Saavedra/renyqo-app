@@ -18,6 +18,10 @@ import type { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
 import type { ListingWithImages } from './dto/listing-response.dto';
 import type { UpdateListingDto } from './dto/update-listing.dto';
+import { ApplicantListingDetailDto } from './dto/applicant-listing-detail.dto';
+import { ApplicantListingSummaryDto } from './dto/applicant-listing-summary.dto';
+import { ApplicantListingsPageDto } from './dto/applicant-listings-page.dto';
+import type { ApplicantListingsQueryDto } from './dto/applicant-listings-query.dto';
 
 const PUBLISH_REQUIRED_FIELDS = [
   'title',
@@ -43,6 +47,85 @@ const ELIGIBILITY_CRITERIA_FIELDS = [
   'petsPolicy',
   'smokingPolicy',
 ] as const;
+
+const DISCOVERY_PAGE_SIZE_DEFAULT = 20;
+const DISCOVERY_PAGE_SIZE_MAX = 50;
+
+const CURSOR_MAX_LENGTH = 256;
+
+const UUID_REGEX =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89ab][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+
+const CURSOR_FIELDS: readonly string[] = ['publishedAt', 'id'];
+
+interface CursorPayload {
+  publishedAt: string;
+  id: string;
+}
+
+function isDateString(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const date = new Date(value);
+
+  return !Number.isNaN(date.getTime()) && value === date.toISOString();
+}
+
+function isCursorPayload(value: unknown): value is CursorPayload {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+
+  if (
+    keys.length !== CURSOR_FIELDS.length ||
+    !keys.every((key) => CURSOR_FIELDS.includes(key))
+  ) {
+    return false;
+  }
+
+  if (!isDateString(record.publishedAt)) {
+    return false;
+  }
+
+  if (typeof record.id !== 'string' || !UUID_REGEX.test(record.id)) {
+    return false;
+  }
+
+  return true;
+}
+
+function encodeCursor(publishedAt: Date, id: string): string {
+  const payload: CursorPayload = {
+    publishedAt: publishedAt.toISOString(),
+    id,
+  };
+
+  return Buffer.from(JSON.stringify(payload)).toString('base64url');
+}
+
+function decodeCursor(cursor: string): CursorPayload | null {
+  if (cursor.length > CURSOR_MAX_LENGTH) {
+    return null;
+  }
+
+  try {
+    const raw = Buffer.from(cursor, 'base64url').toString('utf8');
+    const parsed: unknown = JSON.parse(raw);
+
+    if (!isCursorPayload(parsed)) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 @Injectable()
 export class ListingsService {
@@ -182,6 +265,178 @@ export class ListingsService {
     options: { exposeExactAddress?: boolean } = {},
   ): ListingResponseDto[] {
     return listings.map((listing) => this.toListingResponse(listing, options));
+  }
+
+  async findPublishedForApplicant(
+    query: ApplicantListingsQueryDto,
+  ): Promise<ApplicantListingsPageDto> {
+    const take = Math.min(
+      query.limit ?? DISCOVERY_PAGE_SIZE_DEFAULT,
+      DISCOVERY_PAGE_SIZE_MAX,
+    );
+
+    const where = this.buildDiscoveryWhere(query);
+
+    const listings = await this.prisma.listing.findMany({
+      where,
+      orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+      take: take + 1,
+      select: {
+        id: true,
+        title: true,
+        city: true,
+        zip: true,
+        objectType: true,
+        livingArea: true,
+        rooms: true,
+        bedrooms: true,
+        coldRent: true,
+        additionalCosts: true,
+        deposit: true,
+        depositMonths: true,
+        availableFrom: true,
+        shortDescription: true,
+        images: {
+          select: { secureUrl: true, position: true, isCover: true },
+          orderBy: { position: 'asc' },
+        },
+        publishedAt: true,
+      },
+    });
+
+    const hasMore = listings.length > take;
+    const items = hasMore ? listings.slice(0, take) : listings;
+
+    const summaries = items.map(
+      (listing) => new ApplicantListingSummaryDto(listing),
+    );
+
+    const nextCursor =
+      hasMore && items.length > 0
+        ? encodeCursor(
+            items[items.length - 1].publishedAt!,
+            items[items.length - 1].id,
+          )
+        : null;
+
+    return new ApplicantListingsPageDto(summaries, nextCursor);
+  }
+
+  async findPublishedDetailForApplicant(
+    id: string,
+  ): Promise<ApplicantListingDetailDto> {
+    const listing = await this.prisma.listing.findFirst({
+      where: {
+        id,
+        status: ListingStatus.PUBLISHED,
+        publishedAt: { not: null },
+      },
+      select: {
+        id: true,
+        title: true,
+        city: true,
+        zip: true,
+        street: true,
+        showExactAddress: true,
+        objectType: true,
+        livingArea: true,
+        rooms: true,
+        bedrooms: true,
+        coldRent: true,
+        additionalCosts: true,
+        deposit: true,
+        depositMonths: true,
+        availableFrom: true,
+        shortDescription: true,
+        minimumHouseholdNetIncome: true,
+        schufaRequired: true,
+        incomeProofRequired: true,
+        suitableForPeopleCount: true,
+        petsPolicy: true,
+        smokingPolicy: true,
+        publishedAt: true,
+        images: {
+          select: { secureUrl: true, position: true, isCover: true },
+          orderBy: { position: 'asc' },
+        },
+      },
+    });
+
+    if (!listing) {
+      throw new NotFoundException('Listing not found');
+    }
+
+    return new ApplicantListingDetailDto(listing);
+  }
+
+  private buildDiscoveryWhere(
+    query: ApplicantListingsQueryDto,
+  ): Prisma.ListingWhereInput {
+    const where: Prisma.ListingWhereInput = {
+      status: ListingStatus.PUBLISHED,
+      publishedAt: { not: null },
+    };
+
+    if (query.city) {
+      where.city = { equals: query.city, mode: 'insensitive' };
+    }
+
+    if (query.minRent !== undefined || query.maxRent !== undefined) {
+      where.coldRent = {};
+
+      if (query.minRent !== undefined) {
+        where.coldRent.gte = query.minRent;
+      }
+
+      if (query.maxRent !== undefined) {
+        where.coldRent.lte = query.maxRent;
+      }
+    }
+
+    if (query.minRooms !== undefined || query.maxRooms !== undefined) {
+      where.rooms = {};
+
+      if (query.minRooms !== undefined) {
+        where.rooms.gte = query.minRooms;
+      }
+
+      if (query.maxRooms !== undefined) {
+        where.rooms.lte = query.maxRooms;
+      }
+    }
+
+    if (
+      query.minLivingArea !== undefined ||
+      query.maxLivingArea !== undefined
+    ) {
+      where.livingArea = {};
+
+      if (query.minLivingArea !== undefined) {
+        where.livingArea.gte = query.minLivingArea;
+      }
+
+      if (query.maxLivingArea !== undefined) {
+        where.livingArea.lte = query.maxLivingArea;
+      }
+    }
+
+    if (query.cursor) {
+      const cursor = decodeCursor(query.cursor);
+
+      if (!cursor) {
+        throw new BadRequestException('Invalid cursor');
+      }
+
+      where.OR = [
+        { publishedAt: { lt: new Date(cursor.publishedAt) } },
+        {
+          publishedAt: new Date(cursor.publishedAt),
+          id: { lt: cursor.id },
+        },
+      ];
+    }
+
+    return where;
   }
 
   private async createWithImage(

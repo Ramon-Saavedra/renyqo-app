@@ -142,6 +142,7 @@ model Listing {
   applications Application[]
   images       ListingImage[]
 
+  @@index([status, publishedAt, id])
   @@map("listings")
 }
 

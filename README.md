@@ -113,7 +113,45 @@ Password recovery uses Amazon SES. `POST /api/v1/auth/forgot-password` always re
 | ------ | ----------------------------- | ------- | ---------------------------------- |
 | `GET`  | `/api/v1/me/onboarding-state` | Session | Return role-based onboarding state |
 
-### Listings
+### Applicant Listing Discovery
+
+Applicant endpoints return only PUBLISHED listings.
+
+| Method | Path                    | Auth      | Description                                     |
+| ------ | ----------------------- | --------- | ----------------------------------------------- |
+| `GET`  | `/api/v1/listings`      | Applicant | Browse published listings with filters and cursor pagination |
+| `GET`  | `/api/v1/listings/:id`  | Applicant | Get public detail for a published listing       |
+
+Supported query parameters for `GET /api/v1/listings`:
+
+| Parameter        | Type   | Description                    |
+| ---------------- | ------ | ------------------------------ |
+| `city`           | string | Filter by city (case-insensitive) |
+| `minRent`        | number | Minimum cold rent              |
+| `maxRent`        | number | Maximum cold rent              |
+| `minRooms`       | number | Minimum rooms                  |
+| `maxRooms`       | number | Maximum rooms                  |
+| `minLivingArea`  | number | Minimum living area            |
+| `maxLivingArea`  | number | Maximum living area            |
+| `limit`          | number | Page size (default 20, max 50) |
+| `cursor`         | string | Opaque cursor for next page    |
+
+Cursor pagination is based on `publishedAt DESC, id DESC`. The response includes `nextCursor` for the next page or `null` when there are no more results.
+
+Collection response:
+
+- narrow public summary with `coverImage` containing only `secureUrl`
+- never exposes `providerId`, `showExactAddress`, Cloudinary `publicId` or internal eligibility criteria
+
+Detail response:
+
+- includes public images, rent, costs, rooms, living area, availability, description and public application requirements
+- returns street and house number only when `showExactAddress` is `true`
+- never exposes `providerId`, `showExactAddress` flag or Cloudinary `publicId`
+
+DRAFT, PAUSED and ARCHIVED listings are not accessible through these endpoints.
+
+### Provider Listings
 
 Provider endpoints require an authenticated provider session and enforce listing ownership.
 
@@ -211,6 +249,7 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 | `GET`  | `/api/v1/listings/:id/eligibility`            | Applicant | Read explainable eligibility for the current applicant |
 | `POST` | `/api/v1/listings/:id/apply`                  | Applicant | Apply to a published listing                           |
 | `GET`  | `/api/v1/applicant/applications`              | Applicant | Get applications submitted by the current applicant    |
+| `DELETE` | `/api/v1/applicant/applications/:id`         | Applicant | Withdraw one owned application                         |
 | `GET`  | `/api/v1/provider/applications`               | Provider  | Get applications across provider listings              |
 | `GET`  | `/api/v1/provider/listings/:id/applications`  | Provider  | Get applications for an owned listing                  |
 | `GET`  | `/api/v1/provider/listings/:id/waiting-count` | Provider  | Get the waiting application count for an owned listing |
@@ -223,13 +262,15 @@ Only published listings accept applications.
 
 The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING`. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. Duplicate applications return `409`.
 
+`DELETE /api/v1/applicant/applications/:id` can be used only by the owning applicant. It accepts `ACTIVE` and `WAITING` applications, changes the status to `WITHDRAWN`, and returns the application status and dates without exposing applicant or provider internals. Repeating the request for an already withdrawn application is idempotent. Withdrawing an `ACTIVE` application releases one slot and promotes the oldest still-eligible `WAITING` application in the same Serializable transaction.
+
 ### Waiting queue promotion
 
 Promotion is an internal backend operation with no HTTP endpoint. Providers cannot promote a waiting applicant manually, and the queue is never reordered by income, assets, SCHUFA or provider preference.
 
 `ApplicationsService.promoteWaitingApplications(listingId)` promotes the oldest eligible `WAITING` applications by `queueOrder`, rechecks eligibility immediately before each promotion and stops at the five-active limit. It runs in a Serializable transaction with row locks and serialization-conflict retries, so concurrent promotions can never exceed five `ACTIVE` applications.
 
-No application status transition releases an `ACTIVE` slot yet, because reject and withdraw are not part of this phase. When that transition is implemented, it must call the private `promoteWithinTransaction(tx, listing)` inside the same Serializable transaction that writes the `REJECTED` or `WITHDRAWN` status, immediately after that update. That keeps slot release and FIFO promotion atomic. Ownership must be enforced by that transition before the slot is released.
+Withdrawing an `ACTIVE` application calls the private `promoteWithinTransaction(tx, listing)` inside the same Serializable transaction that writes the `WITHDRAWN` status, immediately after that update. That keeps slot release and FIFO promotion atomic. Ownership is enforced before the slot is released.
 
 ### Applicant Profile
 
