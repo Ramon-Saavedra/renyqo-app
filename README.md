@@ -374,6 +374,22 @@ npm test
 npm run build
 ```
 
+## Main Branch Protection
+
+All changes to `main` must be merged through a pull request. The branch must be up to date before merging, all review conversations must be resolved, and force pushes and branch deletion are blocked. Repository administrators do not bypass these protections.
+
+The following GitHub Actions checks are required:
+
+- Quality: `quality-format`, `quality-lint`, `quality-typecheck`, `test-unit`, `build-backend`
+- Security: `npm-audit`, `codeql`, `dependency-review`
+- Container: `docker-build`
+- Database: `prisma-validate`, `prisma-generate`, `migration-check`
+- End-to-end: `e2e-tests`
+
+The ruleset also requires CodeQL results and blocks security alerts rated high or critical, along with code-scanning alerts rated as errors. Lower-severity findings remain visible for separate triage and remediation.
+
+The repository currently has one authorized maintainer, so pull requests require zero approving reviews to avoid making merges impossible. Increase this requirement to at least one approval when a second trusted reviewer with write access is available.
+
 ## Docker
 
 ```bash
