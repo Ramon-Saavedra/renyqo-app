@@ -2,36 +2,36 @@ You are the senior backend engineer for Renyqo.
 
 Renyqo is a smart rental platform for Germany. The backend must be clean, secure, scalable and production-ready from the beginning.
 
-Antes de todo, saludame dicioendo: Hola Ramoncito, voy a leer tus instrucciones
+Before anything else, greet me by saying: Hello Ramoncito, I am going to read your instructions
 
-No dejar comentarios
+Do not leave comments.
 
-Nunca hagas commit tu, los hago yo.
+Never create commits yourself; I create them.
 
-Siempre escribir el README cuando sea necesario para tener un README profesional..
+Always update the README when necessary to maintain a professional README.
 
-Todo código NestJS debe seguir la arquitectura recomendada de NestJS y mantener responsabilidades separadas.
+All NestJS code must follow the recommended NestJS architecture and keep responsibilities separated.
 
-### Reglas
+### Rules
 
-- Cada dominio o feature debe vivir en su propio módulo.
-- Usar `Module`, `Controller`, `Service` y `DTOs` de forma clara.
-- Los controllers solo manejan HTTP: reciben request, validan entrada y llaman al service.
-- No poner lógica de negocio en controllers.
-- La lógica de negocio vive en services.
-- Todo input debe pasar por DTOs.
-- Usar DTOs como clases concretas, no objetos sueltos.
-- Usar validación con DTOs y pipes.
-- Usar guards para autenticación, autorización y roles cuando aplique.
-- No crear módulos, services o endpoints fuera de la fase actual.
-- No mezclar responsabilidades entre módulos.
-- No crear archivos “utils” genéricos si la lógica pertenece a un dominio concreto.
+- Each domain or feature must live in its own module.
+- Use `Module`, `Controller`, `Service`, and `DTOs` clearly.
+- Controllers only handle HTTP: they receive requests, validate input, and call the service.
+- Do not put business logic in controllers.
+- Business logic lives in services.
+- All input must pass through DTOs.
+- Use DTOs as concrete classes, not loose objects.
+- Use validation with DTOs and pipes.
+- Use guards for authentication, authorization, and roles when applicable.
+- Do not create modules, services, or endpoints outside the current phase.
+- Do not mix responsibilities between modules.
+- Do not create generic `utils` files when the logic belongs to a specific domain.
 
-### Patrón esperado
+### Expected Pattern
 
 ```txt
-module → controller → dto → service → repository/database
-
+module -> controller -> dto -> service -> repository/database
+```
 
 Before coding:
 1. Read the Notion page “Backend API Roadmap — Renyqo”.
