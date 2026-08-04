@@ -329,7 +329,7 @@ describe('Applicant Discovery E2E', () => {
       expect(body.nextCursor).toBeNull();
     });
 
-    it('returns published listings for an applicant', async () => {
+    it('returns published listings for an anonymous user', async () => {
       const providerCookies = await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
@@ -339,11 +339,8 @@ describe('Applicant Discovery E2E', () => {
       await createPublishedListing(providerId);
       await createPublishedListing(providerId, { title: 'Second Listing' });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
-
       const res = await request(getServer())
         .get('/api/v1/listings')
-        .set('Cookie', applicantCookies)
         .expect(200);
 
       const body = responseBody(res);
@@ -374,16 +371,33 @@ describe('Applicant Discovery E2E', () => {
         data: {
           providerId,
           status: ListingStatus.ARCHIVED,
+          publishedAt: new Date(),
           city: 'Berlin',
           title: 'Archived Listing',
         },
       });
-
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      await getPrisma().listing.create({
+        data: {
+          providerId,
+          status: ListingStatus.PAUSED,
+          publishedAt: new Date(),
+          city: 'Berlin',
+          title: 'Paused Listing',
+        },
+      });
+      await getPrisma().listing.create({
+        data: {
+          providerId,
+          status: ListingStatus.RENTED,
+          publishedAt: new Date(),
+          rentedAt: new Date(),
+          city: 'Berlin',
+          title: 'Rented Listing',
+        },
+      });
 
       const res = await request(getServer())
         .get('/api/v1/listings')
-        .set('Cookie', applicantCookies)
         .expect(200);
 
       const body = responseBody(res);
@@ -471,11 +485,8 @@ describe('Applicant Discovery E2E', () => {
 
       await createPublishedListing(providerId);
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
-
       const res = await request(getServer())
         .get('/api/v1/listings')
-        .set('Cookie', applicantCookies)
         .expect(200);
 
       const body = responseBody(res);
@@ -569,19 +580,31 @@ describe('Applicant Discovery E2E', () => {
         .expect(200);
       const providerId = responseBody(meRes).id as string;
 
-      const draft = await getPrisma().listing.create({
-        data: { providerId, status: ListingStatus.DRAFT, title: 'Draft' },
-      });
+      const statuses = [
+        ListingStatus.DRAFT,
+        ListingStatus.PAUSED,
+        ListingStatus.ARCHIVED,
+        ListingStatus.RENTED,
+      ];
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      for (const status of statuses) {
+        const listing = await getPrisma().listing.create({
+          data: {
+            providerId,
+            status,
+            title: `${status} Listing`,
+            publishedAt: status === ListingStatus.DRAFT ? null : new Date(),
+            rentedAt: status === ListingStatus.RENTED ? new Date() : null,
+          },
+        });
 
-      await request(getServer())
-        .get(`/api/v1/listings/${draft.id}`)
-        .set('Cookie', applicantCookies)
-        .expect(404);
+        await request(getServer())
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(404);
+      }
     });
 
-    it('returns published listing detail', async () => {
+    it('returns public-safe published listing detail anonymously', async () => {
       const providerCookies = await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
@@ -590,11 +613,8 @@ describe('Applicant Discovery E2E', () => {
       const providerId = responseBody(meRes).id as string;
       const listing = await createPublishedListing(providerId);
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
-
       const res = await request(getServer())
         .get(`/api/v1/listings/${listing.id}`)
-        .set('Cookie', applicantCookies)
         .expect(200);
 
       const body = responseBody(res);
@@ -602,6 +622,14 @@ describe('Applicant Discovery E2E', () => {
       expect(body.title).toBe('E2E Test Listing');
       expect(body.city).toBe('Berlin');
       expect(body.zip).toBe('10115');
+      expect(body).not.toHaveProperty('providerId');
+      expect(body).not.toHaveProperty('provider');
+      expect(body).not.toHaveProperty('showExactAddress');
+      expect(body).not.toHaveProperty('eligibility');
+      expect(body).not.toHaveProperty('canApply');
+      expect(body).not.toHaveProperty('reasons');
+      expect(body).not.toHaveProperty('warnings');
+      expect(body).not.toHaveProperty('evaluatedAt');
     });
 
     it('hides street when showExactAddress is false', async () => {

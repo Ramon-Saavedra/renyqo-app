@@ -1,5 +1,6 @@
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { describe, expect, it } from '@jest/globals';
+import { UnauthorizedException } from '@nestjs/common';
 
 import { AuthenticatedGuard } from '../../auth/guards/authenticated.guard';
 import { Role, UserStatus } from '../../generated/prisma/enums';
@@ -46,9 +47,17 @@ describe('authentication and role guards', () => {
         makeContext(makeUser(Role.APPLICANT, UserStatus.SUSPENDED)),
       ),
     ).toBe(false);
-    expect(
+  });
+
+  it('rejects missing or invalid authentication with unauthorized', () => {
+    const guard = new AuthenticatedGuard();
+
+    expect(() =>
       guard.canActivate(makeContext(makeUser(Role.APPLICANT), false)),
-    ).toBe(false);
+    ).toThrow(UnauthorizedException);
+    expect(() => guard.canActivate(makeContext(undefined))).toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('accepts only active applicants', () => {
