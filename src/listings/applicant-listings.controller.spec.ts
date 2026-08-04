@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 
 import { ObjectType } from '../generated/prisma/enums';
 import { ApplicantListingDetailDto } from './dto/applicant-listing-detail.dto';
@@ -32,6 +33,12 @@ describe('ApplicantListingsController', () => {
     controller = module.get<ApplicantListingsController>(
       ApplicantListingsController,
     );
+  });
+
+  it('keeps public listing routes free of authentication guards', () => {
+    expect(
+      Reflect.getMetadata(GUARDS_METADATA, ApplicantListingsController),
+    ).toBeUndefined();
   });
 
   describe('findAll', () => {
