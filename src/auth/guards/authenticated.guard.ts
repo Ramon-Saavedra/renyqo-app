@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { UserStatus } from '../../generated/prisma/enums';
 import { isSafeUser } from '../../users/types/safe-user.type';
@@ -7,10 +12,11 @@ import { isSafeUser } from '../../users/types/safe-user.type';
 export class AuthenticatedGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
-    return (
-      request.isAuthenticated() &&
-      isSafeUser(request.user) &&
-      request.user.status === UserStatus.ACTIVE
-    );
+
+    if (!request.isAuthenticated() || !isSafeUser(request.user)) {
+      throw new UnauthorizedException();
+    }
+
+    return request.user.status === UserStatus.ACTIVE;
   }
 }

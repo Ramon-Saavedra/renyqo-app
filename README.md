@@ -113,14 +113,14 @@ Password recovery uses Amazon SES. `POST /api/v1/auth/forgot-password` always re
 | ------ | ----------------------------- | ------- | ---------------------------------- |
 | `GET`  | `/api/v1/me/onboarding-state` | Session | Return role-based onboarding state |
 
-### Applicant Listing Discovery
+### Public Listing Discovery
 
-Applicant endpoints return only PUBLISHED listings.
+These public endpoints return only PUBLISHED listings with a publication date. Registration is not required.
 
-| Method | Path                    | Auth      | Description                                     |
-| ------ | ----------------------- | --------- | ----------------------------------------------- |
-| `GET`  | `/api/v1/listings`      | Applicant | Browse published listings with filters and cursor pagination |
-| `GET`  | `/api/v1/listings/:id`  | Applicant | Get public detail for a published listing       |
+| Method | Path                   | Auth   | Description                                                   |
+| ------ | ---------------------- | ------ | ------------------------------------------------------------- |
+| `GET`  | `/api/v1/listings`     | Public | Browse published listings with filters and cursor pagination |
+| `GET`  | `/api/v1/listings/:id` | Public | Get public detail for a published listing                    |
 
 Supported query parameters for `GET /api/v1/listings`:
 
@@ -147,9 +147,9 @@ Detail response:
 
 - includes public images, rent, costs, rooms, living area, availability, description and public application requirements
 - returns street and house number only when `showExactAddress` is `true`
-- never exposes `providerId`, `showExactAddress` flag or Cloudinary `publicId`
+- never exposes `providerId`, `showExactAddress` flag, Cloudinary `publicId` or eligibility results
 
-DRAFT, PAUSED and ARCHIVED listings are not accessible through these endpoints.
+DRAFT, PAUSED, ARCHIVED and RENTED listings are not accessible through these endpoints.
 
 ### Provider Listings
 

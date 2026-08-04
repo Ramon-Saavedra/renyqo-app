@@ -522,11 +522,11 @@ describe('Backend API E2E', () => {
       .expect(201);
 
     await agent.post('/api/v1/auth/logout').expect(200);
-    await agent.get('/api/v1/auth/me').expect(403);
+    await agent.get('/api/v1/auth/me').expect(401);
   });
 
   it('returns the Applicant onboarding step from the authenticated HTTP route', async () => {
-    await request(getServer()).get('/api/v1/me/onboarding-state').expect(403);
+    await request(getServer()).get('/api/v1/me/onboarding-state').expect(401);
 
     const applicantAgent = request.agent(getServer());
     await applicantAgent
@@ -580,7 +580,8 @@ describe('Backend API E2E', () => {
       .expect(201);
     const applicant = safeUserBody(applicantResponse);
 
-    const providerResponse = await request(getServer())
+    const providerAgent = request.agent(getServer());
+    const providerResponse = await providerAgent
       .post('/api/v1/auth/register')
       .send(providerPayload())
       .expect(201);
@@ -607,6 +608,15 @@ describe('Backend API E2E', () => {
     await applicantAgent.post('/api/v1/listings/not-a-uuid/apply').expect(400);
     await request(getServer())
       .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(401);
+    await request(getServer())
+      .get(`/api/v1/listings/${listing.id}/eligibility`)
+      .expect(401);
+    await providerAgent
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(403);
+    await providerAgent
+      .get(`/api/v1/listings/${listing.id}/eligibility`)
       .expect(403);
 
     await applicantAgent
@@ -770,7 +780,7 @@ describe('Backend API E2E', () => {
   it('protects applicant application routes and validates withdrawal ids', async () => {
     await request(getServer())
       .get('/api/v1/applicant/applications')
-      .expect(403);
+      .expect(401);
 
     const applicantAgent = request.agent(getServer());
     await applicantAgent
@@ -1160,7 +1170,7 @@ describe('Backend API E2E', () => {
 
     await request(getServer())
       .get(`/api/v1/provider/listings/${listing.id}/images`)
-      .expect(403);
+      .expect(401);
     await applicantAgent
       .get(`/api/v1/provider/listings/${listing.id}/images`)
       .expect(403);
