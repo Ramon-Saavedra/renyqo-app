@@ -38,7 +38,7 @@ enum ObjectType {
 enum PetsPolicy {
   ALLOWED        @map("allowed")
   BY_ARRANGEMENT @map("by_arrangement")
-  PREFER_NOT     @map("prefer_not")
+  NOT_ALLOWED    @map("not_allowed")
 }
 
 enum SmokingPolicy {

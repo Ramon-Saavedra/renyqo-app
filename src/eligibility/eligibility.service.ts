@@ -151,12 +151,23 @@ export class EligibilityService {
           }
         : { suitableForPeopleCount: null };
 
+    const petsCondition: Prisma.ListingWhereInput =
+      profile.hasPets === true
+        ? {
+            OR: [
+              { petsPolicy: { not: PetsPolicy.NOT_ALLOWED } },
+              { petsPolicy: null },
+            ],
+          }
+        : {};
+
     return {
       AND: [
         incomeCondition,
         schufaCondition,
         incomeProofCondition,
         householdCondition,
+        petsCondition,
       ],
     };
   }
@@ -191,6 +202,13 @@ export class EligibilityService {
       } else if (householdSize > listing.suitableForPeopleCount) {
         reasons.push('household_size_exceeds_requirement');
       }
+    }
+
+    if (
+      listing.petsPolicy === PetsPolicy.NOT_ALLOWED &&
+      profile?.hasPets === true
+    ) {
+      reasons.push('pets_not_allowed');
     }
 
     return reasons;
@@ -231,6 +249,13 @@ export class EligibilityService {
       }
     }
 
+    if (
+      criteria.petsPolicy === PetsPolicy.NOT_ALLOWED &&
+      profile?.hasPets === true
+    ) {
+      reasons.push('pets_not_allowed');
+    }
+
     return reasons;
   }
 
@@ -250,10 +275,6 @@ export class EligibilityService {
 
     if (hasPets && listing.petsPolicy === PetsPolicy.BY_ARRANGEMENT) {
       warnings.push('pets_by_arrangement');
-    }
-
-    if (hasPets && listing.petsPolicy === PetsPolicy.PREFER_NOT) {
-      warnings.push('pets_not_preferred');
     }
 
     if (smokes && listing.smokingPolicy === SmokingPolicy.BY_ARRANGEMENT) {
@@ -286,10 +307,6 @@ export class EligibilityService {
 
     if (hasPets && criteria.petsPolicy === PetsPolicy.BY_ARRANGEMENT) {
       warnings.push('pets_by_arrangement');
-    }
-
-    if (hasPets && criteria.petsPolicy === PetsPolicy.PREFER_NOT) {
-      warnings.push('pets_not_preferred');
     }
 
     if (smokes && criteria.smokingPolicy === SmokingPolicy.BY_ARRANGEMENT) {

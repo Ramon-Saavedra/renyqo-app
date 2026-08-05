@@ -139,7 +139,7 @@ Supported query parameters for `GET /api/v1/listings`:
 | `availableBy`    | string  | Filter to listings available on or before a date (YYYY-MM-DD). Interpreted in `Europe/Berlin`. Listings with `availableFrom = null` are excluded. |
 | `sort`           | string  | Sort order: `newest` (default), `price-asc`, `price-desc`, `area-desc` |
 | `onlyMatching`   | boolean | Requires a complete applicant profile. Returns `400` for anonymous/incomplete profiles, `403` for non-applicant sessions. Filters in PostgreSQL. |
-| `petsPolicy`     | string  | Filter by pets policy: `ALLOWED`, `BY_ARRANGEMENT`, `PREFER_NOT` |
+| `petsPolicy`     | string  | Filter by pets policy: `ALLOWED`, `BY_ARRANGEMENT`, `NOT_ALLOWED` |
 | `limit`          | number  | Page size (default 20, max 50)                            |
 | `cursor`         | string  | Opaque cursor for next page                               |
 

@@ -219,10 +219,46 @@ describe('EligibilityService', () => {
     });
   });
 
-  it('returns the remaining preference warnings without blocking', async () => {
+  it('returns pets_not_allowed reason when listing forbids pets', async () => {
     prismaMock.listing.findUnique.mockResolvedValue(
       makeListing({
-        petsPolicy: PetsPolicy.PREFER_NOT,
+        petsPolicy: PetsPolicy.NOT_ALLOWED,
+      }),
+    );
+    prismaMock.applicantProfile.findUnique.mockResolvedValue(
+      makeProfile({ hasPets: true }),
+    );
+
+    await expect(service.check(LISTING_ID, APPLICANT_ID)).resolves.toEqual({
+      canApply: false,
+      reasons: ['pets_not_allowed'],
+      warnings: [],
+      evaluatedAt: expect.any(Date),
+    });
+  });
+
+  it('allows match when listing forbids pets but applicant has none', async () => {
+    prismaMock.listing.findUnique.mockResolvedValue(
+      makeListing({
+        petsPolicy: PetsPolicy.NOT_ALLOWED,
+      }),
+    );
+    prismaMock.applicantProfile.findUnique.mockResolvedValue(
+      makeProfile({ hasPets: false }),
+    );
+
+    await expect(service.check(LISTING_ID, APPLICANT_ID)).resolves.toEqual({
+      canApply: true,
+      reasons: [],
+      warnings: [],
+      evaluatedAt: expect.any(Date),
+    });
+  });
+
+  it('returns warnings for pets and smoking preferences', async () => {
+    prismaMock.listing.findUnique.mockResolvedValue(
+      makeListing({
+        petsPolicy: PetsPolicy.BY_ARRANGEMENT,
         smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
       }),
     );
@@ -236,7 +272,7 @@ describe('EligibilityService', () => {
     await expect(service.check(LISTING_ID, APPLICANT_ID)).resolves.toEqual({
       canApply: true,
       reasons: [],
-      warnings: ['pets_not_preferred', 'smoking_by_arrangement'],
+      warnings: ['pets_by_arrangement', 'smoking_by_arrangement'],
       evaluatedAt: expect.any(Date),
     });
   });
@@ -367,9 +403,9 @@ describe('EligibilityService', () => {
 
       expect(result).toHaveProperty('AND');
       const andArray = (result as { AND: unknown[] }).AND;
-      expect(andArray).toHaveLength(4);
+      expect(andArray).toHaveLength(5);
 
-      const [income, schufa, incomeProof, household] = andArray;
+      const [income, schufa, incomeProof, household, pets] = andArray;
 
       expect(income).toEqual({
         OR: [
@@ -388,6 +424,8 @@ describe('EligibilityService', () => {
           { suitableForPeopleCount: { gte: 3 } },
         ],
       });
+
+      expect(pets).toEqual({});
     });
 
     it('missing income returns null income condition', () => {
@@ -483,7 +521,7 @@ describe('EligibilityService', () => {
 
       const result = service.buildHardMatchWhere(profile);
       const andArray = (result as { AND: unknown[] }).AND;
-      const [income, schufa, incomeProof, household] = andArray;
+      const [income, schufa, incomeProof, household, pets] = andArray;
 
       expect(income).toEqual({
         OR: [
@@ -494,6 +532,43 @@ describe('EligibilityService', () => {
       expect(schufa).toEqual({ schufaRequired: false });
       expect(incomeProof).toEqual({ incomeProofRequired: false });
       expect(household).toEqual({ suitableForPeopleCount: null });
+      expect(pets).toEqual({});
+    });
+
+    it('excludes NOT_ALLOWED for applicants with pets', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: false,
+        incomeProofAvailable: false,
+        adultsCount: null,
+        childrenCount: null,
+        hasPets: true,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = (result as { AND: unknown[] }).AND;
+      const [, , , , pets] = andArray;
+
+      expect(pets).toEqual({
+        OR: [{ petsPolicy: { not: 'NOT_ALLOWED' } }, { petsPolicy: null }],
+      });
+    });
+
+    it('includes empty pets condition for applicants without pets', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: false,
+        incomeProofAvailable: false,
+        adultsCount: null,
+        childrenCount: null,
+        hasPets: false,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = (result as { AND: unknown[] }).AND;
+      const [, , , , pets] = andArray;
+
+      expect(pets).toEqual({});
     });
   });
 

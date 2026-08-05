@@ -4,11 +4,11 @@ export type EligibilityReason =
   | 'schufa_required_but_not_available'
   | 'income_proof_required_but_not_available'
   | 'household_size_not_available'
-  | 'household_size_exceeds_requirement';
+  | 'household_size_exceeds_requirement'
+  | 'pets_not_allowed';
 
 export type EligibilityWarning =
   | 'pets_by_arrangement'
-  | 'pets_not_preferred'
   | 'smoking_by_arrangement'
   | 'smoking_not_preferred';
 

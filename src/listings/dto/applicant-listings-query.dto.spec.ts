@@ -208,7 +208,7 @@ describe('ApplicantListingsQueryDto', () => {
     for (const policy of [
       PetsPolicy.ALLOWED,
       PetsPolicy.BY_ARRANGEMENT,
-      PetsPolicy.PREFER_NOT,
+      PetsPolicy.NOT_ALLOWED,
     ]) {
       const errors = await validateDto({ petsPolicy: policy });
       expect(errors).toHaveLength(0);
