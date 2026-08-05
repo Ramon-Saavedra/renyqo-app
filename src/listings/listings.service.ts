@@ -10,24 +10,34 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import type { UploadApiResponse } from 'cloudinary';
 import type { EnvironmentVariables } from '../config/env.validation';
-import type { Listing } from '../generated/prisma/client';
+import type { ApplicantProfile, Listing } from '../generated/prisma/client';
 import type { Prisma } from '../generated/prisma/client';
 import {
   ApplicationRejectionReason,
   ApplicationStatus,
   ListingStatus,
+  Role,
 } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
+import { EligibilityService } from '../eligibility/eligibility.service';
+import type { SafeUser } from '../users/types/safe-user.type';
 import type { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
 import type { ListingWithImages } from './dto/listing-response.dto';
 import type { UpdateListingDto } from './dto/update-listing.dto';
 import { ApplicantListingDetailDto } from './dto/applicant-listing-detail.dto';
-import { ApplicantListingSummaryDto } from './dto/applicant-listing-summary.dto';
+import {
+  ApplicantListingSummaryDto,
+  type ApplicantListingSummarySource,
+} from './dto/applicant-listing-summary.dto';
 import { ApplicantListingsPageDto } from './dto/applicant-listings-page.dto';
-import type { ApplicantListingsQueryDto } from './dto/applicant-listings-query.dto';
+import type {
+  ApplicantListingsQueryDto,
+  DiscoverySort,
+} from './dto/applicant-listings-query.dto';
+import { ProfileMatch } from './dto/applicant-listing-profile-match.enum';
 import type { RentListingDto } from './dto/rent-listing.dto';
 
 const PUBLISH_REQUIRED_FIELDS = [
@@ -98,12 +108,35 @@ const CURSOR_MAX_LENGTH = 256;
 const UUID_REGEX =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89ab][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 
-const CURSOR_FIELDS: readonly string[] = ['publishedAt', 'id'];
+const DISCOVERY_SORT_FIELDS: Record<DiscoverySort, string> = {
+  newest: 'publishedAt',
+  'price-asc': 'coldRent',
+  'price-desc': 'coldRent',
+  'area-desc': 'livingArea',
+};
 
-interface CursorPayload {
+function toBerlinMidnight(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+
+  return new Date(Date.UTC(year, month - 1, day, 22, 0, 0, 0));
+}
+
+interface NewestCursorPayload {
+  sort: 'newest';
   publishedAt: string;
   id: string;
 }
+
+interface SortedCursorPayload {
+  sort: 'price-asc' | 'price-desc' | 'area-desc';
+  value: number;
+  id: string;
+}
+
+type CursorPayload =
+  | NewestCursorPayload
+  | SortedCursorPayload
+  | { publishedAt: string; id: string };
 
 function isDateString(value: unknown): value is string {
   if (typeof value !== 'string') {
@@ -115,18 +148,18 @@ function isDateString(value: unknown): value is string {
   return !Number.isNaN(date.getTime()) && value === date.toISOString();
 }
 
-function isCursorPayload(value: unknown): value is CursorPayload {
+function isLegacyCursorPayload(value: unknown): value is {
+  publishedAt: string;
+  id: string;
+} {
   if (value === null || typeof value !== 'object') {
     return false;
   }
 
   const record = value as Record<string, unknown>;
-  const keys = Object.keys(record);
+  const keys = Object.keys(record).sort();
 
-  if (
-    keys.length !== CURSOR_FIELDS.length ||
-    !keys.every((key) => CURSOR_FIELDS.includes(key))
-  ) {
+  if (keys.length !== 2 || keys[0] !== 'id' || keys[1] !== 'publishedAt') {
     return false;
   }
 
@@ -141,11 +174,102 @@ function isCursorPayload(value: unknown): value is CursorPayload {
   return true;
 }
 
-function encodeCursor(publishedAt: Date, id: string): string {
-  const payload: CursorPayload = {
-    publishedAt: publishedAt.toISOString(),
-    id,
-  };
+function isNewestCursorPayload(value: unknown): value is NewestCursorPayload {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+
+  if (
+    keys.length !== 3 ||
+    keys[0] !== 'id' ||
+    keys[1] !== 'publishedAt' ||
+    keys[2] !== 'sort'
+  ) {
+    return false;
+  }
+
+  if (record.sort !== 'newest') {
+    return false;
+  }
+
+  if (!isDateString(record.publishedAt)) {
+    return false;
+  }
+
+  if (typeof record.id !== 'string' || !UUID_REGEX.test(record.id)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isSortedCursorPayload(value: unknown): value is SortedCursorPayload {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+
+  if (
+    keys.length !== 3 ||
+    keys[0] !== 'id' ||
+    keys[1] !== 'sort' ||
+    keys[2] !== 'value'
+  ) {
+    return false;
+  }
+
+  if (
+    record.sort !== 'price-asc' &&
+    record.sort !== 'price-desc' &&
+    record.sort !== 'area-desc'
+  ) {
+    return false;
+  }
+
+  if (typeof record.value !== 'number' || !Number.isFinite(record.value)) {
+    return false;
+  }
+
+  if (typeof record.id !== 'string' || !UUID_REGEX.test(record.id)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isCursorPayload(value: unknown): value is CursorPayload {
+  return (
+    isLegacyCursorPayload(value) ||
+    isNewestCursorPayload(value) ||
+    isSortedCursorPayload(value)
+  );
+}
+
+function encodeCursor(
+  sort: DiscoverySort,
+  listing: {
+    publishedAt: Date | null;
+    coldRent: number | null;
+    livingArea: number | null;
+    id: string;
+  },
+): string {
+  const payload: Record<string, unknown> = { sort };
+
+  if (sort === 'newest') {
+    payload.publishedAt = listing.publishedAt!.toISOString();
+  } else if (sort === 'price-asc' || sort === 'price-desc') {
+    payload.value = listing.coldRent;
+  } else {
+    payload.value = listing.livingArea;
+  }
+
+  payload.id = listing.id;
 
   return Buffer.from(JSON.stringify(payload)).toString('base64url');
 }
@@ -169,6 +293,21 @@ function decodeCursor(cursor: string): CursorPayload | null {
   }
 }
 
+function getSortOrder(
+  sort: DiscoverySort,
+): Prisma.ListingOrderByWithRelationInput[] {
+  const isAsc = sort === 'price-asc';
+  const field = DISCOVERY_SORT_FIELDS[sort];
+  const order: Prisma.SortOrder = isAsc ? 'asc' : 'desc';
+
+  const primary: Prisma.ListingOrderByWithRelationInput = {};
+  (primary as Record<string, Prisma.SortOrder>)[field] = order;
+
+  const secondary: Prisma.ListingOrderByWithRelationInput = { id: order };
+
+  return [primary, secondary];
+}
+
 @Injectable()
 export class ListingsService {
   private readonly logger = new Logger(ListingsService.name);
@@ -177,6 +316,7 @@ export class ListingsService {
     private readonly prisma: PrismaService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly config: ConfigService<EnvironmentVariables, true>,
+    private readonly eligibilityService: EligibilityService,
   ) {}
 
   async create(
@@ -382,63 +522,103 @@ export class ListingsService {
     return listings.map((listing) => this.toListingResponse(listing, options));
   }
 
+  async isProfileCompleteForUser(userId: string): Promise<boolean> {
+    const profile = await this.prisma.applicantProfile.findUnique({
+      where: { applicantId: userId },
+    });
+
+    return this.eligibilityService.isProfileComplete(profile);
+  }
+
   async findPublishedForApplicant(
     query: ApplicantListingsQueryDto,
+    applicantUser: SafeUser | null,
+    res?: { setHeader(name: string, value: string): void },
   ): Promise<ApplicantListingsPageDto> {
+    const sort: DiscoverySort = query.sort ?? 'newest';
     const take = Math.min(
       query.limit ?? DISCOVERY_PAGE_SIZE_DEFAULT,
       DISCOVERY_PAGE_SIZE_MAX,
     );
 
-    const where = this.buildDiscoveryWhere(query);
+    const isApplicant =
+      applicantUser?.role === Role.APPLICANT &&
+      applicantUser.status === 'ACTIVE';
 
-    const listings = await this.prisma.listing.findMany({
-      where,
-      orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
-      take: take + 1,
-      select: {
-        id: true,
-        title: true,
-        city: true,
-        zip: true,
-        objectType: true,
-        livingArea: true,
-        rooms: true,
-        bedrooms: true,
-        coldRent: true,
-        additionalCosts: true,
-        deposit: true,
-        depositMonths: true,
-        availableFrom: true,
-        shortDescription: true,
-        images: {
-          select: { secureUrl: true, position: true, isCover: true },
-          orderBy: { position: 'asc' },
-        },
-        publishedAt: true,
+    let profile: ApplicantProfile | null = null;
+
+    if (isApplicant) {
+      profile = await this.prisma.applicantProfile.findUnique({
+        where: { applicantId: applicantUser.id },
+      });
+    }
+
+    const evaluationTimestamp = new Date();
+    const baseWhere = this.buildDiscoveryWhere(query, sort, profile);
+
+    const [total, listings] = await this.prisma.$transaction(
+      async (tx) => {
+        const count = await tx.listing.count({ where: baseWhere });
+        const results = await tx.listing.findMany({
+          where: baseWhere,
+          orderBy: getSortOrder(sort),
+          take: take + 1,
+          select: this.getDiscoverySelect(),
+        });
+        return [count, results];
       },
-    });
+      { isolationLevel: 'RepeatableRead' },
+    );
 
     const hasMore = listings.length > take;
     const items = hasMore ? listings.slice(0, take) : listings;
 
+    const profileMatchForListing = (listing: {
+      minimumHouseholdNetIncome: number | null;
+      schufaRequired: boolean;
+      incomeProofRequired: boolean;
+      suitableForPeopleCount: number | null;
+      petsPolicy: string | null;
+      smokingPolicy: string | null;
+    }): ProfileMatch => {
+      if (!isApplicant) {
+        return ProfileMatch.UNKNOWN;
+      }
+
+      if (!this.eligibilityService.isProfileComplete(profile)) {
+        return ProfileMatch.PROFILE_INCOMPLETE;
+      }
+
+      const result = this.eligibilityService.evaluateCriteria(listing, profile);
+      return result.canApply ? ProfileMatch.MATCH : ProfileMatch.NO_MATCH;
+    };
+
     const summaries = items.map(
-      (listing) => new ApplicantListingSummaryDto(listing),
+      (listing) =>
+        new ApplicantListingSummaryDto(
+          listing as unknown as ApplicantListingSummarySource,
+          profileMatchForListing(listing),
+          evaluationTimestamp,
+        ),
     );
 
     const nextCursor =
       hasMore && items.length > 0
-        ? encodeCursor(
-            items[items.length - 1].publishedAt!,
-            items[items.length - 1].id,
-          )
+        ? encodeCursor(sort, items[items.length - 1])
         : null;
 
-    return new ApplicantListingsPageDto(summaries, nextCursor);
+    if (res) {
+      res.setHeader('Vary', 'Cookie');
+      res.setHeader('Cache-Control', 'private, no-store, must-revalidate');
+    }
+
+    return new ApplicantListingsPageDto(summaries, nextCursor, total);
   }
 
   async findPublishedDetailForApplicant(
     id: string,
+    applicantUser: SafeUser | null,
+    res?: { setHeader(name: string, value: string): void },
   ): Promise<ApplicantListingDetailDto> {
     const listing = await this.prisma.listing.findFirst({
       where: {
@@ -451,6 +631,7 @@ export class ListingsService {
         title: true,
         city: true,
         zip: true,
+        district: true,
         street: true,
         showExactAddress: true,
         objectType: true,
@@ -481,58 +662,168 @@ export class ListingsService {
       throw new NotFoundException('Listing not found');
     }
 
-    return new ApplicantListingDetailDto(listing);
+    const evaluationTimestamp = new Date();
+
+    const isApplicant =
+      applicantUser?.role === Role.APPLICANT &&
+      applicantUser.status === 'ACTIVE';
+
+    let profileMatch = ProfileMatch.UNKNOWN;
+
+    if (isApplicant) {
+      const profile = await this.prisma.applicantProfile.findUnique({
+        where: { applicantId: applicantUser.id },
+      });
+
+      if (!this.eligibilityService.isProfileComplete(profile)) {
+        profileMatch = ProfileMatch.PROFILE_INCOMPLETE;
+      } else {
+        const result = this.eligibilityService.evaluateCriteria(
+          listing,
+          profile,
+        );
+        profileMatch = result.canApply
+          ? ProfileMatch.MATCH
+          : ProfileMatch.NO_MATCH;
+      }
+    }
+
+    if (res) {
+      res.setHeader('Vary', 'Cookie');
+      res.setHeader('Cache-Control', 'private, no-store, must-revalidate');
+    }
+
+    return new ApplicantListingDetailDto(
+      listing,
+      profileMatch,
+      evaluationTimestamp,
+    );
+  }
+
+  private getDiscoverySelect(): Prisma.ListingSelect {
+    return {
+      id: true,
+      title: true,
+      city: true,
+      zip: true,
+      district: true,
+      objectType: true,
+      livingArea: true,
+      rooms: true,
+      bedrooms: true,
+      coldRent: true,
+      additionalCosts: true,
+      deposit: true,
+      depositMonths: true,
+      availableFrom: true,
+      shortDescription: true,
+      minimumHouseholdNetIncome: true,
+      schufaRequired: true,
+      incomeProofRequired: true,
+      suitableForPeopleCount: true,
+      petsPolicy: true,
+      smokingPolicy: true,
+      publishedAt: true,
+      images: {
+        select: { secureUrl: true, position: true, isCover: true },
+        orderBy: { position: 'asc' },
+      },
+    };
   }
 
   private buildDiscoveryWhere(
     query: ApplicantListingsQueryDto,
+    sort: DiscoverySort,
+    profile: ApplicantProfile | null,
   ): Prisma.ListingWhereInput {
-    const where: Prisma.ListingWhereInput = {
-      status: ListingStatus.PUBLISHED,
-      publishedAt: { not: null },
-    };
+    const conditions: Prisma.ListingWhereInput[] = [
+      { status: ListingStatus.PUBLISHED },
+      { publishedAt: { not: null } },
+    ];
 
     if (query.city) {
-      where.city = { equals: query.city, mode: 'insensitive' };
+      conditions.push({
+        city: { equals: query.city, mode: 'insensitive' },
+      });
     }
 
     if (query.minRent !== undefined || query.maxRent !== undefined) {
-      where.coldRent = {};
+      const coldRent: Prisma.FloatNullableFilter<'Listing'> = {};
 
       if (query.minRent !== undefined) {
-        where.coldRent.gte = query.minRent;
+        coldRent.gte = query.minRent;
       }
 
       if (query.maxRent !== undefined) {
-        where.coldRent.lte = query.maxRent;
+        coldRent.lte = query.maxRent;
       }
+
+      conditions.push({ coldRent });
     }
 
     if (query.minRooms !== undefined || query.maxRooms !== undefined) {
-      where.rooms = {};
+      const rooms: Prisma.FloatNullableFilter<'Listing'> = {};
 
       if (query.minRooms !== undefined) {
-        where.rooms.gte = query.minRooms;
+        rooms.gte = query.minRooms;
       }
 
       if (query.maxRooms !== undefined) {
-        where.rooms.lte = query.maxRooms;
+        rooms.lte = query.maxRooms;
       }
+
+      conditions.push({ rooms });
     }
 
     if (
       query.minLivingArea !== undefined ||
       query.maxLivingArea !== undefined
     ) {
-      where.livingArea = {};
+      const livingArea: Prisma.FloatNullableFilter<'Listing'> = {};
 
       if (query.minLivingArea !== undefined) {
-        where.livingArea.gte = query.minLivingArea;
+        livingArea.gte = query.minLivingArea;
       }
 
       if (query.maxLivingArea !== undefined) {
-        where.livingArea.lte = query.maxLivingArea;
+        livingArea.lte = query.maxLivingArea;
       }
+
+      conditions.push({ livingArea });
+    }
+
+    if (query.availableBy) {
+      const berlinMidnight = toBerlinMidnight(query.availableBy);
+
+      conditions.push({
+        availableFrom: { not: null },
+      });
+      conditions.push({
+        availableFrom: { lt: berlinMidnight },
+      });
+    }
+
+    if (query.query) {
+      const pattern = `%${query.query}%`;
+
+      conditions.push({
+        OR: [
+          { title: { contains: pattern, mode: 'insensitive' } },
+          { city: { contains: pattern, mode: 'insensitive' } },
+          { zip: { contains: pattern, mode: 'insensitive' } },
+          { district: { contains: pattern, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    if (query.petsPolicy) {
+      conditions.push({
+        petsPolicy: query.petsPolicy,
+      });
+    }
+
+    if (query.onlyMatching && profile) {
+      conditions.push(this.eligibilityService.buildHardMatchWhere(profile));
     }
 
     if (query.cursor) {
@@ -542,16 +833,75 @@ export class ListingsService {
         throw new BadRequestException('Invalid cursor');
       }
 
-      where.OR = [
-        { publishedAt: { lt: new Date(cursor.publishedAt) } },
-        {
-          publishedAt: new Date(cursor.publishedAt),
-          id: { lt: cursor.id },
-        },
-      ];
+      const cursorSort: DiscoverySort =
+        'sort' in cursor ? cursor.sort : 'newest';
+
+      if (cursorSort !== sort) {
+        throw new BadRequestException(
+          'Cursor sort does not match requested sort',
+        );
+      }
+
+      if (cursorSort === 'newest') {
+        const cursorWithPublishedAt =
+          'publishedAt' in cursor && typeof cursor.publishedAt === 'string'
+            ? cursor
+            : null;
+
+        if (!cursorWithPublishedAt) {
+          throw new BadRequestException('Invalid cursor');
+        }
+
+        const newestCursor = cursorWithPublishedAt;
+
+        conditions.push({
+          OR: [
+            {
+              publishedAt: { lt: new Date(newestCursor.publishedAt) },
+            },
+            {
+              publishedAt: new Date(newestCursor.publishedAt),
+              id: { lt: newestCursor.id },
+            },
+          ],
+        });
+      } else {
+        const cursorWithValue =
+          'value' in cursor && typeof cursor.value === 'number' ? cursor : null;
+
+        if (!cursorWithValue) {
+          throw new BadRequestException('Invalid cursor');
+        }
+
+        const sortedCursor = cursorWithValue;
+        const field = DISCOVERY_SORT_FIELDS[cursorSort];
+        const isAsc = cursorSort === 'price-asc';
+
+        if (isAsc) {
+          conditions.push({
+            OR: [
+              { [field]: { gt: sortedCursor.value } },
+              {
+                [field]: sortedCursor.value,
+                id: { gt: sortedCursor.id },
+              },
+            ],
+          });
+        } else {
+          conditions.push({
+            OR: [
+              { [field]: { lt: sortedCursor.value } },
+              {
+                [field]: sortedCursor.value,
+                id: { lt: sortedCursor.id },
+              },
+            ],
+          });
+        }
+      }
     }
 
-    return where;
+    return conditions.length === 1 ? conditions[0] : { AND: conditions };
   }
 
   private async createWithImage(
@@ -621,6 +971,7 @@ export class ListingsService {
       city: dto.city,
       zip: dto.zip,
       street: dto.street,
+      district: dto.district,
       showExactAddress: dto.showExactAddress,
       livingArea: dto.livingArea,
       rooms: dto.rooms,

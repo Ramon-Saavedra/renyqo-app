@@ -10,6 +10,7 @@ export class ListingResponseDto {
   readonly city!: Listing['city'];
   readonly zip!: Listing['zip'];
   readonly street!: Listing['street'];
+  readonly district!: Listing['district'];
   readonly country!: Listing['country'];
   readonly showExactAddress!: Listing['showExactAddress'];
   readonly objectType!: Listing['objectType'];

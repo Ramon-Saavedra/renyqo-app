@@ -16,6 +16,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   city: 'Berlin',
   zip: '10115',
   street: null,
+  district: null,
   country: 'DE',
   showExactAddress: false,
   objectType: ObjectType.APARTMENT,

@@ -88,6 +88,10 @@ export class CreateListingDto {
   street?: string;
 
   @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
   @Transform(toOptionalBoolean)
   @IsBoolean()
   showExactAddress?: boolean;

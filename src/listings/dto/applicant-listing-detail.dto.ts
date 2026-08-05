@@ -1,5 +1,6 @@
 import type { Listing, ListingImage } from '../../generated/prisma/client';
 import { ApplicantListingImageDto } from './applicant-listing-image.dto';
+import { ProfileMatch } from './applicant-listing-profile-match.enum';
 
 type ApplicantListingDetailSource = Pick<
   Listing,
@@ -7,6 +8,7 @@ type ApplicantListingDetailSource = Pick<
   | 'title'
   | 'city'
   | 'zip'
+  | 'district'
   | 'street'
   | 'showExactAddress'
   | 'objectType'
@@ -35,6 +37,7 @@ export class ApplicantListingDetailDto {
   readonly title!: string | null;
   readonly city!: string | null;
   readonly zip!: string | null;
+  readonly district!: string | null;
   readonly street!: string | null;
   readonly objectType!: string | null;
   readonly livingArea!: number | null;
@@ -47,7 +50,9 @@ export class ApplicantListingDetailDto {
   readonly availableFrom!: Date | null;
   readonly shortDescription!: string | null;
   readonly publishedAt!: Date | null;
+  readonly isNew!: boolean;
   readonly images!: ApplicantListingImageDto[];
+  readonly profileMatch!: ProfileMatch;
   readonly requirements!: {
     readonly minimumHouseholdNetIncome: number | null;
     readonly schufaRequired: boolean;
@@ -57,11 +62,16 @@ export class ApplicantListingDetailDto {
     readonly smokingPolicy: string | null;
   };
 
-  constructor(listing: ApplicantListingDetailSource) {
+  constructor(
+    listing: ApplicantListingDetailSource,
+    profileMatch: ProfileMatch,
+    evaluationTimestamp: Date,
+  ) {
     this.id = listing.id;
     this.title = listing.title;
     this.city = listing.city;
     this.zip = listing.zip;
+    this.district = listing.district;
     this.street = listing.showExactAddress ? listing.street : null;
     this.objectType = listing.objectType;
     this.livingArea = listing.livingArea;
@@ -74,9 +84,11 @@ export class ApplicantListingDetailDto {
     this.availableFrom = listing.availableFrom;
     this.shortDescription = listing.shortDescription;
     this.publishedAt = listing.publishedAt;
+    this.isNew = this.computeIsNew(listing.publishedAt, evaluationTimestamp);
     this.images = listing.images.map(
       (image) => new ApplicantListingImageDto(image),
     );
+    this.profileMatch = profileMatch;
     this.requirements = {
       minimumHouseholdNetIncome: listing.minimumHouseholdNetIncome,
       schufaRequired: listing.schufaRequired,
@@ -85,5 +97,17 @@ export class ApplicantListingDetailDto {
       petsPolicy: listing.petsPolicy,
       smokingPolicy: listing.smokingPolicy,
     };
+  }
+
+  private computeIsNew(publishedAt: Date | null, now: Date): boolean {
+    if (!publishedAt) {
+      return false;
+    }
+
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    return (
+      publishedAt.getTime() <= now.getTime() &&
+      now.getTime() < publishedAt.getTime() + sevenDaysMs
+    );
   }
 }

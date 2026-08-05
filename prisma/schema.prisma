@@ -116,6 +116,7 @@ model Listing {
   city             String?
   zip              String?
   street           String?
+  district         String?
   country          String  @default("DE")
   showExactAddress Boolean @default(false) @map("show_exact_address")
 
@@ -151,6 +152,9 @@ model Listing {
   images       ListingImage[]
 
   @@index([status, publishedAt, id])
+  @@index([status, coldRent, id])
+  @@index([status, livingArea, id])
+  @@index([status, availableFrom])
   @@map("listings")
 }
 
