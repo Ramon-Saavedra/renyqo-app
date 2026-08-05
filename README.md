@@ -117,37 +117,50 @@ Password recovery uses Amazon SES. `POST /api/v1/auth/forgot-password` always re
 
 These public endpoints return only PUBLISHED listings with a publication date. Registration is not required.
 
-| Method | Path                   | Auth   | Description                                                   |
-| ------ | ---------------------- | ------ | ------------------------------------------------------------- |
-| `GET`  | `/api/v1/listings`     | Public | Browse published listings with filters and cursor pagination |
-| `GET`  | `/api/v1/listings/:id` | Public | Get public detail for a published listing                    |
+| Method | Path                   | Auth          | Description                                                   |
+| ------ | ---------------------- | ------------- | ------------------------------------------------------------- |
+| `GET`  | `/api/v1/listings`     | Public (opt.) | Browse published listings with filters, sorting and cursor pagination |
+| `GET`  | `/api/v1/listings/:id` | Public (opt.) | Get public detail for a published listing                    |
+
+Authentication is optional. When a valid applicant session is present, each listing includes a `profileMatch` value calculated from the applicant profile and listing requirements. Anonymous requests and providers receive `profileMatch: "UNKNOWN"`.
 
 Supported query parameters for `GET /api/v1/listings`:
 
-| Parameter        | Type   | Description                    |
-| ---------------- | ------ | ------------------------------ |
-| `city`           | string | Filter by city (case-insensitive) |
-| `minRent`        | number | Minimum cold rent              |
-| `maxRent`        | number | Maximum cold rent              |
-| `minRooms`       | number | Minimum rooms                  |
-| `maxRooms`       | number | Maximum rooms                  |
-| `minLivingArea`  | number | Minimum living area            |
-| `maxLivingArea`  | number | Maximum living area            |
-| `limit`          | number | Page size (default 20, max 50) |
-| `cursor`         | string | Opaque cursor for next page    |
+| Parameter        | Type    | Description                                               |
+| ---------------- | ------- | --------------------------------------------------------- |
+| `query`          | string  | Free-text search over title, city, ZIP and district (ILIKE) |
+| `city`           | string  | Filter by city (case-insensitive)                         |
+| `minRent`        | number  | Minimum cold rent                                         |
+| `maxRent`        | number  | Maximum cold rent                                         |
+| `minRooms`       | number  | Minimum rooms                                             |
+| `maxRooms`       | number  | Maximum rooms                                             |
+| `minLivingArea`  | number  | Minimum living area                                       |
+| `maxLivingArea`  | number  | Maximum living area                                       |
+| `availableBy`    | string  | Filter to listings available on or before a date (YYYY-MM-DD). Interpreted in `Europe/Berlin`. Listings with `availableFrom = null` are excluded. |
+| `sort`           | string  | Sort order: `newest` (default), `price-asc`, `price-desc`, `area-desc` |
+| `onlyMatching`   | boolean | Requires a complete applicant profile. Returns `400` for anonymous/incomplete profiles, `403` for non-applicant sessions. Filters in PostgreSQL. |
+| `petsPolicy`     | string  | Filter by pets policy: `ALLOWED`, `BY_ARRANGEMENT`, `PREFER_NOT` |
+| `limit`          | number  | Page size (default 20, max 50)                            |
+| `cursor`         | string  | Opaque cursor for next page                               |
 
-Cursor pagination is based on `publishedAt DESC, id DESC`. The response includes `nextCursor` for the next page or `null` when there are no more results.
+The response includes `total`, the exact count of filtered results before pagination. Total and page are calculated in a consistent Repeatable Read transaction.
 
-Collection response:
+Cursors are sort-specific: a cursor generated for one sort returns `400` when used with a different sort. Each cursor contains the active sort value plus `id` as a deterministic tie-breaker.
 
+Three new indexes support the additional sort modes:
+`(status, coldRent, id)`, `(status, livingArea, id)` and `(status, availableFrom)`.
+
+Collection response items include:
+
+- `district`, `publishedAt`, `isNew` (true within the first 7 days after `publishedAt`, computed server-side per-request)
+- `petsPolicy` at the item level
+- `profileMatch`: `MATCH`, `NO_MATCH`, `PROFILE_INCOMPLETE` or `UNKNOWN`
 - narrow public summary with `coverImage` containing only `secureUrl`
-- never exposes `providerId`, `showExactAddress`, Cloudinary `publicId` or internal eligibility criteria
+- never exposes `providerId`, `showExactAddress`, Cloudinary `publicId`, applicant profile values, eligibility reasons or warnings
 
-Detail response:
+Detail response includes `district`, `isNew` and `profileMatch` at the top level. `requirements.petsPolicy` is preserved in the nested requirements object and is not duplicated at the top level.
 
-- includes public images, rent, costs, rooms, living area, availability, description and public application requirements
-- returns street and house number only when `showExactAddress` is `true`
-- never exposes `providerId`, `showExactAddress` flag, Cloudinary `publicId` or eligibility results
+Personalized responses (any request carrying a valid applicant session) use `Vary: Cookie` and `Cache-Control: private, no-store, must-revalidate` to prevent shared-cache leakage of applicant-specific data.
 
 DRAFT, PAUSED, ARCHIVED and RENTED listings are not accessible through these endpoints.
 

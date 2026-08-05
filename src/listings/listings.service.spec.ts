@@ -16,10 +16,14 @@ import {
   ListingStatus,
   ObjectType,
   PetsPolicy,
+  Role,
   SmokingPolicy,
 } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { EligibilityService } from '../eligibility/eligibility.service';
+import type { ApplicantProfile } from '../generated/prisma/client';
+import type { SafeUser } from '../users/types/safe-user.type';
 import { ListingsService } from './listings.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
 
@@ -63,6 +67,11 @@ type PrismaTransactionRunner = (
 
 type PrismaMock = ListingsTransactionMock & {
   $transaction: jest.MockedFunction<PrismaTransactionRunner>;
+  applicantProfile: {
+    findUnique: jest.MockedFunction<
+      (args?: unknown) => Promise<ApplicantProfile | null>
+    >;
+  };
 };
 
 type ListingCreateArgs = {
@@ -107,6 +116,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   city: 'Berlin',
   zip: '10115',
   street: null,
+  district: null,
   country: 'DE',
   showExactAddress: false,
   objectType: ObjectType.APARTMENT,
@@ -171,6 +181,7 @@ type DiscoveryListing = {
   title: string | null;
   city: string | null;
   zip: string | null;
+  district: string | null;
   objectType: string | null;
   livingArea: number | null;
   rooms: number | null;
@@ -182,10 +193,17 @@ type DiscoveryListing = {
   availableFrom: Date | null;
   shortDescription: string | null;
   publishedAt: Date | null;
+  minimumHouseholdNetIncome: number | null;
+  schufaRequired: boolean;
+  incomeProofRequired: boolean;
+  suitableForPeopleCount: number | null;
+  petsPolicy: string | null;
+  smokingPolicy: string | null;
   images: { secureUrl: string; position: number; isCover: boolean }[];
 };
 
 type DiscoveryDetail = DiscoveryListing & {
+  district: string | null;
   street: string | null;
   showExactAddress: boolean;
   minimumHouseholdNetIncome: number | null;
@@ -203,6 +221,7 @@ const makeDiscoveryListing = (
   title: 'Test Listing',
   city: 'Berlin',
   zip: '10115',
+  district: null,
   objectType: 'apartment',
   livingArea: 62.5,
   rooms: 2,
@@ -214,6 +233,12 @@ const makeDiscoveryListing = (
   availableFrom: new Date('2026-09-01'),
   shortDescription: 'Nice place',
   publishedAt: new Date('2026-07-01'),
+  minimumHouseholdNetIncome: null,
+  schufaRequired: false,
+  incomeProofRequired: false,
+  suitableForPeopleCount: null,
+  petsPolicy: null,
+  smokingPolicy: null,
   images: [
     { secureUrl: 'https://example.com/cover.jpg', position: 0, isCover: true },
   ],
@@ -224,6 +249,7 @@ const makeDiscoveryDetail = (
   overrides: Partial<DiscoveryDetail> = {},
 ): DiscoveryDetail => ({
   ...makeDiscoveryListing(),
+  district: 'Mitte',
   street: 'Hauptstrasse 1',
   showExactAddress: false,
   minimumHouseholdNetIncome: 3000,
@@ -239,6 +265,7 @@ describe('ListingsService', () => {
   let service: ListingsService;
   let prismaMock: PrismaMock;
   let cloudinaryMock: jest.Mocked<CloudinaryService>;
+  let eligibilityMock: jest.Mocked<EligibilityService>;
 
   beforeEach(async () => {
     const transactionRunner: PrismaTransactionRunner = async (fn) =>
@@ -253,7 +280,9 @@ describe('ListingsService', () => {
             (args?: unknown) => Promise<ListingWithImagesRecord | null>
           >(),
         update: jest.fn<(args?: unknown) => Promise<Listing>>(),
-        count: jest.fn<(args?: unknown) => Promise<number>>(),
+        count: jest
+          .fn<(args?: unknown) => Promise<number>>()
+          .mockResolvedValue(0),
       },
       listingImage: {
         create: jest.fn<(args?: unknown) => Promise<ListingImage>>(),
@@ -266,6 +295,11 @@ describe('ListingsService', () => {
       },
       $queryRaw: jest.fn<(query: unknown) => Promise<unknown>>(),
       $transaction: jest.fn<PrismaTransactionRunner>(transactionRunner),
+      applicantProfile: {
+        findUnique: jest
+          .fn<(args?: unknown) => Promise<ApplicantProfile | null>>()
+          .mockResolvedValue(null),
+      },
     };
 
     cloudinaryMock = {
@@ -285,10 +319,24 @@ describe('ListingsService', () => {
           provide: ConfigService,
           useValue: { get: jest.fn(() => CLOUDINARY_FOLDER) },
         },
+        {
+          provide: EligibilityService,
+          useValue: {
+            isProfileComplete: jest.fn().mockReturnValue(false),
+            evaluateCriteria: jest.fn().mockReturnValue({
+              canApply: false,
+              reasons: [],
+              warnings: [],
+              evaluatedAt: new Date(),
+            }),
+            buildHardMatchWhere: jest.fn().mockReturnValue({}),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<ListingsService>(ListingsService);
+    eligibilityMock = module.get(EligibilityService);
   });
 
   describe('create', () => {
@@ -1118,16 +1166,21 @@ describe('ListingsService', () => {
     it('returns only PUBLISHED listings with publishedAt', async () => {
       prismaMock.listing.findMany.mockResolvedValue([]);
 
-      const result = await service.findPublishedForApplicant({});
+      const result = await service.findPublishedForApplicant({}, null);
 
       expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            status: ListingStatus.PUBLISHED,
-            publishedAt: { not: null },
-          }),
+          where: {
+            AND: expect.arrayContaining([
+              { status: ListingStatus.PUBLISHED },
+              { publishedAt: { not: null } },
+            ]),
+          },
         }),
       );
+      expect(result).toHaveProperty('items');
+      expect(result).toHaveProperty('nextCursor');
+      expect(result).toHaveProperty('total');
       expect(result.items).toHaveLength(0);
     });
 
@@ -1136,7 +1189,7 @@ describe('ListingsService', () => {
         discoveryListing,
       ] as never);
 
-      const result = await service.findPublishedForApplicant({});
+      const result = await service.findPublishedForApplicant({}, null);
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].id).toBe(LISTING_ID);
@@ -1152,7 +1205,7 @@ describe('ListingsService', () => {
       });
       prismaMock.listing.findMany.mockResolvedValue([noImage] as never);
 
-      const result = await service.findPublishedForApplicant({});
+      const result = await service.findPublishedForApplicant({}, null);
 
       expect(result.items[0].coverImage).toBeNull();
     });
@@ -1160,13 +1213,17 @@ describe('ListingsService', () => {
     it('applies city filter', async () => {
       prismaMock.listing.findMany.mockResolvedValue([]);
 
-      await service.findPublishedForApplicant({ city: 'Berlin' });
+      await service.findPublishedForApplicant({ city: 'Berlin' }, null);
 
       expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            city: { equals: 'Berlin', mode: 'insensitive' },
-          }),
+          where: {
+            AND: expect.arrayContaining([
+              { status: ListingStatus.PUBLISHED },
+              { publishedAt: { not: null } },
+              { city: { equals: 'Berlin', mode: 'insensitive' } },
+            ]),
+          },
         }),
       );
     });
@@ -1174,13 +1231,20 @@ describe('ListingsService', () => {
     it('applies rent range filter', async () => {
       prismaMock.listing.findMany.mockResolvedValue([]);
 
-      await service.findPublishedForApplicant({ minRent: 500, maxRent: 2000 });
+      await service.findPublishedForApplicant(
+        { minRent: 500, maxRent: 2000 },
+        null,
+      );
 
       expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            coldRent: { gte: 500, lte: 2000 },
-          }),
+          where: {
+            AND: expect.arrayContaining([
+              { status: ListingStatus.PUBLISHED },
+              { publishedAt: { not: null } },
+              { coldRent: { gte: 500, lte: 2000 } },
+            ]),
+          },
         }),
       );
     });
@@ -1188,16 +1252,23 @@ describe('ListingsService', () => {
     it('applies rooms range filter', async () => {
       prismaMock.listing.findMany.mockResolvedValue([]);
 
-      await service.findPublishedForApplicant({
-        minRooms: 1,
-        maxRooms: 4,
-      });
+      await service.findPublishedForApplicant(
+        {
+          minRooms: 1,
+          maxRooms: 4,
+        },
+        null,
+      );
 
       expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            rooms: { gte: 1, lte: 4 },
-          }),
+          where: {
+            AND: expect.arrayContaining([
+              { status: ListingStatus.PUBLISHED },
+              { publishedAt: { not: null } },
+              { rooms: { gte: 1, lte: 4 } },
+            ]),
+          },
         }),
       );
     });
@@ -1205,16 +1276,23 @@ describe('ListingsService', () => {
     it('applies living area range filter', async () => {
       prismaMock.listing.findMany.mockResolvedValue([]);
 
-      await service.findPublishedForApplicant({
-        minLivingArea: 20,
-        maxLivingArea: 100,
-      });
+      await service.findPublishedForApplicant(
+        {
+          minLivingArea: 20,
+          maxLivingArea: 100,
+        },
+        null,
+      );
 
       expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            livingArea: { gte: 20, lte: 100 },
-          }),
+          where: {
+            AND: expect.arrayContaining([
+              { status: ListingStatus.PUBLISHED },
+              { publishedAt: { not: null } },
+              { livingArea: { gte: 20, lte: 100 } },
+            ]),
+          },
         }),
       );
     });
@@ -1224,7 +1302,10 @@ describe('ListingsService', () => {
         discoveryListing,
       ] as never);
 
-      const result = await service.findPublishedForApplicant({ limit: 50 });
+      const result = await service.findPublishedForApplicant(
+        { limit: 50 },
+        null,
+      );
 
       expect(result.nextCursor).toBeNull();
     });
@@ -1238,7 +1319,10 @@ describe('ListingsService', () => {
       );
       prismaMock.listing.findMany.mockResolvedValue(pageItems as never);
 
-      const result = await service.findPublishedForApplicant({ limit: 5 });
+      const result = await service.findPublishedForApplicant(
+        { limit: 5 },
+        null,
+      );
 
       expect(result.items).toHaveLength(5);
       expect(result.nextCursor).not.toBeNull();
@@ -1247,14 +1331,14 @@ describe('ListingsService', () => {
 
     it('rejects invalid cursor', async () => {
       await expect(
-        service.findPublishedForApplicant({ cursor: 'not-valid-base64' }),
+        service.findPublishedForApplicant({ cursor: 'not-valid-base64' }, null),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('returns empty page for no results', async () => {
       prismaMock.listing.findMany.mockResolvedValue([]);
 
-      const result = await service.findPublishedForApplicant({});
+      const result = await service.findPublishedForApplicant({}, null);
 
       expect(result.items).toHaveLength(0);
       expect(result.nextCursor).toBeNull();
@@ -1265,13 +1349,290 @@ describe('ListingsService', () => {
         discoveryListing,
       ] as never);
 
-      const result = await service.findPublishedForApplicant({});
+      const result = await service.findPublishedForApplicant({}, null);
 
       const summary = serialized(result.items[0]);
       expect(summary).not.toHaveProperty('providerId');
       expect(summary).not.toHaveProperty('minimumHouseholdNetIncome');
       expect(summary).not.toHaveProperty('schufaRequired');
       expect(summary).not.toHaveProperty('showExactAddress');
+    });
+
+    it('applicant with incomplete profile returns PROFILE_INCOMPLETE', async () => {
+      const applicantUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.APPLICANT,
+        providerType: null,
+        companyName: null,
+        emailVerified: false,
+        status: 'ACTIVE' as const,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+      prismaMock.applicantProfile.findUnique.mockResolvedValue({
+        id: '00000000-0000-4000-8000-000000000004',
+      } as ApplicantProfile);
+      eligibilityMock.isProfileComplete.mockReturnValue(false);
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({}, applicantUser);
+
+      expect(result.items[0].profileMatch).toBe('PROFILE_INCOMPLETE');
+    });
+
+    it('applicant with complete profile + eligible returns MATCH', async () => {
+      const applicantUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.APPLICANT,
+        providerType: null,
+        companyName: null,
+        emailVerified: false,
+        status: 'ACTIVE' as const,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+      prismaMock.applicantProfile.findUnique.mockResolvedValue({
+        id: '00000000-0000-4000-8000-000000000004',
+      } as ApplicantProfile);
+      eligibilityMock.isProfileComplete.mockReturnValue(true);
+      eligibilityMock.evaluateCriteria.mockReturnValue({
+        canApply: true,
+        reasons: [],
+        warnings: [],
+        evaluatedAt: new Date(),
+      });
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({}, applicantUser);
+
+      expect(result.items[0].profileMatch).toBe('MATCH');
+    });
+
+    it('applicant with complete profile + not eligible returns NO_MATCH', async () => {
+      const applicantUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.APPLICANT,
+        providerType: null,
+        companyName: null,
+        emailVerified: false,
+        status: 'ACTIVE' as const,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+      prismaMock.applicantProfile.findUnique.mockResolvedValue({
+        id: '00000000-0000-4000-8000-000000000004',
+      } as ApplicantProfile);
+      eligibilityMock.isProfileComplete.mockReturnValue(true);
+      eligibilityMock.evaluateCriteria.mockReturnValue({
+        canApply: false,
+        reasons: [],
+        warnings: [],
+        evaluatedAt: new Date(),
+      });
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({}, applicantUser);
+
+      expect(result.items[0].profileMatch).toBe('NO_MATCH');
+    });
+
+    it('null user returns UNKNOWN', async () => {
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({}, null);
+
+      expect(result.items[0].profileMatch).toBe('UNKNOWN');
+    });
+
+    it('provider user returns UNKNOWN', async () => {
+      const providerUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.PROVIDER,
+        providerType: 'private',
+        companyName: null,
+        emailVerified: false,
+        status: 'ACTIVE' as const,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({}, providerUser);
+
+      expect(result.items[0].profileMatch).toBe('UNKNOWN');
+    });
+
+    it('non-ACTIVE applicant returns UNKNOWN without profile lookup', async () => {
+      const suspendedUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.APPLICANT,
+        providerType: null,
+        companyName: null,
+        emailVerified: false,
+        status: 'SUSPENDED' as const,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+      prismaMock.listing.count.mockResolvedValue(1);
+      prismaMock.listing.findMany.mockResolvedValue([
+        discoveryListing,
+      ] as never);
+
+      const result = await service.findPublishedForApplicant({}, suspendedUser);
+
+      expect(result.items[0].profileMatch).toBe('UNKNOWN');
+      expect(prismaMock.applicantProfile.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('sets cache-control headers on the response', async () => {
+      const res = { setHeader: jest.fn() };
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      await service.findPublishedForApplicant({}, null, res);
+
+      expect(res.setHeader).toHaveBeenCalledWith('Vary', 'Cookie');
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Cache-Control',
+        'private, no-store, must-revalidate',
+      );
+    });
+
+    it('throws BadRequestException when cursor sort does not match', async () => {
+      const payload = {
+        sort: 'newest',
+        publishedAt: '2026-07-01T00:00:00.000Z',
+        id: '00000000-0000-4000-8000-000000000001',
+      };
+      const cursor = Buffer.from(JSON.stringify(payload)).toString('base64url');
+
+      await expect(
+        service.findPublishedForApplicant({ cursor, sort: 'price-asc' }, null),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('applies free-text query search across title, city, zip and district', async () => {
+      prismaMock.listing.count.mockResolvedValue(0);
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      await service.findPublishedForApplicant({ query: 'Berlin' }, null);
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            AND: expect.arrayContaining([
+              { status: ListingStatus.PUBLISHED },
+              { publishedAt: { not: null } },
+              {
+                OR: [
+                  {
+                    title: {
+                      contains: '%Berlin%',
+                      mode: 'insensitive',
+                    },
+                  },
+                  {
+                    city: {
+                      contains: '%Berlin%',
+                      mode: 'insensitive',
+                    },
+                  },
+                  {
+                    zip: {
+                      contains: '%Berlin%',
+                      mode: 'insensitive',
+                    },
+                  },
+                  {
+                    district: {
+                      contains: '%Berlin%',
+                      mode: 'insensitive',
+                    },
+                  },
+                ],
+              },
+            ]),
+          },
+        }),
+      );
+    });
+
+    it('applies availableBy filter with Berlin midnight', async () => {
+      prismaMock.listing.count.mockResolvedValue(0);
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      await service.findPublishedForApplicant(
+        { availableBy: '2026-08-01' },
+        null,
+      );
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            AND: expect.arrayContaining([
+              { status: ListingStatus.PUBLISHED },
+              { publishedAt: { not: null } },
+              { availableFrom: { not: null } },
+              {
+                availableFrom: {
+                  lt: new Date('2026-08-01T22:00:00.000Z'),
+                },
+              },
+            ]),
+          },
+        }),
+      );
+    });
+
+    it('applies petsPolicy filter', async () => {
+      prismaMock.listing.count.mockResolvedValue(0);
+      prismaMock.listing.findMany.mockResolvedValue([]);
+
+      await service.findPublishedForApplicant(
+        { petsPolicy: PetsPolicy.ALLOWED },
+        null,
+      );
+
+      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            AND: expect.arrayContaining([
+              { status: ListingStatus.PUBLISHED },
+              { publishedAt: { not: null } },
+              { petsPolicy: PetsPolicy.ALLOWED },
+            ]),
+          },
+        }),
+      );
     });
   });
 
@@ -1281,7 +1642,10 @@ describe('ListingsService', () => {
     it('returns a published listing detail', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
 
-      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+      const result = await service.findPublishedDetailForApplicant(
+        LISTING_ID,
+        null,
+      );
 
       expect(result.id).toBe(LISTING_ID);
       expect(result.title).toBe('Test Listing');
@@ -1295,7 +1659,10 @@ describe('ListingsService', () => {
         }) as never,
       );
 
-      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+      const result = await service.findPublishedDetailForApplicant(
+        LISTING_ID,
+        null,
+      );
 
       expect(result.street).toBeNull();
     });
@@ -1308,7 +1675,10 @@ describe('ListingsService', () => {
         }) as never,
       );
 
-      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+      const result = await service.findPublishedDetailForApplicant(
+        LISTING_ID,
+        null,
+      );
 
       expect(result.street).toBe('Hauptstrasse 1');
     });
@@ -1316,7 +1686,10 @@ describe('ListingsService', () => {
     it('includes public application requirements', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
 
-      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+      const result = await service.findPublishedDetailForApplicant(
+        LISTING_ID,
+        null,
+      );
 
       expect(result.requirements.minimumHouseholdNetIncome).toBe(3000);
       expect(result.requirements.schufaRequired).toBe(true);
@@ -1328,14 +1701,17 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.findPublishedDetailForApplicant(LISTING_ID),
+        service.findPublishedDetailForApplicant(LISTING_ID, null),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('never exposes showExactAddress flag', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
 
-      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+      const result = await service.findPublishedDetailForApplicant(
+        LISTING_ID,
+        null,
+      );
 
       const serialized_ = serialized(result);
       expect(serialized_).not.toHaveProperty('showExactAddress');
@@ -1344,7 +1720,10 @@ describe('ListingsService', () => {
     it('never exposes providerId', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
 
-      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+      const result = await service.findPublishedDetailForApplicant(
+        LISTING_ID,
+        null,
+      );
 
       const serialized_ = serialized(result);
       expect(serialized_).not.toHaveProperty('providerId');
@@ -1353,7 +1732,10 @@ describe('ListingsService', () => {
     it('includes images without publicId', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail as never);
 
-      const result = await service.findPublishedDetailForApplicant(LISTING_ID);
+      const result = await service.findPublishedDetailForApplicant(
+        LISTING_ID,
+        null,
+      );
 
       const serialized_ = serialized(result);
       const images = serialized_.images as Record<string, unknown>[];
@@ -1361,6 +1743,110 @@ describe('ListingsService', () => {
         expect(image).not.toHaveProperty('publicId');
         expect(image.secureUrl).toBeDefined();
       }
+    });
+
+    describe('profile match', () => {
+      const applicantUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.APPLICANT,
+        providerType: null,
+        companyName: null,
+        emailVerified: false,
+        status: 'ACTIVE' as const,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+
+      const providerUser: SafeUser = {
+        ...applicantUser,
+        id: '00000000-0000-4000-8000-000000000098',
+        role: Role.PROVIDER,
+        providerType: 'private',
+      };
+
+      it('null user returns UNKNOWN', async () => {
+        prismaMock.listing.findFirst.mockResolvedValue(
+          discoveryDetail as never,
+        );
+
+        const result = await service.findPublishedDetailForApplicant(
+          LISTING_ID,
+          null,
+        );
+
+        expect(result.profileMatch).toBe('UNKNOWN');
+      });
+
+      it('provider user returns UNKNOWN', async () => {
+        prismaMock.listing.findFirst.mockResolvedValue(
+          discoveryDetail as never,
+        );
+
+        const result = await service.findPublishedDetailForApplicant(
+          LISTING_ID,
+          providerUser,
+        );
+
+        expect(result.profileMatch).toBe('UNKNOWN');
+      });
+
+      it('applicant with incomplete profile returns PROFILE_INCOMPLETE', async () => {
+        prismaMock.listing.findFirst.mockResolvedValue(
+          discoveryDetail as never,
+        );
+        eligibilityMock.isProfileComplete.mockReturnValue(false);
+
+        const result = await service.findPublishedDetailForApplicant(
+          LISTING_ID,
+          applicantUser,
+        );
+
+        expect(result.profileMatch).toBe('PROFILE_INCOMPLETE');
+      });
+
+      it('applicant with complete profile returns MATCH when eligible', async () => {
+        prismaMock.listing.findFirst.mockResolvedValue(
+          discoveryDetail as never,
+        );
+        eligibilityMock.isProfileComplete.mockReturnValue(true);
+        eligibilityMock.evaluateCriteria.mockReturnValue({
+          canApply: true,
+          reasons: [],
+          warnings: [],
+          evaluatedAt: new Date(),
+        });
+
+        const result = await service.findPublishedDetailForApplicant(
+          LISTING_ID,
+          applicantUser,
+        );
+
+        expect(result.profileMatch).toBe('MATCH');
+      });
+
+      it('applicant with complete profile returns NO_MATCH when ineligible', async () => {
+        prismaMock.listing.findFirst.mockResolvedValue(
+          discoveryDetail as never,
+        );
+        eligibilityMock.isProfileComplete.mockReturnValue(true);
+        eligibilityMock.evaluateCriteria.mockReturnValue({
+          canApply: false,
+          reasons: [],
+          warnings: [],
+          evaluatedAt: new Date(),
+        });
+
+        const result = await service.findPublishedDetailForApplicant(
+          LISTING_ID,
+          applicantUser,
+        );
+
+        expect(result.profileMatch).toBe('NO_MATCH');
+      });
     });
   });
 });

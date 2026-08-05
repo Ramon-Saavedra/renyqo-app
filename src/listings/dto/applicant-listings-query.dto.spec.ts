@@ -2,6 +2,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { describe, expect, it } from '@jest/globals';
 
+import { PetsPolicy } from '../../generated/prisma/enums';
 import { ApplicantListingsQueryDto } from './applicant-listings-query.dto';
 
 const validateDto = (payload: Record<string, unknown>) =>
@@ -139,5 +140,78 @@ describe('ApplicantListingsQueryDto', () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.property).toBe('cursor');
+  });
+
+  it('accepts valid query string up to 200 characters', async () => {
+    const errors = await validateDto({
+      query: 'modern apartment with balcony',
+    });
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects query longer than 200 characters', async () => {
+    const longQuery = 'x'.repeat(201);
+
+    const errors = await validateDto({ query: longQuery });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.property).toBe('query');
+  });
+
+  it('accepts valid availableBy date in YYYY-MM-DD format', async () => {
+    const errors = await validateDto({ availableBy: '2026-09-01' });
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects invalid availableBy date format', async () => {
+    const errors = await validateDto({ availableBy: '01-09-2026' });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.property).toBe('availableBy');
+  });
+
+  it('accepts valid sort enum values', async () => {
+    for (const sort of ['newest', 'price-asc', 'price-desc', 'area-desc']) {
+      const errors = await validateDto({ sort });
+      expect(errors).toHaveLength(0);
+    }
+  });
+
+  it('rejects invalid sort value', async () => {
+    const errors = await validateDto({ sort: 'invalid-sort' });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.property).toBe('sort');
+  });
+
+  it('converts onlyMatching string "true" to boolean true', async () => {
+    const instance = plainToInstance(ApplicantListingsQueryDto, {
+      onlyMatching: 'true',
+    });
+
+    await expect(validate(instance)).resolves.toHaveLength(0);
+    expect(instance.onlyMatching).toBe(true);
+  });
+
+  it('keeps onlyMatching string "false" as boolean false', async () => {
+    const instance = plainToInstance(ApplicantListingsQueryDto, {
+      onlyMatching: 'false',
+    });
+
+    await expect(validate(instance)).resolves.toHaveLength(0);
+    expect(instance.onlyMatching).toBe(false);
+  });
+
+  it('accepts valid petsPolicy enum values', async () => {
+    for (const policy of [
+      PetsPolicy.ALLOWED,
+      PetsPolicy.BY_ARRANGEMENT,
+      PetsPolicy.PREFER_NOT,
+    ]) {
+      const errors = await validateDto({ petsPolicy: policy });
+      expect(errors).toHaveLength(0);
+    }
   });
 });

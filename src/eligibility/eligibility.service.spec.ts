@@ -27,6 +27,7 @@ const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   city: 'Berlin',
   zip: '10115',
   street: 'Main Street 1',
+  district: null,
   country: 'DE',
   showExactAddress: false,
   objectType: ObjectType.APARTMENT,
@@ -349,5 +350,349 @@ describe('EligibilityService', () => {
     await expect(service.check(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
       UnprocessableEntityException,
     );
+  });
+
+  describe('buildHardMatchWhere', () => {
+    it('full profile returns AND with 4 conditions', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: true,
+        incomeProofAvailable: true,
+        adultsCount: 2,
+        childrenCount: 1,
+        peopleCount: 3,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+
+      expect(result).toHaveProperty('AND');
+      const andArray = (result as { AND: unknown[] }).AND;
+      expect(andArray).toHaveLength(4);
+
+      const [income, schufa, incomeProof, household] = andArray;
+
+      expect(income).toEqual({
+        OR: [
+          { minimumHouseholdNetIncome: null },
+          { minimumHouseholdNetIncome: { lte: 3000 } },
+        ],
+      });
+
+      expect(schufa).toEqual({});
+
+      expect(incomeProof).toEqual({});
+
+      expect(household).toEqual({
+        OR: [
+          { suitableForPeopleCount: null },
+          { suitableForPeopleCount: { gte: 3 } },
+        ],
+      });
+    });
+
+    it('missing income returns null income condition', () => {
+      const profile = makeProfile({
+        householdNetIncome: null,
+        schufaAvailable: true,
+        incomeProofAvailable: true,
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = (result as { AND: unknown[] }).AND;
+      const [income] = andArray;
+
+      expect(income).toEqual({ minimumHouseholdNetIncome: null });
+    });
+
+    it('missing schufa returns schufaRequired: false', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: false,
+        incomeProofAvailable: true,
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = (result as { AND: unknown[] }).AND;
+      const [, schufa] = andArray;
+
+      expect(schufa).toEqual({ schufaRequired: false });
+    });
+
+    it('null schufa returns schufaRequired: false', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: null,
+        incomeProofAvailable: true,
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = (result as { AND: unknown[] }).AND;
+      const [, schufa] = andArray;
+
+      expect(schufa).toEqual({ schufaRequired: false });
+    });
+
+    it('missing income proof returns incomeProofRequired: false', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: true,
+        incomeProofAvailable: false,
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = (result as { AND: unknown[] }).AND;
+      const [, , incomeProof] = andArray;
+
+      expect(incomeProof).toEqual({ incomeProofRequired: false });
+    });
+
+    it('missing household counts returns null household condition', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: true,
+        incomeProofAvailable: true,
+        adultsCount: null,
+        childrenCount: null,
+        peopleCount: null,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = (result as { AND: unknown[] }).AND;
+      const [, , , household] = andArray;
+
+      expect(household).toEqual({ suitableForPeopleCount: null });
+    });
+
+    it('partial profile returns correct conditions', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: null,
+        incomeProofAvailable: null,
+        adultsCount: null,
+        childrenCount: null,
+        peopleCount: null,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = (result as { AND: unknown[] }).AND;
+      const [income, schufa, incomeProof, household] = andArray;
+
+      expect(income).toEqual({
+        OR: [
+          { minimumHouseholdNetIncome: null },
+          { minimumHouseholdNetIncome: { lte: 3000 } },
+        ],
+      });
+      expect(schufa).toEqual({ schufaRequired: false });
+      expect(incomeProof).toEqual({ incomeProofRequired: false });
+      expect(household).toEqual({ suitableForPeopleCount: null });
+    });
+  });
+
+  describe('isProfileComplete', () => {
+    it('null profile returns false', () => {
+      expect(service.isProfileComplete(null)).toBe(false);
+    });
+
+    it('all 7 fields non-null returns true', () => {
+      expect(service.isProfileComplete(makeProfile())).toBe(true);
+    });
+
+    it('householdNetIncome null returns false', () => {
+      const profile = makeProfile({ householdNetIncome: null });
+      expect(service.isProfileComplete(profile)).toBe(false);
+    });
+
+    it('schufaAvailable null returns false', () => {
+      const profile = makeProfile({ schufaAvailable: null });
+      expect(service.isProfileComplete(profile)).toBe(false);
+    });
+
+    it('incomeProofAvailable null returns false', () => {
+      const profile = makeProfile({ incomeProofAvailable: null });
+      expect(service.isProfileComplete(profile)).toBe(false);
+    });
+
+    it('adultsCount null returns false', () => {
+      const profile = makeProfile({ adultsCount: null });
+      expect(service.isProfileComplete(profile)).toBe(false);
+    });
+
+    it('childrenCount null returns false', () => {
+      const profile = makeProfile({ childrenCount: null });
+      expect(service.isProfileComplete(profile)).toBe(false);
+    });
+
+    it('hasPets null returns false', () => {
+      const profile = makeProfile({ hasPets: null });
+      expect(service.isProfileComplete(profile)).toBe(false);
+    });
+
+    it('smokingStatus null returns false', () => {
+      const profile = makeProfile({ smokingStatus: null });
+      expect(service.isProfileComplete(profile)).toBe(false);
+    });
+
+    it('petsNote null but all others non-null returns true', () => {
+      const profile = makeProfile({ petsNote: null });
+      expect(service.isProfileComplete(profile)).toBe(true);
+    });
+  });
+
+  describe('evaluateCriteria', () => {
+    it('no requirements returns canApply true with empty reasons and warnings', () => {
+      const profile = makeProfile();
+      const criteria = {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: false,
+        incomeProofRequired: false,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      };
+
+      const result = service.evaluateCriteria(criteria, profile);
+
+      expect(result.canApply).toBe(true);
+      expect(result.reasons).toEqual([]);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('income below requirement returns canApply false', () => {
+      const profile = makeProfile({ householdNetIncome: 2000 });
+      const criteria = {
+        minimumHouseholdNetIncome: 3000,
+        schufaRequired: false,
+        incomeProofRequired: false,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      };
+
+      const result = service.evaluateCriteria(criteria, profile);
+
+      expect(result.canApply).toBe(false);
+      expect(result.reasons).toContain('household_income_below_requirement');
+    });
+
+    it('schufa required but not available returns canApply false', () => {
+      const profile = makeProfile({ schufaAvailable: false });
+      const criteria = {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: true,
+        incomeProofRequired: false,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      };
+
+      const result = service.evaluateCriteria(criteria, profile);
+
+      expect(result.canApply).toBe(false);
+      expect(result.reasons).toContain('schufa_required_but_not_available');
+    });
+
+    it('income proof required but not available returns canApply false', () => {
+      const profile = makeProfile({ incomeProofAvailable: false });
+      const criteria = {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: false,
+        incomeProofRequired: true,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      };
+
+      const result = service.evaluateCriteria(criteria, profile);
+
+      expect(result.canApply).toBe(false);
+      expect(result.reasons).toContain(
+        'income_proof_required_but_not_available',
+      );
+    });
+
+    it('household size exceeds returns canApply false', () => {
+      const profile = makeProfile({ adultsCount: 3, childrenCount: 1 });
+      const criteria = {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: false,
+        incomeProofRequired: false,
+        suitableForPeopleCount: 2,
+        petsPolicy: null,
+        smokingPolicy: null,
+      };
+
+      const result = service.evaluateCriteria(criteria, profile);
+
+      expect(result.canApply).toBe(false);
+      expect(result.reasons).toContain('household_size_exceeds_requirement');
+    });
+
+    it('all met returns canApply true', () => {
+      const profile = makeProfile({
+        householdNetIncome: 4000,
+        schufaAvailable: true,
+        incomeProofAvailable: true,
+        adultsCount: 1,
+        childrenCount: 0,
+      });
+      const criteria = {
+        minimumHouseholdNetIncome: 3000,
+        schufaRequired: true,
+        incomeProofRequired: true,
+        suitableForPeopleCount: 2,
+        petsPolicy: 'ALLOWED' as const,
+        smokingPolicy: 'NON_SMOKERS_PREFERRED' as const,
+      };
+
+      const result = service.evaluateCriteria(criteria, profile);
+
+      expect(result.canApply).toBe(true);
+      expect(result.reasons).toEqual([]);
+    });
+
+    it('pets by arrangement warning returns canApply true with warning', () => {
+      const profile = makeProfile({ hasPets: true });
+      const criteria = {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: false,
+        incomeProofRequired: false,
+        suitableForPeopleCount: null,
+        petsPolicy: 'BY_ARRANGEMENT' as const,
+        smokingPolicy: null,
+      };
+
+      const result = service.evaluateCriteria(criteria, profile);
+
+      expect(result.canApply).toBe(true);
+      expect(result.warnings).toContain('pets_by_arrangement');
+    });
+
+    it('smoking not preferred warning returns canApply true with warning', () => {
+      const profile = makeProfile({
+        smokingStatus: SmokingStatus.SMOKER,
+      });
+      const criteria = {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: false,
+        incomeProofRequired: false,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: 'NON_SMOKERS_PREFERRED' as const,
+      };
+
+      const result = service.evaluateCriteria(criteria, profile);
+
+      expect(result.canApply).toBe(true);
+      expect(result.warnings).toContain('smoking_not_preferred');
+    });
   });
 });

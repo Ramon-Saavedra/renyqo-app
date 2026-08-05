@@ -20,3 +20,13 @@ export const CurrentUser = createParamDecorator(
     return sanitizeSafeUser(request.user);
   },
 );
+
+export const CurrentUserOptional = createParamDecorator(
+  (_data: unknown, ctx: ExecutionContext): SafeUser | null => {
+    const request = ctx.switchToHttp().getRequest<Request>();
+    if (!isSafeUser(request.user)) {
+      return null;
+    }
+    return sanitizeSafeUser(request.user);
+  },
+);

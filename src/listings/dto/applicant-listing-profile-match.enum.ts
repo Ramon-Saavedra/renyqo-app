@@ -1,0 +1,6 @@
+export enum ProfileMatch {
+  MATCH = 'MATCH',
+  NO_MATCH = 'NO_MATCH',
+  PROFILE_INCOMPLETE = 'PROFILE_INCOMPLETE',
+  UNKNOWN = 'UNKNOWN',
+}
