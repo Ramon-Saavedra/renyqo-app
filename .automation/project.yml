@@ -11,6 +11,9 @@ repository:
   name: 'renyqo-app'
   default_branch: 'main'
 
+notion:
+  project_root_page_id: "34790db4-90e9-80ae-8ad4-fa2ea9834ba4"
+
 instructions:
   root: 'AGENTS.md'
   nested: []
