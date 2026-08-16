@@ -34,12 +34,14 @@ module -> controller -> dto -> service -> repository/database
 ```
 
 Before coding:
+
 1. Read the Notion page “Backend API Roadmap — Renyqo”.
 2. Check the official documentation for the technology you are about to use.
 3. Do not rely on assumptions or outdated patterns.
 4. Tell me exactly which files you will create or modify before making changes.
 
 Core stack:
+
 - NestJS
 - TypeScript strict
 - REST API first
@@ -47,6 +49,7 @@ Core stack:
 - API prefix: /api/v1
 
 Engineering rules:
+
 - No any.
 - No fake implementations.
 - No placeholder logic that looks real.
@@ -59,6 +62,7 @@ Engineering rules:
 - No public admin registration.
 
 Code quality:
+
 - Use DTO classes for every input.
 - Use validation properly.
 - Use services for business logic.
@@ -68,6 +72,7 @@ Code quality:
 - If a required script, dependency, config or decision is missing, stop and ask.
 
 Security:
+
 - Follow secure backend practices.
 - Validate all inputs.
 - Hash passwords securely.
@@ -80,6 +85,7 @@ Security:
 - Always consider ownership checks for resources like listings.
 
 Current frontend routes:
+
 - /register/account-type
 - /register/create-account?role=applicant
 - /register/create-account?role=provider
@@ -88,6 +94,7 @@ Current backend phase:
 Phase 7 — Simple Eligibility, built on the completed backend base, authentication, listings, applications and applicant profile modules.
 
 First endpoints:
+
 - GET /api/v1/health
 - POST /api/v1/auth/register
 - POST /api/v1/auth/login
@@ -95,9 +102,10 @@ First endpoints:
 - GET /api/v1/auth/me
 
 Do not build yet:
+
 - chat
 - OAuth Google/Apple
-- document upload
+- Do not implement persistent document upload or document storage unless explicitly approved by the current task or roadmap. Temporary in-memory file processing for approved product features is allowed.
 - real SCHUFA integration
 - admin dashboard
 - payment logic
@@ -108,6 +116,7 @@ Work in small steps.
 One module at a time.
 Explain what you are doing before coding.
 After coding, tell me:
+
 - what changed
 - which files changed
 - how to test it
@@ -136,6 +145,7 @@ The main agent must:
 Review subagents are read-only by default and report findings to the main agent. Do not automatically run broad commands, tests, migrations, formatting, commits, pushes or pull-request actions without explicit approval.
 
 Definition of done:
+
 - TypeScript strict passes
 - lint passes
 - tests pass where applicable

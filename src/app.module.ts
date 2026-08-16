@@ -11,6 +11,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { EligibilityModule } from './eligibility/eligibility.module';
 import { MeModule } from './me/me.module';
+import { ListingAssistanceModule } from './listing-assistance/listing-assistance.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { MeModule } from './me/me.module';
     AuthModule,
     MeModule,
     ListingsModule,
+    ListingAssistanceModule,
     ListingImagesModule,
     DashboardModule,
     ApplicationsModule,
