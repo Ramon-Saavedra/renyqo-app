@@ -14,6 +14,7 @@ import {
 } from '../src/generated/prisma/enums';
 import { ApplicationsService } from '../src/applications/applications.service';
 import { CloudinaryService } from '../src/listing-images/cloudinary.service';
+import { OpenAiProvider } from '../src/listing-assistance/providers/openai.provider';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   assertSafeE2EDatabaseUrl,
@@ -73,6 +74,20 @@ class CloudinaryServiceStub {
   }
 }
 
+class OpenAiProviderStub {
+  extractFromText(): Promise<Record<string, unknown>> {
+    return Promise.resolve({ city: 'Berlin', coldRent: 1200 });
+  }
+
+  extractFromPdf(): Promise<Record<string, unknown>> {
+    return Promise.resolve({ city: 'Hamburg' });
+  }
+
+  transcribeAudio(): Promise<string> {
+    return Promise.resolve('Apartment in Cologne');
+  }
+}
+
 const sessionSecret = 'e2e-session-secret-at-least-thirty-two-characters';
 const userPassword = 'StrongPass123';
 
@@ -106,6 +121,13 @@ function useE2eEnvironment(): void {
   }
   process.env['SESSION_SECRET'] = sessionSecret;
   process.env['FRONTEND_URL'] = 'http://localhost:3001';
+  process.env['OPENAI_API_KEY'] = 'e2e-openai-api-key';
+  process.env['OPENAI_LISTING_MODEL'] = 'e2e-listing-model';
+  process.env['OPENAI_TRANSCRIPTION_MODEL'] = 'e2e-transcription-model';
+  process.env['AI_RATE_LIMIT_WINDOW_MS'] = '60000';
+  process.env['AI_TEXT_RATE_LIMIT'] = '10';
+  process.env['AI_PDF_RATE_LIMIT'] = '3';
+  process.env['AI_AUDIO_RATE_LIMIT'] = '3';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -350,6 +372,8 @@ describe('Backend API E2E', () => {
     })
       .overrideProvider(CloudinaryService)
       .useValue(cloudinaryStub)
+      .overrideProvider(OpenAiProvider)
+      .useValue(new OpenAiProviderStub())
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -1587,6 +1611,122 @@ describe('Backend API E2E', () => {
         where: { listingId: listing.id },
       });
       expect(count).toBe(0);
+    });
+  });
+
+  describe('AI listing extraction', () => {
+    async function providerAgent() {
+      const agent = request.agent(getServer());
+      await agent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201);
+      return agent;
+    }
+
+    it('requires an authenticated Provider and never writes listings', async () => {
+      await request(getServer())
+        .post('/api/v1/provider/listings/ai-extractions/text')
+        .send({ text: 'Apartment in Berlin' })
+        .expect(401);
+
+      const applicant = request.agent(getServer());
+      await applicant
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+      await applicant
+        .post('/api/v1/provider/listings/ai-extractions/text')
+        .send({ text: 'Apartment in Berlin' })
+        .expect(403);
+
+      const provider = await providerAgent();
+      const before = await getPrisma().listing.count();
+      const response = await provider
+        .post('/api/v1/provider/listings/ai-extractions/text')
+        .send({ text: 'Apartment in Berlin' })
+        .expect(201);
+      const body = responseBody(response);
+      expect(body['values']).toMatchObject({ city: 'Berlin', coldRent: 1200 });
+      expect(Array.isArray(body['missingFields'])).toBe(true);
+      expect(Array.isArray(body['inconsistencies'])).toBe(true);
+      expect(Array.isArray(body['warnings'])).toBe(true);
+      expect(await getPrisma().listing.count()).toBe(before);
+    });
+
+    it('returns complete PDF and audio prefills without writing listings', async () => {
+      const provider = await providerAgent();
+      await provider
+        .post('/api/v1/provider/listings/ai-extractions/text')
+        .send({ text: '' })
+        .expect(400);
+      const before = await getPrisma().listing.count();
+      const pdfBody = responseBody(
+        await provider
+          .post('/api/v1/provider/listings/ai-extractions/pdf')
+          .attach('file', Buffer.from('%PDF-1.7'), {
+            filename: 'listing.pdf',
+            contentType: 'application/pdf',
+          })
+          .expect(201),
+      );
+      expect(pdfBody['values']).toEqual({ city: 'Hamburg' });
+      expect(Array.isArray(pdfBody['missingFields'])).toBe(true);
+      expect(pdfBody['inconsistencies']).toEqual([]);
+      expect(pdfBody['warnings']).toEqual([]);
+      expect(await getPrisma().listing.count()).toBe(before);
+      await provider
+        .post('/api/v1/provider/listings/ai-extractions/audio')
+        .attach('file', Buffer.from('not audio'), {
+          filename: 'forged.webm',
+          contentType: 'audio/webm',
+        })
+        .expect(400);
+      const audioBody = responseBody(
+        await provider
+          .post('/api/v1/provider/listings/ai-extractions/audio')
+          .attach('file', Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x82]), {
+            filename: 'listing.webm',
+            contentType: 'audio/webm',
+          })
+          .expect(201),
+      );
+      expect(audioBody['values']).toEqual({ city: 'Berlin', coldRent: 1200 });
+      expect(Array.isArray(audioBody['missingFields'])).toBe(true);
+      expect(audioBody['inconsistencies']).toEqual([]);
+      expect(audioBody['warnings']).toEqual([]);
+      expect(await getPrisma().listing.count()).toBe(before);
+    });
+
+    it('rejects an oversized PDF before extraction', async () => {
+      const provider = await providerAgent();
+      await provider
+        .post('/api/v1/provider/listings/ai-extractions/pdf')
+        .attach('file', Buffer.alloc(10 * 1024 * 1024 + 1, 0), {
+          filename: 'large.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(413);
+    });
+
+    it('enforces independent text quotas per Provider', async () => {
+      const providerA = await providerAgent();
+      for (let index = 0; index < 10; index += 1) {
+        await providerA
+          .post('/api/v1/provider/listings/ai-extractions/text')
+          .send({ text: `Listing ${index}` })
+          .expect(201);
+      }
+      await providerA
+        .post('/api/v1/provider/listings/ai-extractions/text')
+        .send({ text: 'Over quota' })
+        .expect(429);
+
+      const providerB = await providerAgent();
+      await providerB
+        .post('/api/v1/provider/listings/ai-extractions/text')
+        .send({ text: 'Independent quota' })
+        .expect(201);
     });
   });
 });

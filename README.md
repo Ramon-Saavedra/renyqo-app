@@ -59,19 +59,26 @@ npm run start:dev
 
 ## Environment Variables
 
-| Variable                | Required           | Description                                   |
-| ----------------------- | ------------------ | --------------------------------------------- |
-| `NODE_ENV`              | yes                | `development`, `production`, or `test`        |
-| `PORT`                  | yes                | HTTP port from `1` to `65535`                 |
-| `DATABASE_URL`          | yes                | PostgreSQL connection string                  |
-| `SESSION_SECRET`        | yes                | Session signing secret, minimum 32 characters |
-| `FRONTEND_URL`          | no                 | Allowed frontend origin for CORS              |
-| `AWS_REGION`            | production/email   | AWS region used by Amazon SES                 |
-| `SES_FROM_EMAIL`        | production/email   | Verified SES sender email address             |
-| `CLOUDINARY_CLOUD_NAME` | production/uploads | Cloudinary cloud name                         |
-| `CLOUDINARY_API_KEY`    | production/uploads | Cloudinary API key                            |
-| `CLOUDINARY_API_SECRET` | production/uploads | Cloudinary API secret                         |
-| `CLOUDINARY_FOLDER`     | no                 | Root Cloudinary folder, defaults to `renyqo`  |
+| Variable                     | Required           | Description                                      |
+| ---------------------------- | ------------------ | ------------------------------------------------ |
+| `NODE_ENV`                   | yes                | `development`, `production`, or `test`           |
+| `PORT`                       | yes                | HTTP port from `1` to `65535`                    |
+| `DATABASE_URL`               | yes                | PostgreSQL connection string                     |
+| `SESSION_SECRET`             | yes                | Session signing secret, minimum 32 characters    |
+| `FRONTEND_URL`               | no                 | Allowed frontend origin for CORS                 |
+| `AWS_REGION`                 | production/email   | AWS region used by Amazon SES                    |
+| `SES_FROM_EMAIL`             | production/email   | Verified SES sender email address                |
+| `CLOUDINARY_CLOUD_NAME`      | production/uploads | Cloudinary cloud name                            |
+| `CLOUDINARY_API_KEY`         | production/uploads | Cloudinary API key                               |
+| `CLOUDINARY_API_SECRET`      | production/uploads | Cloudinary API secret                            |
+| `CLOUDINARY_FOLDER`          | no                 | Root Cloudinary folder, defaults to `renyqo`     |
+| `OPENAI_API_KEY`             | yes                | OpenAI API key for listing assistance            |
+| `OPENAI_LISTING_MODEL`       | yes                | OpenAI model used for structured extraction      |
+| `OPENAI_TRANSCRIPTION_MODEL` | yes                | OpenAI model used for audio transcription        |
+| `AI_RATE_LIMIT_WINDOW_MS`    | yes                | Per-process AI rate-limit window in milliseconds |
+| `AI_TEXT_RATE_LIMIT`         | yes                | Provider text extractions allowed per window     |
+| `AI_PDF_RATE_LIMIT`          | yes                | Provider PDF extractions allowed per window      |
+| `AI_AUDIO_RATE_LIMIT`        | yes                | Provider audio extractions allowed per window    |
 
 ## API
 
@@ -117,31 +124,31 @@ Password recovery uses Amazon SES. `POST /api/v1/auth/forgot-password` always re
 
 These public endpoints return only PUBLISHED listings with a publication date. Registration is not required.
 
-| Method | Path                   | Auth          | Description                                                   |
-| ------ | ---------------------- | ------------- | ------------------------------------------------------------- |
+| Method | Path                   | Auth          | Description                                                           |
+| ------ | ---------------------- | ------------- | --------------------------------------------------------------------- |
 | `GET`  | `/api/v1/listings`     | Public (opt.) | Browse published listings with filters, sorting and cursor pagination |
-| `GET`  | `/api/v1/listings/:id` | Public (opt.) | Get public detail for a published listing                    |
+| `GET`  | `/api/v1/listings/:id` | Public (opt.) | Get public detail for a published listing                             |
 
 Authentication is optional. When a valid applicant session is present, each listing includes a `profileMatch` value calculated from the applicant profile and listing requirements. Anonymous requests and providers receive `profileMatch: "UNKNOWN"`.
 
 Supported query parameters for `GET /api/v1/listings`:
 
-| Parameter        | Type    | Description                                               |
-| ---------------- | ------- | --------------------------------------------------------- |
-| `query`          | string  | Free-text search over title, city, ZIP and district (ILIKE) |
-| `city`           | string  | Filter by city (case-insensitive)                         |
-| `minRent`        | number  | Minimum cold rent                                         |
-| `maxRent`        | number  | Maximum cold rent                                         |
-| `minRooms`       | number  | Minimum rooms                                             |
-| `maxRooms`       | number  | Maximum rooms                                             |
-| `minLivingArea`  | number  | Minimum living area                                       |
-| `maxLivingArea`  | number  | Maximum living area                                       |
-| `availableBy`    | string  | Filter to listings available on or before a date (YYYY-MM-DD). Interpreted in `Europe/Berlin`. Listings with `availableFrom = null` are excluded. |
-| `sort`           | string  | Sort order: `newest` (default), `price-asc`, `price-desc`, `area-desc` |
-| `onlyMatching`   | boolean | Requires a complete applicant profile. Returns `400` for anonymous/incomplete profiles, `403` for non-applicant sessions. Filters in PostgreSQL. |
-| `petsPolicy`     | string  | Filter by pets policy: `ALLOWED`, `BY_ARRANGEMENT`, `NOT_ALLOWED` |
-| `limit`          | number  | Page size (default 20, max 50)                            |
-| `cursor`         | string  | Opaque cursor for next page                               |
+| Parameter       | Type    | Description                                                                                                                                       |
+| --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`         | string  | Free-text search over title, city, ZIP and district (ILIKE)                                                                                       |
+| `city`          | string  | Filter by city (case-insensitive)                                                                                                                 |
+| `minRent`       | number  | Minimum cold rent                                                                                                                                 |
+| `maxRent`       | number  | Maximum cold rent                                                                                                                                 |
+| `minRooms`      | number  | Minimum rooms                                                                                                                                     |
+| `maxRooms`      | number  | Maximum rooms                                                                                                                                     |
+| `minLivingArea` | number  | Minimum living area                                                                                                                               |
+| `maxLivingArea` | number  | Maximum living area                                                                                                                               |
+| `availableBy`   | string  | Filter to listings available on or before a date (YYYY-MM-DD). Interpreted in `Europe/Berlin`. Listings with `availableFrom = null` are excluded. |
+| `sort`          | string  | Sort order: `newest` (default), `price-asc`, `price-desc`, `area-desc`                                                                            |
+| `onlyMatching`  | boolean | Requires a complete applicant profile. Returns `400` for anonymous/incomplete profiles, `403` for non-applicant sessions. Filters in PostgreSQL.  |
+| `petsPolicy`    | string  | Filter by pets policy: `ALLOWED`, `BY_ARRANGEMENT`, `NOT_ALLOWED`                                                                                 |
+| `limit`         | number  | Page size (default 20, max 50)                                                                                                                    |
+| `cursor`        | string  | Opaque cursor for next page                                                                                                                       |
 
 The response includes `total`, the exact count of filtered results before pagination. Total and page are calculated in a consistent Repeatable Read transaction.
 
@@ -181,6 +188,35 @@ Provider endpoints require an authenticated provider session and enforce listing
 | `GET`   | `/api/v1/provider/listings/:id/active-applications` | Provider | Get active applications for one listing                 |
 
 Required fields to publish: `title`, `street`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`.
+
+### AI-Assisted Listing Extraction
+
+Authenticated Providers can request suggestions from free text, a PDF/Exposé, or an audio recording. These endpoints only return a partial, backend-validated prefill; they never create, update, or publish a listing.
+
+| Method | Path                                             | Auth     | Description                                      |
+| ------ | ------------------------------------------------ | -------- | ------------------------------------------------ |
+| `POST` | `/api/v1/provider/listings/ai-extractions/text`  | Provider | Extract listing fields from JSON text            |
+| `POST` | `/api/v1/provider/listings/ai-extractions/pdf`   | Provider | Extract listing fields from a PDF upload         |
+| `POST` | `/api/v1/provider/listings/ai-extractions/audio` | Provider | Transcribe and extract listing fields from audio |
+
+`text` accepts `{ "text": "..." }` with a maximum length of 20,000 characters. PDF and audio use `multipart/form-data` with the `file` field. PDF is limited to 10 MB; audio is limited to 25 MB and accepts `audio/mpeg`, `audio/mp4`, `audio/x-m4a`, `audio/wav`, and `audio/webm`.
+
+All responses use this shape:
+
+```json
+{
+  "values": { "city": "Berlin", "coldRent": 1200 },
+  "missingFields": ["title", "street"],
+  "inconsistencies": [],
+  "warnings": []
+}
+```
+
+Only present extracted values are validated. Invalid extracted values are omitted from `values` and reported in `inconsistencies`; `missingFields` is calculated afterwards. The normal Provider-controlled save and publish flow remains authoritative.
+
+Files are processed in memory only. They are not stored on disk, in PostgreSQL, or in Cloudinary. The OpenAI Responses calls explicitly use `store: false`; PDF files are sent directly as request input and do not use the OpenAI Files API.
+
+AI extraction uses in-memory rate-limit counters keyed by the authenticated Provider ID. The configured limits apply per process instance, not globally across multiple replicas. Use a shared throttler storage before relying on these limits in a multi-replica deployment.
 
 `POST /api/v1/provider/listings` accepts either `application/json` for listing data only, or `multipart/form-data` with the same listing fields and an optional `file` field. When `file` is provided, the API uploads the image to Cloudinary, creates the listing, stores image metadata in `listing_images`, and keeps the listing `photos` array in sync for existing consumers.
 
@@ -258,16 +294,16 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 
 ### Applications
 
-| Method | Path                                          | Auth      | Description                                            |
-| ------ | --------------------------------------------- | --------- | ------------------------------------------------------ |
-| `GET`  | `/api/v1/listings/:id/eligibility`            | Applicant | Read explainable eligibility for the current applicant |
-| `POST` | `/api/v1/listings/:id/apply`                  | Applicant | Apply to a published listing                           |
-| `GET`  | `/api/v1/applicant/applications`              | Applicant | Get applications submitted by the current applicant    |
-| `DELETE` | `/api/v1/applicant/applications/:id`         | Applicant | Withdraw one owned application                         |
-| `GET`  | `/api/v1/provider/applications`               | Provider  | Get applications across provider listings              |
-| `GET`  | `/api/v1/provider/listings/:id/applications`  | Provider  | Get applications for an owned listing                  |
-| `GET`  | `/api/v1/provider/listings/:id/waiting-count` | Provider  | Get the waiting application count for an owned listing |
-| `PATCH`| `/api/v1/provider/applications/:id/reject`    | Provider  | Reject one owned ACTIVE application                   |
+| Method   | Path                                          | Auth      | Description                                            |
+| -------- | --------------------------------------------- | --------- | ------------------------------------------------------ |
+| `GET`    | `/api/v1/listings/:id/eligibility`            | Applicant | Read explainable eligibility for the current applicant |
+| `POST`   | `/api/v1/listings/:id/apply`                  | Applicant | Apply to a published listing                           |
+| `GET`    | `/api/v1/applicant/applications`              | Applicant | Get applications submitted by the current applicant    |
+| `DELETE` | `/api/v1/applicant/applications/:id`          | Applicant | Withdraw one owned application                         |
+| `GET`    | `/api/v1/provider/applications`               | Provider  | Get applications across provider listings              |
+| `GET`    | `/api/v1/provider/listings/:id/applications`  | Provider  | Get applications for an owned listing                  |
+| `GET`    | `/api/v1/provider/listings/:id/waiting-count` | Provider  | Get the waiting application count for an owned listing |
+| `PATCH`  | `/api/v1/provider/applications/:id/reject`    | Provider  | Reject one owned ACTIVE application                    |
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 

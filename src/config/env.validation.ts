@@ -67,6 +67,34 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   CLOUDINARY_FOLDER!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  OPENAI_API_KEY!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  OPENAI_LISTING_MODEL!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  OPENAI_TRANSCRIPTION_MODEL!: string;
+
+  @IsInt()
+  @Min(1)
+  AI_RATE_LIMIT_WINDOW_MS!: number;
+
+  @IsInt()
+  @Min(1)
+  AI_TEXT_RATE_LIMIT!: number;
+
+  @IsInt()
+  @Min(1)
+  AI_PDF_RATE_LIMIT!: number;
+
+  @IsInt()
+  @Min(1)
+  AI_AUDIO_RATE_LIMIT!: number;
 }
 
 export function validateEnv(
@@ -114,6 +142,13 @@ function normalizeConfig(
       normalizeOptionalString(config['CLOUDINARY_FOLDER']) ?? 'renyqo',
     AWS_REGION: normalizeOptionalString(config['AWS_REGION']),
     SES_FROM_EMAIL: normalizeOptionalString(config['SES_FROM_EMAIL']),
+    OPENAI_API_KEY: normalizeOptionalString(config['OPENAI_API_KEY']),
+    OPENAI_LISTING_MODEL: normalizeOptionalString(
+      config['OPENAI_LISTING_MODEL'],
+    ),
+    OPENAI_TRANSCRIPTION_MODEL: normalizeOptionalString(
+      config['OPENAI_TRANSCRIPTION_MODEL'],
+    ),
   };
 }
 
