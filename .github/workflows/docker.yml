@@ -59,12 +59,26 @@ jobs:
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
           SESSION_SECRET: ci-session-secret-at-least-thirty-two-characters
+          OPENAI_API_KEY: ci-openai-api-key
+          OPENAI_LISTING_MODEL: ci-listing-model
+          OPENAI_TRANSCRIPTION_MODEL: ci-transcription-model
+          AI_RATE_LIMIT_WINDOW_MS: '60000'
+          AI_TEXT_RATE_LIMIT: '10'
+          AI_PDF_RATE_LIMIT: '3'
+          AI_AUDIO_RATE_LIMIT: '3'
         run: |
           docker run --detach --rm --name renyqo-backend-smoke --network host \
             --env NODE_ENV=test \
             --env PORT=3000 \
             --env DATABASE_URL="${DATABASE_URL}" \
             --env SESSION_SECRET="${SESSION_SECRET}" \
+            --env OPENAI_API_KEY="${OPENAI_API_KEY}" \
+            --env OPENAI_LISTING_MODEL="${OPENAI_LISTING_MODEL}" \
+            --env OPENAI_TRANSCRIPTION_MODEL="${OPENAI_TRANSCRIPTION_MODEL}" \
+            --env AI_RATE_LIMIT_WINDOW_MS="${AI_RATE_LIMIT_WINDOW_MS}" \
+            --env AI_TEXT_RATE_LIMIT="${AI_TEXT_RATE_LIMIT}" \
+            --env AI_PDF_RATE_LIMIT="${AI_PDF_RATE_LIMIT}" \
+            --env AI_AUDIO_RATE_LIMIT="${AI_AUDIO_RATE_LIMIT}" \
             renyqo/backend:ci
           trap 'docker stop renyqo-backend-smoke >/dev/null 2>&1 || true' EXIT
           for attempt in {1..30}; do
