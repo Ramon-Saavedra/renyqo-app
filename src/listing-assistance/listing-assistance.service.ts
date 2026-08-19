@@ -4,23 +4,17 @@ import { validate, type ValidationError } from 'class-validator';
 import { CreateListingDto } from '../listings/dto/create-listing.dto';
 import { ListingExtractionIssueDto } from './dto/listing-extraction-issue.dto';
 import { ListingExtractionResponseDto } from './dto/listing-extraction-response.dto';
-import { isListingExtractionField } from './listing-extraction.fields';
+import {
+  isListingExtractionField,
+  RECOMMENDED_LISTING_FIELDS,
+  REQUIRED_LISTING_PROPERTY_FIELDS,
+} from './listing-extraction.policy';
 import type { ListingAssistanceFile } from './listing-assistance-upload.constants';
 import { AI_PROVIDER } from './providers/ai-provider.token';
 import type {
   AiProvider,
   ListingExtractionCandidate,
 } from './providers/ai-provider.interface';
-
-const PUBLISH_REQUIRED_FIELDS = [
-  'title',
-  'street',
-  'livingArea',
-  'rooms',
-  'bedrooms',
-  'coldRent',
-  'availableFrom',
-] as const;
 
 function isPresent(value: unknown): boolean {
   return value !== undefined && value !== null && value !== '';
@@ -62,7 +56,7 @@ export class ListingAssistanceService {
   private async validateExtraction(
     candidate: ListingExtractionCandidate,
   ): Promise<ListingExtractionResponseDto> {
-    const rawValues = this.getPresentValues(candidate);
+    const rawValues = this.getPresentValues(candidate.values);
     const dto = plainToInstance(CreateListingDto, rawValues, {
       enableImplicitConversion: true,
     });
@@ -72,6 +66,21 @@ export class ListingAssistanceService {
       forbidNonWhitelisted: true,
     });
     const inconsistencies = validationIssues(errors);
+    for (const field of candidate.conflictingFields) {
+      inconsistencies.push(
+        new ListingExtractionIssueDto(
+          field,
+          'The source contains conflicting values for this field',
+        ),
+      );
+      delete rawValues[field];
+    }
+    const warnings = candidate.uncertainFields.map(
+      (field) => `The source contains an uncertain value for ${field}`,
+    );
+    for (const field of candidate.uncertainFields) {
+      delete rawValues[field];
+    }
     const invalidFields = new Set(
       inconsistencies.flatMap((issue) =>
         issue.field === 'listing' ? ['rooms', 'bedrooms'] : [issue.field],
@@ -84,21 +93,26 @@ export class ListingAssistanceService {
 
     const values = this.toValidatedValues(dto, rawValues);
     this.addBedroomsInconsistency(values, inconsistencies);
-    this.addDepositInconsistencies(values, inconsistencies);
+    this.addDepositEvidenceInconsistency(
+      values,
+      candidate.depositEvidence,
+      inconsistencies,
+    );
 
     return new ListingExtractionResponseDto({
       values,
-      missingFields: PUBLISH_REQUIRED_FIELDS.filter(
+      requiredMissingFields: REQUIRED_LISTING_PROPERTY_FIELDS.filter(
+        (field) => !isPresent(values[field]),
+      ),
+      recommendedMissingFields: RECOMMENDED_LISTING_FIELDS.filter(
         (field) => !isPresent(values[field]),
       ),
       inconsistencies,
-      warnings: [],
+      warnings,
     });
   }
 
-  private getPresentValues(
-    candidate: ListingExtractionCandidate,
-  ): Record<string, unknown> {
+  private getPresentValues(candidate: object): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(candidate).filter(
         ([field, value]) => isListingExtractionField(field) && isPresent(value),
@@ -117,15 +131,12 @@ export class ListingAssistanceService {
     if ('zip' in rawValues) values.zip = dto.zip;
     if ('street' in rawValues) values.street = dto.street;
     if ('district' in rawValues) values.district = dto.district;
-    if ('showExactAddress' in rawValues)
-      values.showExactAddress = dto.showExactAddress;
     if ('livingArea' in rawValues) values.livingArea = dto.livingArea;
     if ('rooms' in rawValues) values.rooms = dto.rooms;
     if ('bedrooms' in rawValues) values.bedrooms = dto.bedrooms;
     if ('coldRent' in rawValues) values.coldRent = dto.coldRent;
     if ('additionalCosts' in rawValues)
       values.additionalCosts = dto.additionalCosts;
-    if ('deposit' in rawValues) values.deposit = dto.deposit;
     if ('depositMonths' in rawValues) values.depositMonths = dto.depositMonths;
     if ('availableFrom' in rawValues) values.availableFrom = dto.availableFrom;
     if ('title' in rawValues) values.title = dto.title;
@@ -145,42 +156,28 @@ export class ListingAssistanceService {
     return values;
   }
 
-  private addDepositInconsistencies(
+  private addDepositEvidenceInconsistency(
     values: Partial<CreateListingDto>,
+    depositEvidence: number | null,
     inconsistencies: ListingExtractionIssueDto[],
   ): void {
-    if (values.deposit !== undefined && values.coldRent === undefined) {
-      delete values.deposit;
-      inconsistencies.push(
-        new ListingExtractionIssueDto(
-          'deposit',
-          'coldRent is required when deposit is provided',
-        ),
-      );
-      return;
-    }
-
     if (
-      values.deposit === undefined ||
+      depositEvidence === null ||
       values.coldRent === undefined ||
-      typeof values.deposit !== 'number' ||
-      typeof values.coldRent !== 'number'
+      values.depositMonths === undefined
     ) {
       return;
     }
 
-    const depositMonths = values.depositMonths ?? 2;
-    if (typeof depositMonths !== 'number') {
-      return;
-    }
-
-    const expected = Math.round(values.coldRent * depositMonths * 100) / 100;
-    if (Math.abs(values.deposit - expected) > 0.01) {
-      delete values.deposit;
+    const expected =
+      Math.round(values.coldRent * values.depositMonths * 100) / 100;
+    if (Math.abs(depositEvidence - expected) > 0.01) {
+      delete values.coldRent;
+      delete values.depositMonths;
       inconsistencies.push(
         new ListingExtractionIssueDto(
-          'deposit',
-          'deposit must equal coldRent multiplied by depositMonths',
+          'depositMonths',
+          'The explicit deposit amount does not match coldRent multiplied by depositMonths',
         ),
       );
     }
