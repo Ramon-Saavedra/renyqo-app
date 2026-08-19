@@ -107,7 +107,9 @@ Public registration only accepts `applicant` and `provider`.
 State-changing requests (`POST`, `PUT`, `PATCH`, and `DELETE`) must send the
 session-bound token from `/api/v1/auth/csrf-token` in the `X-CSRF-Token` header.
 The backend also validates `Origin`, or `Referer` when `Origin` is absent,
-against `FRONTEND_URL`.
+against `FRONTEND_URL`. The frontend may refresh and retry once only for a
+`403` response with `code: "CSRF_TOKEN_INVALID"`; it must not retry
+`CSRF_ORIGIN_INVALID` or authorization `403` responses.
 
 Provider registration may also include optional identity fields:
 

@@ -1,5 +1,15 @@
 import session from 'express-session';
-import { Body, Controller, Get, Module, Options, Post } from '@nestjs/common';
+import {
+  Body,
+  CanActivate,
+  Controller,
+  ForbiddenException,
+  Get,
+  Module,
+  Options,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import { afterAll, beforeAll, describe, it, jest } from '@jest/globals';
@@ -11,6 +21,23 @@ import { configureCsrfProtection } from '../src/security/csrf/csrf-protection';
 class MutationDto {
   value?: string;
 }
+
+class AuthorizationForbiddenGuard implements CanActivate {
+  canActivate(): boolean {
+    throw new ForbiddenException('Authorization denied');
+  }
+}
+
+const TOKEN_ERROR = {
+  statusCode: 403,
+  code: 'CSRF_TOKEN_INVALID',
+  message: 'CSRF token is missing, invalid, or expired',
+};
+const ORIGIN_ERROR = {
+  statusCode: 403,
+  code: 'CSRF_ORIGIN_INVALID',
+  message: 'Invalid request origin',
+};
 
 @Controller('csrf-test')
 class CsrfTestController {
@@ -25,6 +52,12 @@ class CsrfTestController {
   @Post('mutation')
   mutation(@Body() body: MutationDto): { value: string | undefined } {
     return { value: body.value };
+  }
+
+  @UseGuards(AuthorizationForbiddenGuard)
+  @Post('authorization-forbidden')
+  authorizationForbidden(): never {
+    throw new Error('Authorization guard did not run');
   }
 }
 
@@ -100,7 +133,7 @@ describe('CSRF HTTP contract', () => {
       .set('Origin', 'https://frontend.example')
       .set('X-CSRF-Token', token)
       .send({ value: 'rejected' })
-      .expect(403);
+      .expect(403, TOKEN_ERROR);
   });
 
   it('rejects a mutation without a token or with a mismatched Origin', async () => {
@@ -111,7 +144,7 @@ describe('CSRF HTTP contract', () => {
       .post('/api/v1/csrf-test/mutation')
       .set('Origin', 'https://frontend.example')
       .send({ value: 'rejected' })
-      .expect(403);
+      .expect(403, TOKEN_ERROR);
 
     const tokenResponse = await agent
       .get('/api/v1/auth/csrf-token')
@@ -131,13 +164,13 @@ describe('CSRF HTTP contract', () => {
       .set('Origin', 'https://frontend.example')
       .set('X-CSRF-Token', `${body.csrfToken}-invalid`)
       .send({ value: 'rejected' })
-      .expect(403);
+      .expect(403, TOKEN_ERROR);
 
     await agent
       .post('/api/v1/csrf-test/mutation')
       .set('Origin', 'https://attacker.example')
       .send({ value: 'rejected' })
-      .expect(403);
+      .expect(403, ORIGIN_ERROR);
   });
 
   it('supports a valid Referer and rejects invalid or conflicting origins', async () => {
@@ -167,7 +200,7 @@ describe('CSRF HTTP contract', () => {
       .set('Referer', 'https://attacker.example/account')
       .set('X-CSRF-Token', body.csrfToken)
       .send({ value: 'rejected' })
-      .expect(403);
+      .expect(403, ORIGIN_ERROR);
 
     await agent
       .post('/api/v1/csrf-test/mutation')
@@ -175,7 +208,7 @@ describe('CSRF HTTP contract', () => {
       .set('Referer', 'https://frontend.example/account')
       .set('X-CSRF-Token', body.csrfToken)
       .send({ value: 'rejected' })
-      .expect(403);
+      .expect(403, ORIGIN_ERROR);
   });
 
   it('leaves safe methods unprotected', async () => {
@@ -183,5 +216,31 @@ describe('CSRF HTTP contract', () => {
     await agent.get('/api/v1/csrf-test/safe').expect(200, { ok: true });
     await agent.head('/api/v1/csrf-test/safe').expect(200);
     await agent.options('/api/v1/csrf-test/safe').expect(200);
+  });
+
+  it('preserves an authorization 403 after CSRF validation succeeds', async () => {
+    const agent = request.agent(app.getHttpServer());
+    const tokenResponse = await agent
+      .get('/api/v1/auth/csrf-token')
+      .expect(200);
+    const body: unknown = tokenResponse.body;
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      !('csrfToken' in body) ||
+      typeof body.csrfToken !== 'string'
+    ) {
+      throw new Error('CSRF token response is invalid');
+    }
+
+    await agent
+      .post('/api/v1/csrf-test/authorization-forbidden')
+      .set('Origin', 'https://frontend.example')
+      .set('X-CSRF-Token', body.csrfToken)
+      .expect(403, {
+        statusCode: 403,
+        message: 'Authorization denied',
+        error: 'Forbidden',
+      });
   });
 });
