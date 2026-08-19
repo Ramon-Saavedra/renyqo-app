@@ -42,12 +42,20 @@ const makeLoginDto = (): LoginDto => ({
 });
 
 type MockRequest = {
+  session: {
+    regenerate: jest.MockedFunction<(cb: (err: Error | null) => void) => void>;
+  };
   login: jest.MockedFunction<
     (user: unknown, cb: (err?: unknown) => void) => void
   >;
 };
 
 const makeReq = (loginError?: Error): MockRequest => ({
+  session: {
+    regenerate: jest.fn((cb: (err: Error | null) => void) => {
+      cb(loginError ?? null);
+    }),
+  },
   login: jest.fn((_user: unknown, cb: (err?: unknown) => void) => {
     cb(loginError);
   }),
