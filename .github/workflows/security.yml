@@ -27,10 +27,7 @@ jobs:
   dependency-review:
     name: dependency-review
     runs-on: ubuntu-latest
-    if: >
-      github.event_name == 'pull_request' &&
-      (github.event.repository.private == false ||
-      vars.ENABLE_GHAS_SECURITY_CHECKS == 'true')
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/dependency-review-action@v4
@@ -40,9 +37,6 @@ jobs:
   codeql:
     name: codeql
     runs-on: ubuntu-latest
-    if: >
-      github.event.repository.private == false ||
-      vars.ENABLE_GHAS_SECURITY_CHECKS == 'true'
     permissions:
       security-events: write
       actions: read
