@@ -7,6 +7,7 @@ import passport from 'passport';
 import connectPgSimple from 'connect-pg-simple';
 import { AppModule } from './app.module';
 import { EnvironmentVariables, NodeEnv } from './config/env.validation';
+import { configureCsrfProtection } from './security/csrf/csrf-protection';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -27,8 +28,11 @@ async function bootstrap() {
   const secret = config.get('SESSION_SECRET', { infer: true });
   const databaseUrl = config.get('DATABASE_URL', { infer: true });
   const isProd = config.get('NODE_ENV', { infer: true }) === NodeEnv.Production;
-  const frontendUrl =
-    config.get('FRONTEND_URL', { infer: true }) ?? 'http://localhost:3001';
+  const configuredFrontendUrl = config.get('FRONTEND_URL', { infer: true });
+  if (isProd && !configuredFrontendUrl) {
+    throw new Error('FRONTEND_URL is required in production');
+  }
+  const frontendUrl = configuredFrontendUrl ?? 'http://localhost:3001';
 
   app.enableCors({
     origin: frontendUrl,
@@ -63,6 +67,10 @@ async function bootstrap() {
 
   app.use(passport.initialize());
   app.use(passport.session());
+  configureCsrfProtection(
+    app.getHttpAdapter().getInstance() as Application,
+    frontendUrl,
+  );
 
   await app.listen(port);
 }

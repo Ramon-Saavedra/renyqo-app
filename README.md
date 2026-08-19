@@ -100,8 +100,14 @@ Global prefix: `/api/v1`
 | `POST` | `/api/v1/auth/reset-password`  | No      | Reset password with a valid reset token          |
 | `POST` | `/api/v1/auth/logout`          | Session | Logout and clear cookie                          |
 | `GET`  | `/api/v1/auth/me`              | Session | Return current user without password hash        |
+| `GET`  | `/api/v1/auth/csrf-token`      | No      | Return the session-bound CSRF token              |
 
 Public registration only accepts `applicant` and `provider`.
+
+State-changing requests (`POST`, `PUT`, `PATCH`, and `DELETE`) must send the
+session-bound token from `/api/v1/auth/csrf-token` in the `X-CSRF-Token` header.
+The backend also validates `Origin`, or `Referer` when `Origin` is absent,
+against `FRONTEND_URL`.
 
 Provider registration may also include optional identity fields:
 
