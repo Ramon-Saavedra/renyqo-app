@@ -6,7 +6,8 @@ import type { ListingAssistanceFile } from './listing-assistance-upload.constant
 
 const response = {
   values: { city: 'Berlin' },
-  missingFields: ['title'],
+  requiredMissingFields: ['street'],
+  recommendedMissingFields: ['petsPolicy'],
   inconsistencies: [],
   warnings: [],
 };

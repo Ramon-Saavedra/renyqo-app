@@ -43,6 +43,8 @@ import type { RentListingDto } from './dto/rent-listing.dto';
 const PUBLISH_REQUIRED_FIELDS = [
   'title',
   'street',
+  'zip',
+  'city',
   'livingArea',
   'rooms',
   'bedrooms',

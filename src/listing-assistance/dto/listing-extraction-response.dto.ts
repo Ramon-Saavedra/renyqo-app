@@ -3,18 +3,21 @@ import { ListingExtractionIssueDto } from './listing-extraction-issue.dto';
 
 export class ListingExtractionResponseDto {
   readonly values!: Partial<CreateListingDto>;
-  readonly missingFields!: string[];
+  readonly requiredMissingFields!: string[];
+  readonly recommendedMissingFields!: string[];
   readonly inconsistencies!: ListingExtractionIssueDto[];
   readonly warnings!: string[];
 
   constructor(input: {
     values: Partial<CreateListingDto>;
-    missingFields: string[];
+    requiredMissingFields: string[];
+    recommendedMissingFields: string[];
     inconsistencies: ListingExtractionIssueDto[];
     warnings: string[];
   }) {
     this.values = input.values;
-    this.missingFields = input.missingFields;
+    this.requiredMissingFields = input.requiredMissingFields;
+    this.recommendedMissingFields = input.recommendedMissingFields;
     this.inconsistencies = input.inconsistencies;
     this.warnings = input.warnings;
   }

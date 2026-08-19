@@ -27,22 +27,20 @@ jobs:
   dependency-review:
     name: dependency-review
     runs-on: ubuntu-latest
-    if: >
-      github.event_name == 'pull_request' &&
-      (github.event.repository.private == false ||
-      vars.ENABLE_GHAS_SECURITY_CHECKS == 'true')
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/dependency-review-action@v4
+        if: vars.ENABLE_GHAS_SECURITY_CHECKS == 'true'
         with:
           fail-on-severity: high
+      - name: Report dependency review availability
+        if: vars.ENABLE_GHAS_SECURITY_CHECKS != 'true'
+        run: echo "Dependency Review is not enabled for this repository."
 
   codeql:
     name: codeql
     runs-on: ubuntu-latest
-    if: >
-      github.event.repository.private == false ||
-      vars.ENABLE_GHAS_SECURITY_CHECKS == 'true'
     permissions:
       security-events: write
       actions: read
@@ -50,9 +48,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v3
+        if: vars.ENABLE_GHAS_SECURITY_CHECKS == 'true'
         with:
           languages: javascript-typescript
           build-mode: none
       - uses: github/codeql-action/analyze@v3
+        if: vars.ENABLE_GHAS_SECURITY_CHECKS == 'true'
         with:
           category: /language:javascript-typescript
+      - name: Report CodeQL availability
+        if: vars.ENABLE_GHAS_SECURITY_CHECKS != 'true'
+        run: echo "CodeQL is not enabled for this repository."

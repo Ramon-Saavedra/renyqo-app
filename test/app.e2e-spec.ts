@@ -75,12 +75,64 @@ class CloudinaryServiceStub {
 }
 
 class OpenAiProviderStub {
-  extractFromText(): Promise<Record<string, unknown>> {
-    return Promise.resolve({ city: 'Berlin', coldRent: 1200 });
+  extractFromText() {
+    return Promise.resolve({
+      values: {
+        objectType: null,
+        city: 'Berlin',
+        zip: null,
+        street: null,
+        district: null,
+        livingArea: null,
+        rooms: null,
+        bedrooms: null,
+        coldRent: 1200,
+        additionalCosts: null,
+        depositMonths: null,
+        availableFrom: null,
+        title: null,
+        shortDescription: null,
+        minimumHouseholdNetIncome: null,
+        schufaRequired: null,
+        incomeProofRequired: null,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      },
+      depositEvidence: null,
+      conflictingFields: [],
+      uncertainFields: [],
+    });
   }
 
-  extractFromPdf(): Promise<Record<string, unknown>> {
-    return Promise.resolve({ city: 'Hamburg' });
+  extractFromPdf() {
+    return Promise.resolve({
+      values: {
+        objectType: null,
+        city: 'Hamburg',
+        zip: null,
+        street: null,
+        district: null,
+        livingArea: null,
+        rooms: null,
+        bedrooms: null,
+        coldRent: null,
+        additionalCosts: null,
+        depositMonths: null,
+        availableFrom: null,
+        title: null,
+        shortDescription: null,
+        minimumHouseholdNetIncome: null,
+        schufaRequired: null,
+        incomeProofRequired: null,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      },
+      depositEvidence: null,
+      conflictingFields: [],
+      uncertainFields: [],
+    });
   }
 
   transcribeAudio(): Promise<string> {
@@ -1648,7 +1700,8 @@ describe('Backend API E2E', () => {
         .expect(201);
       const body = responseBody(response);
       expect(body['values']).toMatchObject({ city: 'Berlin', coldRent: 1200 });
-      expect(Array.isArray(body['missingFields'])).toBe(true);
+      expect(Array.isArray(body['requiredMissingFields'])).toBe(true);
+      expect(Array.isArray(body['recommendedMissingFields'])).toBe(true);
       expect(Array.isArray(body['inconsistencies'])).toBe(true);
       expect(Array.isArray(body['warnings'])).toBe(true);
       expect(await getPrisma().listing.count()).toBe(before);
@@ -1671,7 +1724,8 @@ describe('Backend API E2E', () => {
           .expect(201),
       );
       expect(pdfBody['values']).toEqual({ city: 'Hamburg' });
-      expect(Array.isArray(pdfBody['missingFields'])).toBe(true);
+      expect(Array.isArray(pdfBody['requiredMissingFields'])).toBe(true);
+      expect(Array.isArray(pdfBody['recommendedMissingFields'])).toBe(true);
       expect(pdfBody['inconsistencies']).toEqual([]);
       expect(pdfBody['warnings']).toEqual([]);
       expect(await getPrisma().listing.count()).toBe(before);
@@ -1692,7 +1746,8 @@ describe('Backend API E2E', () => {
           .expect(201),
       );
       expect(audioBody['values']).toEqual({ city: 'Berlin', coldRent: 1200 });
-      expect(Array.isArray(audioBody['missingFields'])).toBe(true);
+      expect(Array.isArray(audioBody['requiredMissingFields'])).toBe(true);
+      expect(Array.isArray(audioBody['recommendedMissingFields'])).toBe(true);
       expect(audioBody['inconsistencies']).toEqual([]);
       expect(audioBody['warnings']).toEqual([]);
       expect(await getPrisma().listing.count()).toBe(before);

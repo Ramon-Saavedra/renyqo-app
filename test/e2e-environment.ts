@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 process.env['OPENAI_API_KEY'] ??= 'e2e-openai-api-key';
 process.env['OPENAI_LISTING_MODEL'] ??= 'e2e-listing-model';
 process.env['OPENAI_TRANSCRIPTION_MODEL'] ??= 'e2e-transcription-model';
