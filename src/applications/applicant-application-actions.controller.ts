@@ -14,8 +14,13 @@ import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsService } from './applications.service';
 import { ApplicantApplicationStatusResponseDto } from './dto/applicant-application-status-response.dto';
+import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-application-action-throttler.guard';
 
-@UseGuards(AuthenticatedGuard, ApplicantOnlyGuard)
+@UseGuards(
+  AuthenticatedGuard,
+  ApplicantOnlyGuard,
+  ApplicantApplicationActionThrottlerGuard,
+)
 @Controller('applicant/applications')
 export class ApplicantApplicationActionsController {
   constructor(private readonly applicationsService: ApplicationsService) {}

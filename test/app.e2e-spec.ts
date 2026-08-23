@@ -1901,6 +1901,93 @@ describe('Backend API E2E', () => {
       expect(applications[1].status).toBe('WITHDRAWN');
     });
 
+    it('rate limits rapid application cycles per applicant and listing', async () => {
+      const { applicantAgent, applicant, listing } =
+        await createApplicantAndListing();
+
+      const firstResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const firstApplicationId = applicationIdFromResponse(firstResponse);
+
+      await applicantAgent
+        .delete(`/api/v1/applicant/applications/${firstApplicationId}`)
+        .expect(200)
+        .expect((response: Response) => {
+          expect(responseBody(response)['status']).toBe('WITHDRAWN');
+        });
+
+      const secondResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const secondApplicationId = applicationIdFromResponse(secondResponse);
+      expect(secondApplicationId).not.toBe(firstApplicationId);
+
+      await applicantAgent
+        .delete(`/api/v1/applicant/applications/${secondApplicationId}`)
+        .expect(200);
+
+      const limitedResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(429);
+      expect(responseBody(limitedResponse)).toEqual({
+        statusCode: 429,
+        code: 'APPLICATION_ACTION_RATE_LIMITED',
+        message: 'Too many application actions. Please try again later.',
+      });
+      expect(
+        Number(limitedResponse.headers['retry-after']),
+      ).toBeGreaterThanOrEqual(59);
+      expect(
+        Number(limitedResponse.headers['retry-after']),
+      ).toBeLessThanOrEqual(60);
+      expect(
+        await getPrisma().application.count({
+          where: { listingId: listing.id, applicantId: applicant.id },
+        }),
+      ).toBe(2);
+
+      const otherListing = await createPublishedListing(listing.providerId);
+      await applicantAgent
+        .post(`/api/v1/listings/${otherListing.id}/apply`)
+        .expect(201);
+
+      const otherApplicantAgent = request.agent(getServer());
+      await otherApplicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+      await otherApplicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+    });
+
+    it('uses one bounded rate-limit bucket for unresolved listing IDs', async () => {
+      const applicantAgent = request.agent(getServer());
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201);
+
+      const missingListingIds = [
+        '00000000-0000-4000-8000-000000000101',
+        '00000000-0000-4000-8000-000000000102',
+        '00000000-0000-4000-8000-000000000103',
+        '00000000-0000-4000-8000-000000000104',
+        '00000000-0000-4000-8000-000000000105',
+      ];
+
+      for (const listingId of missingListingIds.slice(0, 4)) {
+        await applicantAgent
+          .post(`/api/v1/listings/${listingId}/apply`)
+          .expect(404);
+      }
+
+      await applicantAgent
+        .post(`/api/v1/listings/${missingListingIds[4]}/apply`)
+        .expect(429);
+    });
+
     it('blocks re-applying after a provider rejection', async () => {
       const { applicantAgent, providerAgent, listing } =
         await createApplicantAndListing();
