@@ -1596,4 +1596,335 @@ describe('Backend API E2E', () => {
       expect(count).toBe(0);
     });
   });
+
+  describe('re-applying after withdrawal', () => {
+    async function createApplicantAndListing() {
+      const applicantAgent = request.agent(getServer());
+      const applicant = safeUserBody(
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201),
+      );
+
+      const providerAgent = request.agent(getServer());
+      const provider = safeUserBody(
+        await providerAgent
+          .post('/api/v1/auth/register')
+          .send(providerPayload())
+          .expect(201),
+      );
+
+      const listing = await createPublishedListing(provider.id);
+      return { applicantAgent, applicant, providerAgent, listing };
+    }
+
+    function applicationIdFromResponse(response: Response): string {
+      const id = responseBody(response)['id'];
+      if (typeof id !== 'string') {
+        throw new Error('Application response did not include an id.');
+      }
+      return id;
+    }
+
+    it('creates a new application row and leaves the previous WITHDRAWN row unchanged', async () => {
+      const { applicantAgent, listing } = await createApplicantAndListing();
+
+      const firstResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const firstApplicationId = applicationIdFromResponse(firstResponse);
+
+      await applicantAgent
+        .delete(`/api/v1/applicant/applications/${firstApplicationId}`)
+        .expect(200);
+
+      const secondResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const secondApplicationId = applicationIdFromResponse(secondResponse);
+
+      expect(secondApplicationId).not.toBe(firstApplicationId);
+      expect(responseBody(secondResponse)['status']).toBe('ACTIVE');
+
+      const applications = await getPrisma().application.findMany({
+        where: { listingId: listing.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(applications).toHaveLength(2);
+      expect(applications[0].id).toBe(firstApplicationId);
+      expect(applications[0].status).toBe('WITHDRAWN');
+      expect(applications[1].id).toBe(secondApplicationId);
+      expect(applications[1].status).not.toBe('WITHDRAWN');
+      expect(applications[1].queueOrder).toBeGreaterThan(
+        applications[0].queueOrder,
+      );
+    });
+
+    it('places a re-applied WAITING application behind existing waiting applications', async () => {
+      const providerAgent = request.agent(getServer());
+      const provider = safeUserBody(
+        await providerAgent
+          .post('/api/v1/auth/register')
+          .send(providerPayload())
+          .expect(201),
+      );
+      const listing = await createPublishedListing(provider.id);
+      const agents = Array.from({ length: 7 }, () =>
+        request.agent(getServer()),
+      );
+
+      await Promise.all(
+        agents.map((agent) =>
+          agent
+            .post('/api/v1/auth/register')
+            .send(applicantPayload())
+            .expect(201),
+        ),
+      );
+
+      const applications = [] as Array<{
+        agent: ReturnType<typeof request.agent>;
+        id: string;
+        status: string;
+      }>;
+      for (const agent of agents) {
+        const response = await agent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        const body = responseBody(response);
+        if (typeof body.id !== 'string' || typeof body.status !== 'string') {
+          throw new Error('E2E application response has an unexpected shape.');
+        }
+        applications.push({ agent, id: body.id, status: body.status });
+      }
+
+      expect(
+        applications.slice(0, 5).every((app) => app.status === 'ACTIVE'),
+      ).toBe(true);
+      expect(applications[5].status).toBe('WAITING');
+      expect(applications[6].status).toBe('WAITING');
+
+      await applications[5].agent
+        .delete(`/api/v1/applicant/applications/${applications[5].id}`)
+        .expect(200);
+
+      const reappliedResponse = await applications[5].agent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      expect(responseBody(reappliedResponse)['status']).toBe('WAITING');
+      const reappliedId = applicationIdFromResponse(reappliedResponse);
+
+      const waitingApplications = await getPrisma().application.findMany({
+        where: { listingId: listing.id, status: 'WAITING' },
+        orderBy: { queueOrder: 'asc' },
+      });
+      expect(waitingApplications).toHaveLength(2);
+      expect(waitingApplications[0].id).toBe(applications[6].id);
+      expect(waitingApplications[1].id).toBe(reappliedId);
+      expect(waitingApplications[1].queueOrder).toBeGreaterThan(
+        waitingApplications[0].queueOrder,
+      );
+    });
+
+    it('prevents duplicate live applications after re-applying', async () => {
+      const { applicantAgent, listing } = await createApplicantAndListing();
+
+      const firstResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const firstApplicationId = applicationIdFromResponse(firstResponse);
+
+      await applicantAgent
+        .delete(`/api/v1/applicant/applications/${firstApplicationId}`)
+        .expect(200);
+
+      await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(409);
+
+      const liveApplications = await getPrisma().application.findMany({
+        where: {
+          listingId: listing.id,
+          status: { in: ['ACTIVE', 'WAITING'] },
+        },
+      });
+      expect(liveApplications).toHaveLength(1);
+    });
+
+    it('keeps only one live application under concurrent re-apply attempts', async () => {
+      const { applicant, listing } = await createApplicantAndListing();
+
+      const firstAgent = request.agent(getServer());
+      await firstAgent
+        .post('/api/v1/auth/login')
+        .send({ email: applicant.email, password: userPassword })
+        .expect(200);
+
+      const firstResponse = await firstAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const firstApplicationId = applicationIdFromResponse(firstResponse);
+
+      await firstAgent
+        .delete(`/api/v1/applicant/applications/${firstApplicationId}`)
+        .expect(200);
+
+      const secondAgent = request.agent(getServer());
+      await secondAgent
+        .post('/api/v1/auth/login')
+        .send({ email: applicant.email, password: userPassword })
+        .expect(200);
+
+      const [responseA, responseB] = await Promise.all([
+        firstAgent.post(`/api/v1/listings/${listing.id}/apply`),
+        secondAgent.post(`/api/v1/listings/${listing.id}/apply`),
+      ]);
+
+      const statuses = [responseA.status, responseB.status].sort();
+      expect(statuses).toEqual([201, 409]);
+
+      const liveApplications = await getPrisma().application.findMany({
+        where: {
+          listingId: listing.id,
+          status: { in: ['ACTIVE', 'WAITING'] },
+        },
+      });
+      expect(liveApplications).toHaveLength(1);
+    });
+
+    it('rejects re-applying when the listing is no longer PUBLISHED', async () => {
+      const { applicantAgent, providerAgent, listing } =
+        await createApplicantAndListing();
+
+      const firstResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const firstApplicationId = applicationIdFromResponse(firstResponse);
+
+      await applicantAgent
+        .delete(`/api/v1/applicant/applications/${firstApplicationId}`)
+        .expect(200);
+
+      await providerAgent
+        .patch(`/api/v1/provider/listings/${listing.id}/archive`)
+        .expect(200);
+
+      await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(422);
+
+      const count = await getPrisma().application.count({
+        where: { listingId: listing.id },
+      });
+      expect(count).toBe(1);
+    });
+
+    it('recalculates eligibility when re-applying', async () => {
+      const { applicantAgent, applicant, listing } =
+        await createApplicantAndListing();
+
+      await getPrisma().listing.update({
+        where: { id: listing.id },
+        data: { minimumHouseholdNetIncome: 3000 },
+      });
+      await getPrisma().applicantProfile.create({
+        data: {
+          applicantId: applicant.id,
+          householdNetIncome: 4000,
+        },
+      });
+
+      const firstResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const firstApplicationId = applicationIdFromResponse(firstResponse);
+
+      await applicantAgent
+        .delete(`/api/v1/applicant/applications/${firstApplicationId}`)
+        .expect(200);
+
+      await getPrisma().applicantProfile.update({
+        where: { applicantId: applicant.id },
+        data: { householdNetIncome: 1000 },
+      });
+
+      const blockedResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(422);
+      expect(responseBody(blockedResponse)).toMatchObject({
+        canApply: false,
+        reasons: ['household_income_below_requirement'],
+      });
+
+      const liveApplications = await getPrisma().application.findMany({
+        where: {
+          listingId: listing.id,
+          status: { in: ['ACTIVE', 'WAITING'] },
+        },
+      });
+      expect(liveApplications).toHaveLength(0);
+    });
+
+    it('supports a full withdraw -> reapply -> withdraw lifecycle', async () => {
+      const { applicantAgent, listing } = await createApplicantAndListing();
+
+      const firstResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const firstApplicationId = applicationIdFromResponse(firstResponse);
+
+      await applicantAgent
+        .delete(`/api/v1/applicant/applications/${firstApplicationId}`)
+        .expect(200);
+
+      const secondResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const secondApplicationId = applicationIdFromResponse(secondResponse);
+
+      await applicantAgent
+        .delete(`/api/v1/applicant/applications/${secondApplicationId}`)
+        .expect(200);
+
+      const applications = await getPrisma().application.findMany({
+        where: { listingId: listing.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(applications).toHaveLength(2);
+      expect(applications[0].id).toBe(firstApplicationId);
+      expect(applications[0].status).toBe('WITHDRAWN');
+      expect(applications[1].id).toBe(secondApplicationId);
+      expect(applications[1].status).toBe('WITHDRAWN');
+    });
+
+    it('blocks re-applying after a provider rejection', async () => {
+      const { applicantAgent, providerAgent, listing } =
+        await createApplicantAndListing();
+
+      const firstResponse = await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+      const firstApplicationId = applicationIdFromResponse(firstResponse);
+
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${firstApplicationId}/reject`)
+        .expect(200);
+
+      await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(409);
+
+      const applications = await getPrisma().application.findMany({
+        where: { listingId: listing.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(applications).toHaveLength(1);
+      expect(applications[0].id).toBe(firstApplicationId);
+      expect(applications[0].status).toBe('REJECTED');
+    });
+  });
 });

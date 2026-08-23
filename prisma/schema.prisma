@@ -188,7 +188,6 @@ model Application {
   listing   Listing @relation(fields: [listingId], references: [id])
   applicant User    @relation(fields: [applicantId], references: [id])
 
-  @@unique([listingId, applicantId])
   @@index([listingId, status, queueOrder])
   @@index([applicantId])
   @@map("applications")
