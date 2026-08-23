@@ -90,6 +90,7 @@ describe('ApplicationsService', () => {
       create: jest.MockedFunction<(args?: unknown) => Promise<Application>>;
       update: jest.MockedFunction<(args?: unknown) => Promise<Application>>;
       findUnique: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
+      findFirst: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
       findMany: jest.MockedFunction<(args?: unknown) => Promise<Application[]>>;
     };
     applicantProfile: {
@@ -115,6 +116,7 @@ describe('ApplicationsService', () => {
         create: jest.fn<(args?: unknown) => Promise<Application>>(),
         update: jest.fn<(args?: unknown) => Promise<Application>>(),
         findUnique: jest.fn<(args?: unknown) => Promise<unknown>>(),
+        findFirst: jest.fn<(args?: unknown) => Promise<unknown>>(),
         findMany: jest.fn<(args?: unknown) => Promise<Application[]>>(),
       },
       applicantProfile: {
@@ -127,6 +129,7 @@ describe('ApplicationsService', () => {
       callback(prismaMock),
     );
     prismaMock.$queryRaw.mockResolvedValue([]);
+    prismaMock.application.findFirst.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -284,9 +287,62 @@ describe('ApplicationsService', () => {
       );
     });
 
-    it('throws ConflictException on duplicate application', async () => {
+    it('throws ConflictException when a live application already exists', async () => {
       const listing = makeRawListing();
       prismaMock.listing.findUnique.mockResolvedValue(listing);
+      prismaMock.application.findFirst.mockResolvedValue(
+        makeRawApplication({ status: ApplicationStatus.ACTIVE }),
+      );
+
+      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prismaMock.application.create).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException when a WAITING application already exists', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findUnique.mockResolvedValue(listing);
+      prismaMock.application.findFirst.mockResolvedValue(
+        makeRawApplication({ status: ApplicationStatus.WAITING }),
+      );
+
+      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prismaMock.application.create).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException when a REJECTED application already exists', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findUnique.mockResolvedValue(listing);
+      prismaMock.application.findFirst.mockResolvedValue(
+        makeRawApplication({ status: ApplicationStatus.REJECTED }),
+      );
+
+      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prismaMock.application.create).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException when an ACCEPTED application already exists', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findUnique.mockResolvedValue(listing);
+      prismaMock.application.findFirst.mockResolvedValue(
+        makeRawApplication({ status: ApplicationStatus.ACCEPTED }),
+      );
+
+      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prismaMock.application.create).not.toHaveBeenCalled();
+    });
+
+    it('still maps a Prisma unique constraint violation to ConflictException for races', async () => {
+      const listing = makeRawListing();
+      prismaMock.listing.findUnique.mockResolvedValue(listing);
+      prismaMock.application.findFirst.mockResolvedValue(null);
       prismaMock.application.count.mockResolvedValue(0);
       prismaMock.application.create.mockRejectedValue(
         new PrismaClientKnownRequestError('Unique constraint failed', {
@@ -299,22 +355,58 @@ describe('ApplicationsService', () => {
         ConflictException,
       );
     });
-  });
 
-  describe('findAllByApplicant', () => {
-    it('returns applications for the given applicant', async () => {
-      const applications = [makeRawApplication()];
-      prismaMock.application.findMany.mockResolvedValue(applications);
+    it('creates a new application when the previous one is WITHDRAWN', async () => {
+      const listing = makeRawListing();
+      const reapplied = makeRawApplication({
+        id: '00000000-0000-4000-8000-000000000005',
+        status: ApplicationStatus.ACTIVE,
+        queueOrder: BigInt(2),
+      });
+      prismaMock.listing.findUnique.mockResolvedValue(listing);
+      prismaMock.application.findFirst.mockResolvedValue(null);
+      prismaMock.application.count.mockResolvedValue(0);
+      prismaMock.application.create.mockResolvedValue(reapplied);
 
-      const result = await service.findAllByApplicant(APPLICANT_ID);
+      const result = await service.apply(LISTING_ID, APPLICANT_ID);
 
-      expect(prismaMock.application.findMany).toHaveBeenCalledWith(
+      expect(result.id).toBe(reapplied.id);
+      expect(result.status).toBe(ApplicationStatus.ACTIVE);
+      expect(result.queueOrder).toBe(reapplied.queueOrder);
+      expect(prismaMock.application.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { applicantId: APPLICANT_ID },
-          orderBy: { createdAt: 'desc' },
+          data: expect.objectContaining({
+            listingId: LISTING_ID,
+            applicantId: APPLICANT_ID,
+            status: ApplicationStatus.ACTIVE,
+          }),
         }),
       );
-      expect(result).toEqual(applications);
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+
+    it('recalculates WAITING status from the current listing state when re-applying', async () => {
+      const listing = makeRawListing();
+      const reapplied = makeRawApplication({
+        id: '00000000-0000-4000-8000-000000000005',
+        status: ApplicationStatus.WAITING,
+        queueOrder: BigInt(7),
+      });
+      prismaMock.listing.findUnique.mockResolvedValue(listing);
+      prismaMock.application.findFirst.mockResolvedValue(null);
+      prismaMock.application.count.mockResolvedValue(5);
+      prismaMock.application.create.mockResolvedValue(reapplied);
+
+      const result = await service.apply(LISTING_ID, APPLICANT_ID);
+
+      expect(result.status).toBe(ApplicationStatus.WAITING);
+      expect(prismaMock.application.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: ApplicationStatus.WAITING,
+          }),
+        }),
+      );
     });
   });
 

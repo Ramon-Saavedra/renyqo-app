@@ -83,6 +83,25 @@ export class ApplicationsService {
         );
       }
 
+      const existingBlockingApplication = await tx.application.findFirst({
+        where: {
+          listingId,
+          applicantId,
+          status: {
+            in: [
+              ApplicationStatus.ACTIVE,
+              ApplicationStatus.WAITING,
+              ApplicationStatus.REJECTED,
+              ApplicationStatus.ACCEPTED,
+            ],
+          },
+        },
+      });
+
+      if (existingBlockingApplication) {
+        throw new ConflictException('You have already applied to this listing');
+      }
+
       const profile = await this.lockApplicantProfile(tx, applicantId);
       const eligibility = this.eligibilityService.evaluate(listing, profile);
 
@@ -308,13 +327,6 @@ export class ApplicationsService {
     }
 
     return promotedCount;
-  }
-
-  async findAllByApplicant(applicantId: string): Promise<Application[]> {
-    return this.prisma.application.findMany({
-      where: { applicantId },
-      orderBy: { createdAt: 'desc' },
-    });
   }
 
   async findAllByApplicantWithListing(

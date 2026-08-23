@@ -328,9 +328,11 @@ Only published listings accept applications. RENTED listings do not accept appli
 
 `POST /api/v1/listings/:id/apply` always recalculates eligibility from current database data inside the same transaction that creates the application. A previous frontend eligibility result is never trusted. A rejected application returns `422` with the same explainable payload, where `evaluatedAt` is the timestamp of the evaluation that caused the rejection.
 
-The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING`. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. Duplicate applications return `409`.
+The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING`. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. A duplicate live (`ACTIVE` or `WAITING`) application for the same listing returns `409`. Only a previous `WITHDRAWN` application allows re-applying; `REJECTED` and `ACCEPTED` applications remain terminal and also return `409` on a new application.
 
 `DELETE /api/v1/applicant/applications/:id` can be used only by the owning applicant. It accepts `ACTIVE` and `WAITING` applications, changes the status to `WITHDRAWN`, and returns the application status and dates without exposing applicant or provider internals. Repeating the request for an already withdrawn application is idempotent. Withdrawing an `ACTIVE` application releases one slot and promotes the oldest still-eligible `WAITING` application in the same Serializable transaction.
+
+Withdrawing no longer permanently blocks re-applying. `POST /api/v1/listings/:id/apply` creates a new application row with a new `id` and a new `queueOrder` when the applicant's most recent application for that listing is `WITHDRAWN`. The previous `WITHDRAWN` row is kept unchanged as history. The new status is recalculated from the current listing state, so a re-application may be `ACTIVE` (if a slot is free) or `WAITING` (if the active limit is full). Re-applications are subject to the same `PUBLISHED` listing and eligibility checks as first-time applications. `REJECTED` and `ACCEPTED` applications remain terminal and block new applications.
 
 ### Waiting queue promotion
 
@@ -353,9 +355,9 @@ Withdrawing an `ACTIVE` application calls the private `promoteWithinTransaction(
 
 RENTED listings disappear from applicant discovery and do not accept new applications.
 
-Application terminal states are `REJECTED`, `WITHDRAWN`, `ACCEPTED` and listing `RENTED`. These states serve as the authoritative source for downstream features such as view restrictions and chat availability.
+Application terminal states are `REJECTED`, `WITHDRAWN`, `ACCEPTED` and listing `RENTED`. These states serve as the authoritative source for downstream features such as view restrictions and chat availability. `WITHDRAWN` is terminal for the row it marks, but it is the only terminal state that allows a new application row to be created afterwards; `REJECTED` and `ACCEPTED` block re-applying.
 
-`GET /api/v1/applicant/applications` returns for each application: `status`, `createdAt`, `updatedAt`, `rejectedAt`, `publicReason` and a safe listing summary with the listing title, city, cold rent and cover image URL. It never exposes queue position, provider identity, private address, internal eligibility data or provider comments.
+`GET /api/v1/applicant/applications` returns every application row submitted by the current applicant, ordered by `createdAt` descending (newest first). Because re-applying after withdrawal creates a new row, the response may legitimately contain multiple rows with the same `listingId`. The frontend should treat the most recent row for a given listing as the current application state; if that row is `ACTIVE` or `WAITING` it is the live application, otherwise the listing has no live application. The response never exposes queue position, provider identity, private address, internal eligibility data or provider comments.
 
 ### Applicant Profile
 
