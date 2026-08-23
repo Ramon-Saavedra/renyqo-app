@@ -5,6 +5,9 @@
   "author": "",
   "private": true,
   "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "overrides": {
     "multer": "^2.2.0",
     "@hono/node-server": "^1.19.13",
@@ -12,21 +15,23 @@
   },
   "scripts": {
     "build": "nest build",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.spec.json",
+    "format": "prettier --write \"{src,test,evals}/**/*.{ts,json}\"",
+    "format:check": "prettier --check \"{src,test,evals}/**/*.{ts,json}\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.spec.json && tsc --noEmit -p tsconfig.evals.json",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
-    "lint:fix": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,apps,libs,test,evals}/**/*.ts\"",
+    "lint:fix": "eslint \"{src,apps,libs,test,evals}/**/*.ts\" --fix",
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./test/jest-e2e.json --passWithNoTests --runInBand",
-    "audit:prod": "npm audit --omit=dev --audit-level=high"
+    "test:e2e:listing-assistance": "npm run test:e2e -- --runTestsByPath test/listing-assistance.e2e-spec.ts",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "eval:listing-assistance": "ts-node --project tsconfig.evals.json evals/listing-assistance/run.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.1090.0",

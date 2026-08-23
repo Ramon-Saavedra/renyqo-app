@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, PayloadTooLargeException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate, type ValidationError } from 'class-validator';
 import { CreateListingDto } from '../listings/dto/create-listing.dto';
@@ -6,10 +6,12 @@ import { ListingExtractionIssueDto } from './dto/listing-extraction-issue.dto';
 import { ListingExtractionResponseDto } from './dto/listing-extraction-response.dto';
 import {
   isListingExtractionField,
+  LISTING_SOURCE_MAX_CHARACTERS,
   RECOMMENDED_LISTING_FIELDS,
   REQUIRED_LISTING_PROPERTY_FIELDS,
 } from './listing-extraction.policy';
 import type { ListingAssistanceFile } from './listing-assistance-upload.constants';
+import { normalizeListingSource } from './listing-source-normalizer';
 import { AI_PROVIDER } from './providers/ai-provider.token';
 import type {
   AiProvider,
@@ -36,21 +38,94 @@ function validationIssues(
 export class ListingAssistanceService {
   constructor(@Inject(AI_PROVIDER) private readonly aiProvider: AiProvider) {}
 
-  async extractFromText(text: string): Promise<ListingExtractionResponseDto> {
-    return this.validateExtraction(await this.aiProvider.extractFromText(text));
+  async extractFromText(
+    text: string,
+    currentDate = new Date(),
+  ): Promise<ListingExtractionResponseDto> {
+    const candidate = await this.aiProvider.extractFromText(text, currentDate);
+    return this.validateExtraction(
+      this.mergeDeterministicEvidence(text, candidate, currentDate),
+    );
   }
 
   async extractFromPdf(
     file: ListingAssistanceFile,
+    currentDate = new Date(),
   ): Promise<ListingExtractionResponseDto> {
-    return this.validateExtraction(await this.aiProvider.extractFromPdf(file));
+    return this.validateExtraction(
+      await this.aiProvider.extractFromPdf(file, currentDate),
+    );
   }
 
   async extractFromAudio(
     file: ListingAssistanceFile,
+    currentDate = new Date(),
   ): Promise<ListingExtractionResponseDto> {
     const transcript = await this.aiProvider.transcribeAudio(file);
-    return this.extractFromText(transcript);
+    if (transcript.length > LISTING_SOURCE_MAX_CHARACTERS) {
+      throw new PayloadTooLargeException('Audio transcript is too long');
+    }
+    const candidate = await this.aiProvider.extractFromText(
+      transcript,
+      currentDate,
+    );
+    return this.validateExtraction(
+      this.mergeDeterministicEvidence(transcript, candidate, currentDate),
+    );
+  }
+
+  private mergeDeterministicEvidence(
+    text: string,
+    candidate: ListingExtractionCandidate,
+    currentDate: Date,
+  ): ListingExtractionCandidate {
+    const normalized = normalizeListingSource(text, currentDate);
+
+    const values = { ...candidate.values };
+    const conflictingFields = new Set(candidate.conflictingFields);
+    const uncertainFields = new Set(candidate.uncertainFields);
+
+    if (normalized.conflictingFields.includes('livingArea')) {
+      conflictingFields.add('livingArea');
+      values.livingArea = null;
+    } else if (normalized.livingArea !== null) {
+      uncertainFields.delete('livingArea');
+      if (
+        values.livingArea !== null &&
+        values.livingArea !== normalized.livingArea
+      ) {
+        conflictingFields.add('livingArea');
+        values.livingArea = null;
+      } else {
+        values.livingArea = normalized.livingArea;
+      }
+    }
+
+    if (normalized.conflictingFields.includes('availableFrom')) {
+      conflictingFields.add('availableFrom');
+      values.availableFrom = null;
+    } else if (normalized.uncertainFields.includes('availableFrom')) {
+      uncertainFields.add('availableFrom');
+      values.availableFrom = null;
+    } else if (normalized.availableFrom !== null) {
+      uncertainFields.delete('availableFrom');
+      if (
+        values.availableFrom !== null &&
+        values.availableFrom !== normalized.availableFrom
+      ) {
+        conflictingFields.add('availableFrom');
+        values.availableFrom = null;
+      } else {
+        values.availableFrom = normalized.availableFrom;
+      }
+    }
+
+    return {
+      ...candidate,
+      values,
+      conflictingFields: Array.from(conflictingFields),
+      uncertainFields: Array.from(uncertainFields),
+    };
   }
 
   private async validateExtraction(

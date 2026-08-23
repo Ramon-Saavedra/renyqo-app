@@ -36,9 +36,13 @@ export interface ListingExtractionCandidate {
 }
 
 export interface AiProvider {
-  extractFromText(text: string): Promise<ListingExtractionCandidate>;
+  extractFromText(
+    text: string,
+    currentDate: Date,
+  ): Promise<ListingExtractionCandidate>;
   extractFromPdf(
     file: ListingAssistanceFile,
+    currentDate: Date,
   ): Promise<ListingExtractionCandidate>;
   transcribeAudio(file: ListingAssistanceFile): Promise<string>;
 }

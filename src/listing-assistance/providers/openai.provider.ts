@@ -10,27 +10,21 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import OpenAI from 'openai';
 import type { ResponseInput } from 'openai/resources/responses/responses';
-import {
-  ObjectType,
-  PetsPolicy,
-  SmokingPolicy,
-} from '../../generated/prisma/enums';
 import type { ListingAssistanceFile } from '../listing-assistance-upload.constants';
+import { toBerlinIsoDate } from '../listing-source-normalizer';
 import { extractionInstructions } from '../listing-extraction.instructions';
 import { listingExtractionSchema } from '../listing-extraction.schema';
+import { listingExtractionSpecificationPrompt } from '../listing-extraction.specification';
 import {
-  isListingExtractionField,
-  LISTING_EXTRACTION_FIELDS,
+  EXTRACTION_INSTRUCTIONS_VERSION,
+  EXTRACTION_SCHEMA_VERSION,
+  LISTING_EXTRACTION_MAX_OUTPUT_TOKENS,
 } from '../listing-extraction.policy';
 import type {
   AiProvider,
   ListingExtractionCandidate,
-  ListingExtractionValues,
 } from './ai-provider.interface';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
+import { parseListingExtractionCandidate } from './openai-response.parser';
 
 @Injectable()
 export class OpenAiProvider implements AiProvider {
@@ -48,15 +42,20 @@ export class OpenAiProvider implements AiProvider {
     });
   }
 
-  async extractFromText(text: string): Promise<ListingExtractionCandidate> {
+  async extractFromText(
+    text: string,
+    currentDate: Date,
+  ): Promise<ListingExtractionCandidate> {
     return this.extract(
       [{ role: 'user', content: [{ type: 'input_text', text }] }],
       'text',
+      currentDate,
     );
   }
 
   async extractFromPdf(
     file: ListingAssistanceFile,
+    currentDate: Date,
   ): Promise<ListingExtractionCandidate> {
     const fileData = `data:application/pdf;base64,${file.buffer.toString('base64')}`;
 
@@ -75,6 +74,7 @@ export class OpenAiProvider implements AiProvider {
         },
       ],
       'pdf',
+      currentDate,
     );
   }
 
@@ -101,14 +101,21 @@ export class OpenAiProvider implements AiProvider {
   private async extract(
     input: ResponseInput,
     inputType: 'text' | 'pdf',
+    currentDate: Date,
   ): Promise<ListingExtractionCandidate> {
     const startedAt = Date.now();
     try {
       const response = await this.client.responses.create({
         model: this.config.getOrThrow('OPENAI_LISTING_MODEL'),
         store: false,
+        max_output_tokens: LISTING_EXTRACTION_MAX_OUTPUT_TOKENS,
         input: [
           { role: 'developer', content: extractionInstructions },
+          { role: 'developer', content: listingExtractionSpecificationPrompt },
+          {
+            role: 'developer',
+            content: `Current backend date in Europe/Berlin: ${toBerlinIsoDate(currentDate)}.`,
+          },
           ...input,
         ],
         text: {
@@ -135,8 +142,13 @@ export class OpenAiProvider implements AiProvider {
       }
 
       const output = response.output_text;
-      const parsed: unknown = JSON.parse(output);
-      const candidate = this.toCandidate(parsed);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(output);
+      } catch {
+        throw new BadGatewayException('AI extraction response was invalid');
+      }
+      const candidate = parseListingExtractionCandidate(parsed);
       if (!candidate) {
         throw new BadGatewayException('AI extraction response was invalid');
       }
@@ -147,8 +159,8 @@ export class OpenAiProvider implements AiProvider {
           openAiRequestId: response._request_id ?? null,
           inputType,
           model: this.config.getOrThrow('OPENAI_LISTING_MODEL'),
-          schemaVersion: 'listing-extraction-schema-v1',
-          instructionsVersion: 'provider-listing-extraction-instructions-v1',
+          schemaVersion: EXTRACTION_SCHEMA_VERSION,
+          instructionsVersion: EXTRACTION_INSTRUCTIONS_VERSION,
           latencyMs: Date.now() - startedAt,
           valuesCount: Object.values(candidate.values).filter(
             (value) => value !== null,
@@ -166,241 +178,6 @@ export class OpenAiProvider implements AiProvider {
 
       throw this.toException(error);
     }
-  }
-
-  private toCandidate(value: unknown): ListingExtractionCandidate | null {
-    if (!isRecord(value) || !isRecord(value.values)) return null;
-    if (!this.isNullableNumber(value.depositEvidence)) return null;
-    if (!this.isFieldArray(value.conflictingFields)) return null;
-    if (!this.isFieldArray(value.uncertainFields)) return null;
-
-    const values = value.values;
-    const fields = LISTING_EXTRACTION_FIELDS;
-    if (!fields.every((field) => field in values)) return null;
-    if (Object.keys(values).some((field) => !isListingExtractionField(field)))
-      return null;
-
-    const numberFields = [
-      'livingArea',
-      'rooms',
-      'coldRent',
-      'additionalCosts',
-      'minimumHouseholdNetIncome',
-    ] as const;
-    const integerFields = [
-      'bedrooms',
-      'depositMonths',
-      'suitableForPeopleCount',
-    ] as const;
-    const stringFields = [
-      'city',
-      'zip',
-      'street',
-      'district',
-      'availableFrom',
-      'title',
-      'shortDescription',
-    ] as const;
-    const booleanFields = ['schufaRequired', 'incomeProofRequired'] as const;
-    if (!numberFields.every((field) => this.isNullableNumber(values[field])))
-      return null;
-    if (!integerFields.every((field) => this.isNullableInteger(values[field])))
-      return null;
-    if (!stringFields.every((field) => this.isNullableString(values[field])))
-      return null;
-    if (!booleanFields.every((field) => this.isNullableBoolean(values[field])))
-      return null;
-    if (!this.isNullableEnum(values.objectType, Object.values(ObjectType)))
-      return null;
-    if (!this.isNullableEnum(values.petsPolicy, Object.values(PetsPolicy)))
-      return null;
-    if (
-      !this.isNullableEnum(values.smokingPolicy, Object.values(SmokingPolicy))
-    )
-      return null;
-
-    const objectType = this.readNullableEnum(
-      values.objectType,
-      Object.values(ObjectType),
-    );
-    const petsPolicy = this.readNullableEnum(
-      values.petsPolicy,
-      Object.values(PetsPolicy),
-    );
-    const smokingPolicy = this.readNullableEnum(
-      values.smokingPolicy,
-      Object.values(SmokingPolicy),
-    );
-    const stringValues = [
-      values.city,
-      values.zip,
-      values.street,
-      values.district,
-      values.availableFrom,
-      values.title,
-      values.shortDescription,
-    ].map((value) => this.readNullableString(value));
-    const numberValues = [
-      values.livingArea,
-      values.rooms,
-      values.coldRent,
-      values.additionalCosts,
-      values.minimumHouseholdNetIncome,
-    ].map((value) => this.readNullableNumber(value));
-    const integerValues = [
-      values.bedrooms,
-      values.depositMonths,
-      values.suitableForPeopleCount,
-    ].map((value) => this.readNullableInteger(value));
-    const booleanValues = [
-      values.schufaRequired,
-      values.incomeProofRequired,
-    ].map((value) => this.readNullableBoolean(value));
-    if (
-      objectType === undefined ||
-      petsPolicy === undefined ||
-      smokingPolicy === undefined ||
-      stringValues.some((value) => value === undefined) ||
-      numberValues.some((value) => value === undefined) ||
-      integerValues.some((value) => value === undefined) ||
-      booleanValues.some((value) => value === undefined)
-    )
-      return null;
-
-    const [
-      city,
-      zip,
-      street,
-      district,
-      availableFrom,
-      title,
-      shortDescription,
-    ] = stringValues;
-    const [
-      livingArea,
-      rooms,
-      coldRent,
-      additionalCosts,
-      minimumHouseholdNetIncome,
-    ] = numberValues;
-    const [bedrooms, depositMonths, suitableForPeopleCount] = integerValues;
-    const [schufaRequired, incomeProofRequired] = booleanValues;
-    if (
-      city === undefined ||
-      zip === undefined ||
-      street === undefined ||
-      district === undefined ||
-      availableFrom === undefined ||
-      title === undefined ||
-      shortDescription === undefined ||
-      livingArea === undefined ||
-      rooms === undefined ||
-      coldRent === undefined ||
-      additionalCosts === undefined ||
-      minimumHouseholdNetIncome === undefined ||
-      bedrooms === undefined ||
-      depositMonths === undefined ||
-      suitableForPeopleCount === undefined ||
-      schufaRequired === undefined ||
-      incomeProofRequired === undefined
-    )
-      return null;
-
-    const typedValues: ListingExtractionValues = {
-      objectType,
-      city,
-      zip,
-      street,
-      district,
-      livingArea,
-      rooms,
-      bedrooms,
-      coldRent,
-      additionalCosts,
-      depositMonths,
-      availableFrom,
-      title,
-      shortDescription,
-      minimumHouseholdNetIncome,
-      schufaRequired,
-      incomeProofRequired,
-      suitableForPeopleCount,
-      petsPolicy,
-      smokingPolicy,
-    };
-
-    return {
-      values: typedValues,
-      depositEvidence: value.depositEvidence,
-      conflictingFields: value.conflictingFields,
-      uncertainFields: value.uncertainFields,
-    };
-  }
-
-  private isNullableNumber(value: unknown): value is number | null {
-    return (
-      value === null || (typeof value === 'number' && Number.isFinite(value))
-    );
-  }
-
-  private readNullableNumber(value: unknown): number | null | undefined {
-    return this.isNullableNumber(value) ? value : undefined;
-  }
-
-  private isNullableInteger(value: unknown): value is number | null {
-    return (
-      this.isNullableNumber(value) &&
-      (value === null || Number.isInteger(value))
-    );
-  }
-
-  private readNullableInteger(value: unknown): number | null | undefined {
-    return this.isNullableInteger(value) ? value : undefined;
-  }
-
-  private isNullableString(value: unknown): value is string | null {
-    return value === null || typeof value === 'string';
-  }
-
-  private readNullableString(value: unknown): string | null | undefined {
-    return this.isNullableString(value) ? value : undefined;
-  }
-
-  private isNullableBoolean(value: unknown): value is boolean | null {
-    return value === null || typeof value === 'boolean';
-  }
-
-  private readNullableBoolean(value: unknown): boolean | null | undefined {
-    return this.isNullableBoolean(value) ? value : undefined;
-  }
-
-  private isNullableEnum<T extends string>(
-    value: unknown,
-    allowed: readonly T[],
-  ): value is T | null {
-    return (
-      value === null ||
-      (typeof value === 'string' && allowed.some((item) => item === value))
-    );
-  }
-
-  private readNullableEnum<T extends string>(
-    value: unknown,
-    allowed: readonly T[],
-  ): T | null | undefined {
-    if (value === null) return null;
-    return allowed.find((item) => item === value);
-  }
-
-  private isFieldArray(
-    value: unknown,
-  ): value is ListingExtractionCandidate['conflictingFields'] {
-    return (
-      Array.isArray(value) &&
-      value.every(
-        (field) => typeof field === 'string' && isListingExtractionField(field),
-      )
-    );
   }
 
   private toException(

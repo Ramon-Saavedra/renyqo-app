@@ -1,17 +1,21 @@
 import type { CreateListingDto } from '../../listings/dto/create-listing.dto';
+import type {
+  RecommendedListingField,
+  RequiredListingPropertyField,
+} from '../listing-extraction.policy';
 import { ListingExtractionIssueDto } from './listing-extraction-issue.dto';
 
 export class ListingExtractionResponseDto {
   readonly values!: Partial<CreateListingDto>;
-  readonly requiredMissingFields!: string[];
-  readonly recommendedMissingFields!: string[];
+  readonly requiredMissingFields!: RequiredListingPropertyField[];
+  readonly recommendedMissingFields!: RecommendedListingField[];
   readonly inconsistencies!: ListingExtractionIssueDto[];
   readonly warnings!: string[];
 
   constructor(input: {
     values: Partial<CreateListingDto>;
-    requiredMissingFields: string[];
-    recommendedMissingFields: string[];
+    requiredMissingFields: RequiredListingPropertyField[];
+    recommendedMissingFields: RecommendedListingField[];
     inconsistencies: ListingExtractionIssueDto[];
     warnings: string[];
   }) {
