@@ -9,6 +9,7 @@ import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
 import { ApplicationResponseDto } from './dto/application-response.dto';
+import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-application-action-throttler.guard';
 
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
@@ -93,7 +94,10 @@ describe('ApplicationsController', () => {
           },
         },
       ],
-    }).compile();
+    })
+      .overrideGuard(ApplicantApplicationActionThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<ApplicationsController>(ApplicationsController);
     applicationsService = module.get(ApplicationsService);

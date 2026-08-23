@@ -334,6 +334,8 @@ The first five eligible applications are `ACTIVE`; later eligible applications a
 
 Withdrawing no longer permanently blocks re-applying. `POST /api/v1/listings/:id/apply` creates a new application row with a new `id` and a new `queueOrder` when the applicant's most recent application for that listing is `WITHDRAWN`. The previous `WITHDRAWN` row is kept unchanged as history. The new status is recalculated from the current listing state, so a re-application may be `ACTIVE` (if a slot is free) or `WAITING` (if the active limit is full). Re-applications are subject to the same `PUBLISHED` listing and eligibility checks as first-time applications. `REJECTED` and `ACCEPTED` applications remain terminal and block new applications.
 
+`POST /api/v1/listings/:id/apply` and `DELETE /api/v1/applicant/applications/:id` share a backend rate-limit bucket keyed by the authenticated applicant and listing. Four application actions are allowed per 60 seconds; the fifth rapid action returns `429` with `code: "APPLICATION_ACTION_RATE_LIMITED"`. This permits two complete apply/withdraw cycles in a short window while limiting automated history-row abuse. The application-scoped in-memory storage implements the NestJS throttler contract and applies per backend process; configure shared throttler storage before running multiple replicas.
+
 ### Waiting queue promotion
 
 Promotion is an internal backend operation with no HTTP endpoint. Providers cannot promote a waiting applicant manually, and the queue is never reordered by income, assets, SCHUFA or provider preference.

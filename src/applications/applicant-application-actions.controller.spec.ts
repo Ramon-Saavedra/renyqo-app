@@ -6,6 +6,7 @@ import { ApplicationStatus, Role, UserStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantApplicationActionsController } from './applicant-application-actions.controller';
 import { ApplicationsService } from './applications.service';
+import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-application-action-throttler.guard';
 
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000001';
 const APPLICATION_ID = '00000000-0000-4000-8000-000000000002';
@@ -51,7 +52,10 @@ describe('ApplicantApplicationActionsController', () => {
           useValue: { withdraw: jest.fn() },
         },
       ],
-    }).compile();
+    })
+      .overrideGuard(ApplicantApplicationActionThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get(ApplicantApplicationActionsController);
     applicationsService = module.get(ApplicationsService);
