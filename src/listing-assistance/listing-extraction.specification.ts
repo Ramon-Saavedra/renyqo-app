@@ -44,7 +44,15 @@ export const listingExtractionSpecification: Record<
   },
   livingArea: {
     meaning: 'Residential living area in square metres.',
-    germanTerms: ['Wohnfläche', 'Wohnraumfläche', 'm²', 'qm', 'Fläche'],
+    germanTerms: [
+      'Wohnfläche',
+      'Wohnraumfläche',
+      'm²',
+      'm2',
+      'qm',
+      'Quadratmeter',
+      'Fläche',
+    ],
     normalization:
       'Convert decimal comma and explicit square-metre units only.',
     doNotInterpret: [
@@ -93,8 +101,13 @@ export const listingExtractionSpecification: Record<
       'bezugsfrei ab',
       'Einzug ab',
       'verfügbar zum',
+      'ab sofort',
+      'sofort',
+      'sofort verfügbar',
+      'verfügbar ab heute',
     ],
-    normalization: 'Convert only unambiguous complete dates to ISO date.',
+    normalization:
+      'Use the supplied Europe/Berlin backend date for immediate availability. Convert unambiguous DD.MM.YYYY, DD-MM-YYYY, DD/MM/YYYY, and DDMM.YYYY dates to ISO. If day and month can be swapped, return null and mark availableFrom uncertain.',
     doNotInterpret: ['publication date', 'viewing date', 'month without year'],
   },
   title: {
@@ -163,3 +176,16 @@ export const listingExtractionSpecification: Record<
     doNotInterpret: ['ambiguous Nichtraucher wording'],
   },
 };
+
+export const listingExtractionSpecificationPrompt = [
+  'Field-level extraction specification:',
+  ...Object.entries(listingExtractionSpecification).map(([field, spec]) =>
+    [
+      `${field}: ${spec.meaning}`,
+      `German terms: ${spec.germanTerms.join(', ')}`,
+      `Normalization: ${spec.normalization}`,
+      `Do not interpret as: ${spec.doNotInterpret.join(', ')}`,
+    ].join('\n'),
+  ),
+  'Follow this specification strictly when extracting values.',
+].join('\n\n');

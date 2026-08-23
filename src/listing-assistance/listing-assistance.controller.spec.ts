@@ -3,14 +3,15 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { ListingAssistanceController } from './listing-assistance.controller';
 import { ListingAssistanceService } from './listing-assistance.service';
 import type { ListingAssistanceFile } from './listing-assistance-upload.constants';
+import { ListingExtractionResponseDto } from './dto/listing-extraction-response.dto';
 
-const response = {
+const response = new ListingExtractionResponseDto({
   values: { city: 'Berlin' },
   requiredMissingFields: ['street'],
   recommendedMissingFields: ['petsPolicy'],
   inconsistencies: [],
   warnings: [],
-};
+});
 
 function createController(): {
   controller: ListingAssistanceController;
@@ -22,11 +23,16 @@ function createController(): {
   >;
 } {
   const service = {
-    extractFromText: jest.fn<(text: string) => Promise<typeof response>>(),
+    extractFromText:
+      jest.fn<(text: string) => Promise<ListingExtractionResponseDto>>(),
     extractFromPdf:
-      jest.fn<(file: Express.Multer.File) => Promise<typeof response>>(),
+      jest.fn<
+        (file: ListingAssistanceFile) => Promise<ListingExtractionResponseDto>
+      >(),
     extractFromAudio:
-      jest.fn<(file: Express.Multer.File) => Promise<typeof response>>(),
+      jest.fn<
+        (file: ListingAssistanceFile) => Promise<ListingExtractionResponseDto>
+      >(),
   };
 
   return {
@@ -62,10 +68,24 @@ describe('ListingAssistanceController', () => {
   it('delegates audio extraction without a listing identifier', async () => {
     const { controller, service } = createController();
     service.extractFromAudio.mockResolvedValue(response);
+    const buffer = Buffer.alloc(46);
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(38, 4);
+    buffer.write('WAVE', 8);
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20);
+    buffer.writeUInt16LE(1, 22);
+    buffer.writeUInt32LE(8000, 24);
+    buffer.writeUInt32LE(16000, 28);
+    buffer.writeUInt16LE(2, 32);
+    buffer.writeUInt16LE(16, 34);
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(2, 40);
     const file: ListingAssistanceFile = {
-      originalname: 'listing.webm',
-      mimetype: 'audio/webm',
-      buffer: Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+      originalname: 'listing.wav',
+      mimetype: 'audio/wav',
+      buffer,
     };
 
     await expect(controller.extractFromAudio(file)).resolves.toBe(response);

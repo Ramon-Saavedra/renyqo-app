@@ -5,6 +5,11 @@
     "noEmit": true,
     "types": ["jest", "node", "express-session", "passport", "multer"]
   },
-  "include": ["src/**/*.spec.ts", "src/**/*.test.ts", "test/**/*.ts"],
+  "include": [
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "src/__mocks__/**/*.ts",
+    "test/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }
