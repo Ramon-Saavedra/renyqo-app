@@ -15,6 +15,7 @@ import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsService } from './applications.service';
 import { ApplicationResponseDto } from './dto/application-response.dto';
+import { ProviderActiveApplicationResponseDto } from './dto/provider-active-application-response.dto';
 import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
 
 @UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
@@ -52,13 +53,13 @@ export class ProviderApplicationsController {
   async findActiveByListing(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
     @CurrentUser() user: SafeUser,
-  ): Promise<ApplicationResponseDto[]> {
+  ): Promise<ProviderActiveApplicationResponseDto[]> {
     const applications = await this.applicationsService.findActiveByListing(
       listingId,
       user.id,
     );
     return applications.map(
-      (application) => new ApplicationResponseDto(application),
+      (application) => new ProviderActiveApplicationResponseDto(application),
     );
   }
 

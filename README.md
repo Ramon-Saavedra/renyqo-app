@@ -195,7 +195,7 @@ Provider endpoints require an authenticated provider session and enforce listing
 | `PATCH` | `/api/v1/provider/listings/:id/draft`               | Provider | Move a listing back to draft                            |
 | `PATCH` | `/api/v1/provider/listings/:id/archive`             | Provider | Archive an owned listing                                |
 | `PATCH` | `/api/v1/provider/listings/:id/rent`                | Provider | Mark a listing as rented and finalize applications      |
-| `GET`   | `/api/v1/provider/listings/:id/active-applications` | Provider | Get active applications for one listing                 |
+| `GET`   | `/api/v1/provider/listings/:id/active-applications` | Provider | Get ACTIVE applications with provider-safe applicant summaries |
 
 Required property fields to publish: `street`, `zip`, `city`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`. A final `title` is also required; the frontend sends either its Provider override or its deterministic auto-title.
 
@@ -319,10 +319,13 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 | `DELETE` | `/api/v1/applicant/applications/:id`          | Applicant | Withdraw one owned application                         |
 | `GET`    | `/api/v1/provider/applications`               | Provider  | Get applications across provider listings              |
 | `GET`    | `/api/v1/provider/listings/:id/applications`  | Provider  | Get applications for an owned listing                  |
+| `GET`    | `/api/v1/provider/listings/:id/active-applications` | Provider | Get ACTIVE applications with provider-safe applicant summaries |
 | `GET`    | `/api/v1/provider/listings/:id/waiting-count` | Provider  | Get the waiting application count for an owned listing |
 | `PATCH`  | `/api/v1/provider/applications/:id/reject`    | Provider  | Reject one owned ACTIVE application                    |
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
+
+`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered by `createdAt` ascending. Each item includes the application fields plus a nested `applicant` summary with Provider-safe identity and profile fields (`name`, `email`, household counts, income proof flags, pets and smoking). It never includes `WAITING` applications, `queueOrder`, password hashes or unrelated user fields.
 
 `GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns `canApply`, `reasons`, `warnings` and `evaluatedAt`. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
 

@@ -91,7 +91,7 @@ describe('ApplicationsService', () => {
       update: jest.MockedFunction<(args?: unknown) => Promise<Application>>;
       findUnique: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
       findFirst: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
-      findMany: jest.MockedFunction<(args?: unknown) => Promise<Application[]>>;
+      findMany: jest.MockedFunction<(args?: unknown) => Promise<unknown[]>>;
     };
     applicantProfile: {
       findUnique: jest.MockedFunction<(args?: unknown) => Promise<null>>;
@@ -117,7 +117,7 @@ describe('ApplicationsService', () => {
         update: jest.fn<(args?: unknown) => Promise<Application>>(),
         findUnique: jest.fn<(args?: unknown) => Promise<unknown>>(),
         findFirst: jest.fn<(args?: unknown) => Promise<unknown>>(),
-        findMany: jest.fn<(args?: unknown) => Promise<Application[]>>(),
+        findMany: jest.fn<(args?: unknown) => Promise<unknown[]>>(),
       },
       applicantProfile: {
         findUnique: jest.fn<(args?: unknown) => Promise<null>>(),
@@ -646,6 +646,83 @@ describe('ApplicationsService', () => {
       expect(prismaMock.application.count).toHaveBeenCalledWith({
         where: { listingId: LISTING_ID, status: ApplicationStatus.WAITING },
       });
+    });
+  });
+
+  describe('findActiveByListing', () => {
+    it('returns ACTIVE applications with provider-safe applicant data for an owned listing', async () => {
+      const applications = [
+        {
+          ...makeRawApplication(),
+          applicant: {
+            name: 'Anna Applicant',
+            email: 'anna@example.com',
+            profile: {
+              peopleCount: 2,
+              adultsCount: 2,
+              childrenCount: 0,
+              householdNetIncome: 3500,
+              incomeProofAvailable: true,
+              schufaAvailable: true,
+              hasPets: false,
+              petsNote: null,
+              smokingStatus: null,
+            },
+          },
+        },
+      ];
+      prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
+      prismaMock.application.findMany.mockResolvedValue(applications);
+
+      await expect(
+        service.findActiveByListing(LISTING_ID, PROVIDER_ID),
+      ).resolves.toEqual(applications);
+      expect(prismaMock.application.findMany).toHaveBeenCalledWith({
+        where: {
+          listingId: LISTING_ID,
+          status: ApplicationStatus.ACTIVE,
+          listing: { providerId: PROVIDER_ID },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 5,
+        select: {
+          id: true,
+          listingId: true,
+          applicantId: true,
+          status: true,
+          rejectedAt: true,
+          publicReason: true,
+          createdAt: true,
+          updatedAt: true,
+          applicant: {
+            select: {
+              name: true,
+              email: true,
+              profile: {
+                select: {
+                  peopleCount: true,
+                  adultsCount: true,
+                  childrenCount: true,
+                  householdNetIncome: true,
+                  incomeProofAvailable: true,
+                  schufaAvailable: true,
+                  hasPets: true,
+                  petsNote: true,
+                  smokingStatus: true,
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    it('throws NotFoundException when listing does not belong to the provider', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.findActiveByListing(LISTING_ID, PROVIDER_ID),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

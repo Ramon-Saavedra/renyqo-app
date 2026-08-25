@@ -14,6 +14,11 @@ import { ApplicationsService } from './applications.service';
 import { ProviderApplicationsController } from './provider-applications.controller';
 import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
 import { ApplicationResponseDto } from './dto/application-response.dto';
+import {
+  ProviderActiveApplicationResponseDto,
+  type ProviderActiveApplicationRecord,
+} from './dto/provider-active-application-response.dto';
+import { SmokingStatus } from '../generated/prisma/enums';
 
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
@@ -63,6 +68,32 @@ const makeApplication = (): Application => ({
   queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
+});
+
+const makeActiveApplicationRecord = (): ProviderActiveApplicationRecord => ({
+  id: APPLICATION_ID,
+  listingId: LISTING_ID,
+  applicantId: APPLICANT_ID,
+  status: ApplicationStatus.ACTIVE,
+  rejectedAt: null,
+  publicReason: null,
+  createdAt: new Date('2024-01-01'),
+  updatedAt: new Date('2024-01-01'),
+  applicant: {
+    name: 'Anna Applicant',
+    email: 'anna@example.com',
+    profile: {
+      peopleCount: 2,
+      adultsCount: 2,
+      childrenCount: 0,
+      householdNetIncome: 3500,
+      incomeProofAvailable: true,
+      schufaAvailable: true,
+      hasPets: false,
+      petsNote: null,
+      smokingStatus: SmokingStatus.NON_SMOKER,
+    },
+  },
 });
 
 const getRouteArgMetadata = (
@@ -160,7 +191,7 @@ describe('ProviderApplicationsController', () => {
 
   describe('findActiveByListing', () => {
     it('calls applicationsService.findActiveByListing with listing id and provider id', async () => {
-      const applications = [makeApplication()];
+      const applications = [makeActiveApplicationRecord()];
       applicationsService.findActiveByListing.mockResolvedValue(applications);
 
       const result = await controller.findActiveByListing(
@@ -174,7 +205,8 @@ describe('ProviderApplicationsController', () => {
       );
       expect(result).toEqual(
         applications.map(
-          (application) => new ApplicationResponseDto(application),
+          (application) =>
+            new ProviderActiveApplicationResponseDto(application),
         ),
       );
     });
