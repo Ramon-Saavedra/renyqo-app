@@ -770,8 +770,14 @@ describe('ListingsService', () => {
   });
 
   describe('findAllByProvider', () => {
-    it('returns all listings for a provider ordered by createdAt desc', async () => {
-      const listings = [makeRawListing(), makeRawListing({ id: LISTING_ID_2 })];
+    it('returns all listings for a provider ordered by createdAt desc with ACTIVE application counts', async () => {
+      const listings = [
+        { ...makeRawListing(), _count: { applications: 2 } },
+        {
+          ...makeRawListing({ id: LISTING_ID_2 }),
+          _count: { applications: 0 },
+        },
+      ];
       prismaMock.listing.findMany.mockResolvedValue(listings);
 
       const result = await service.findAllByProvider(PROVIDER_ID);
@@ -780,9 +786,40 @@ describe('ListingsService', () => {
         expect.objectContaining({
           where: { providerId: PROVIDER_ID },
           orderBy: { createdAt: 'desc' },
+          include: {
+            _count: {
+              select: {
+                applications: {
+                  where: { status: ApplicationStatus.ACTIVE },
+                },
+              },
+            },
+          },
         }),
       );
       expect(result).toEqual(listings);
+    });
+  });
+
+  describe('toProviderListingOverviewResponses', () => {
+    it('maps each listing activeApplicationsCount without exposing _count', () => {
+      const listings = [
+        { ...makeRawListing(), _count: { applications: 0 } },
+        {
+          ...makeRawListing({ id: LISTING_ID_2 }),
+          _count: { applications: 5 },
+        },
+      ];
+
+      const result = service.toProviderListingOverviewResponses(listings, {
+        exposeExactAddress: true,
+      });
+
+      expect(result).toHaveLength(2);
+      expect(result[0].activeApplicationsCount).toBe(0);
+      expect(result[1].activeApplicationsCount).toBe(5);
+      expect(result[0]).not.toHaveProperty('_count');
+      expect(result[1]).not.toHaveProperty('_count');
     });
   });
 

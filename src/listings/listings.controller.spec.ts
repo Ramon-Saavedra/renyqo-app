@@ -9,6 +9,7 @@ import type { SafeUser } from '../users/types/safe-user.type';
 import { Role, UserStatus } from '../generated/prisma/enums';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
+import { ProviderListingOverviewResponseDto } from './dto/provider-listing-overview-response.dto';
 import { RentListingDto } from './dto/rent-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsController } from './listings.controller';
@@ -120,6 +121,19 @@ describe('ListingsController', () => {
                   }),
               ),
             ),
+            toProviderListingOverviewResponses: jest.fn(
+              (
+                listings: ReadonlyArray<
+                  Listing & { _count: { applications: number } }
+                >,
+              ) =>
+                listings.map(
+                  (listing) =>
+                    new ProviderListingOverviewResponseDto(listing, {
+                      exposeExactAddress: true,
+                    }),
+                ),
+            ),
           },
         },
       ],
@@ -159,7 +173,7 @@ describe('ListingsController', () => {
 
   describe('findAll', () => {
     it('calls listingsService.findAllByProvider with provider id', async () => {
-      const listings = [makeListing()];
+      const listings = [{ ...makeListing(), _count: { applications: 2 } }];
       listingsService.findAllByProvider.mockResolvedValue(listings);
 
       const result = await controller.findAll(makeProviderUser());
@@ -167,11 +181,16 @@ describe('ListingsController', () => {
       expect(listingsService.findAllByProvider).toHaveBeenCalledWith(
         PROVIDER_ID,
       );
-      expect(listingsService.toListingResponses).toHaveBeenCalledWith(
-        listings,
-        { exposeExactAddress: true },
-      );
-      expect(result).toEqual(listings);
+      expect(
+        listingsService.toProviderListingOverviewResponses,
+      ).toHaveBeenCalledWith(listings, { exposeExactAddress: true });
+      expect(result).toEqual([
+        new ProviderListingOverviewResponseDto(listings[0], {
+          exposeExactAddress: true,
+        }),
+      ]);
+      expect(result[0].activeApplicationsCount).toBe(2);
+      expect(result[0]).not.toHaveProperty('_count');
     });
   });
 

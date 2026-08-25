@@ -23,6 +23,7 @@ import {
 import type { SafeUser } from '../users/types/safe-user.type';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
+import { ProviderListingOverviewResponseDto } from './dto/provider-listing-overview-response.dto';
 import { RentListingDto } from './dto/rent-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsService } from './listings.service';
@@ -49,9 +50,11 @@ export class ListingsController {
   }
 
   @Get()
-  async findAll(@CurrentUser() user: SafeUser): Promise<ListingResponseDto[]> {
+  async findAll(
+    @CurrentUser() user: SafeUser,
+  ): Promise<ProviderListingOverviewResponseDto[]> {
     const listings = await this.listingsService.findAllByProvider(user.id);
-    return this.listingsService.toListingResponses(listings, {
+    return this.listingsService.toProviderListingOverviewResponses(listings, {
       exposeExactAddress: true,
     });
   }

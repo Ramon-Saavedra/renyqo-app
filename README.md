@@ -185,17 +185,19 @@ DRAFT, PAUSED, ARCHIVED and RENTED listings are not accessible through these end
 
 Provider endpoints require an authenticated provider session and enforce listing ownership.
 
-| Method  | Path                                                | Auth     | Description                                             |
-| ------- | --------------------------------------------------- | -------- | ------------------------------------------------------- |
-| `POST`  | `/api/v1/provider/listings`                         | Provider | Create a draft listing, optionally with its first image |
-| `GET`   | `/api/v1/provider/listings`                         | Provider | Get all listings owned by the provider                  |
-| `GET`   | `/api/v1/provider/listings/:id`                     | Provider | Get one owned listing                                   |
-| `PATCH` | `/api/v1/provider/listings/:id`                     | Provider | Update an owned listing                                 |
-| `PATCH` | `/api/v1/provider/listings/:id/publish`             | Provider | Publish an owned listing                                |
-| `PATCH` | `/api/v1/provider/listings/:id/draft`               | Provider | Move a listing back to draft                            |
-| `PATCH` | `/api/v1/provider/listings/:id/archive`             | Provider | Archive an owned listing                                |
-| `PATCH` | `/api/v1/provider/listings/:id/rent`                | Provider | Mark a listing as rented and finalize applications      |
+| Method  | Path                                                | Auth     | Description                                                    |
+| ------- | --------------------------------------------------- | -------- | -------------------------------------------------------------- |
+| `POST`  | `/api/v1/provider/listings`                         | Provider | Create a draft listing, optionally with its first image        |
+| `GET`   | `/api/v1/provider/listings`                         | Provider | Get all owned listings with `activeApplicationsCount`          |
+| `GET`   | `/api/v1/provider/listings/:id`                     | Provider | Get one owned listing                                          |
+| `PATCH` | `/api/v1/provider/listings/:id`                     | Provider | Update an owned listing                                        |
+| `PATCH` | `/api/v1/provider/listings/:id/publish`             | Provider | Publish an owned listing                                       |
+| `PATCH` | `/api/v1/provider/listings/:id/draft`               | Provider | Move a listing back to draft                                   |
+| `PATCH` | `/api/v1/provider/listings/:id/archive`             | Provider | Archive an owned listing                                       |
+| `PATCH` | `/api/v1/provider/listings/:id/rent`                | Provider | Mark a listing as rented and finalize applications             |
 | `GET`   | `/api/v1/provider/listings/:id/active-applications` | Provider | Get ACTIVE applications with provider-safe applicant summaries |
+
+`GET /api/v1/provider/listings` returns every listing owned by the authenticated provider, ordered by `createdAt` descending. Each item includes `activeApplicationsCount`: the authoritative number of applications with status `ACTIVE` for that listing (expected domain `0`–`5`). WAITING and other non-ACTIVE statuses are not counted. The response does not expose applicant identities, profiles, or raw Prisma `_count` objects.
 
 Required property fields to publish: `street`, `zip`, `city`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`. A final `title` is also required; the frontend sends either its Provider override or its deterministic auto-title.
 
@@ -311,17 +313,17 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 
 ### Applications
 
-| Method   | Path                                          | Auth      | Description                                            |
-| -------- | --------------------------------------------- | --------- | ------------------------------------------------------ |
-| `GET`    | `/api/v1/listings/:id/eligibility`            | Applicant | Read explainable eligibility for the current applicant |
-| `POST`   | `/api/v1/listings/:id/apply`                  | Applicant | Apply to a published listing                           |
-| `GET`    | `/api/v1/applicant/applications`              | Applicant | Get applications submitted by the current applicant    |
-| `DELETE` | `/api/v1/applicant/applications/:id`          | Applicant | Withdraw one owned application                         |
-| `GET`    | `/api/v1/provider/applications`               | Provider  | Get applications across provider listings              |
-| `GET`    | `/api/v1/provider/listings/:id/applications`  | Provider  | Get applications for an owned listing                  |
-| `GET`    | `/api/v1/provider/listings/:id/active-applications` | Provider | Get ACTIVE applications with provider-safe applicant summaries |
-| `GET`    | `/api/v1/provider/listings/:id/waiting-count` | Provider  | Get the waiting application count for an owned listing |
-| `PATCH`  | `/api/v1/provider/applications/:id/reject`    | Provider  | Reject one owned ACTIVE application                    |
+| Method   | Path                                                | Auth      | Description                                                    |
+| -------- | --------------------------------------------------- | --------- | -------------------------------------------------------------- |
+| `GET`    | `/api/v1/listings/:id/eligibility`                  | Applicant | Read explainable eligibility for the current applicant         |
+| `POST`   | `/api/v1/listings/:id/apply`                        | Applicant | Apply to a published listing                                   |
+| `GET`    | `/api/v1/applicant/applications`                    | Applicant | Get applications submitted by the current applicant            |
+| `DELETE` | `/api/v1/applicant/applications/:id`                | Applicant | Withdraw one owned application                                 |
+| `GET`    | `/api/v1/provider/applications`                     | Provider  | Get applications across provider listings                      |
+| `GET`    | `/api/v1/provider/listings/:id/applications`        | Provider  | Get applications for an owned listing                          |
+| `GET`    | `/api/v1/provider/listings/:id/active-applications` | Provider  | Get ACTIVE applications with provider-safe applicant summaries |
+| `GET`    | `/api/v1/provider/listings/:id/waiting-count`       | Provider  | Get the waiting application count for an owned listing         |
+| `PATCH`  | `/api/v1/provider/applications/:id/reject`          | Provider  | Reject one owned ACTIVE application                            |
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 
