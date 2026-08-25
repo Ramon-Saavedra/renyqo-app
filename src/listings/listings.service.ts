@@ -26,6 +26,10 @@ import type { SafeUser } from '../users/types/safe-user.type';
 import type { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
 import type { ListingWithImages } from './dto/listing-response.dto';
+import {
+  ProviderListingOverviewResponseDto,
+  type ListingWithActiveApplicationsCount,
+} from './dto/provider-listing-overview-response.dto';
 import type { UpdateListingDto } from './dto/update-listing.dto';
 import { ApplicantListingDetailDto } from './dto/applicant-listing-detail.dto';
 import {
@@ -341,10 +345,21 @@ export class ListingsService {
     });
   }
 
-  async findAllByProvider(providerId: string): Promise<Listing[]> {
+  async findAllByProvider(
+    providerId: string,
+  ): Promise<ListingWithActiveApplicationsCount[]> {
     return this.prisma.listing.findMany({
       where: { providerId },
       orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: {
+            applications: {
+              where: { status: ApplicationStatus.ACTIVE },
+            },
+          },
+        },
+      },
     });
   }
 
@@ -522,6 +537,15 @@ export class ListingsService {
     options: { exposeExactAddress?: boolean } = {},
   ): ListingResponseDto[] {
     return listings.map((listing) => this.toListingResponse(listing, options));
+  }
+
+  toProviderListingOverviewResponses(
+    listings: readonly ListingWithActiveApplicationsCount[],
+    options: { exposeExactAddress?: boolean } = {},
+  ): ProviderListingOverviewResponseDto[] {
+    return listings.map(
+      (listing) => new ProviderListingOverviewResponseDto(listing, options),
+    );
   }
 
   async isProfileCompleteForUser(userId: string): Promise<boolean> {

@@ -1597,6 +1597,84 @@ describe('Backend API E2E', () => {
     });
   });
 
+  it('returns only owned listings with counts limited to ACTIVE applications', async () => {
+    const providerAgent = request.agent(getServer());
+    const provider = safeUserBody(
+      await providerAgent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+    const otherProvider = safeUserBody(
+      await request(getServer())
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+    const applicantAgent = request.agent(getServer());
+    const firstApplicant = safeUserBody(
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(applicantPayload())
+        .expect(201),
+    );
+    const otherApplicants = await Promise.all(
+      Array.from({ length: 2 }, async () =>
+        safeUserBody(
+          await request(getServer())
+            .post('/api/v1/auth/register')
+            .send(applicantPayload())
+            .expect(201),
+        ),
+      ),
+    );
+    const applicants = [firstApplicant, ...otherApplicants];
+    const listing = await createPublishedListing(provider.id);
+    await createPublishedListing(otherProvider.id);
+
+    await request(getServer()).get('/api/v1/provider/listings').expect(401);
+    await applicantAgent.get('/api/v1/provider/listings').expect(403);
+
+    await getPrisma().application.createMany({
+      data: [
+        {
+          listingId: listing.id,
+          applicantId: applicants[0].id,
+          status: ApplicationStatus.ACTIVE,
+        },
+        {
+          listingId: listing.id,
+          applicantId: applicants[1].id,
+          status: ApplicationStatus.WAITING,
+        },
+        {
+          listingId: listing.id,
+          applicantId: applicants[2].id,
+          status: ApplicationStatus.REJECTED,
+        },
+      ],
+    });
+
+    const response = await providerAgent
+      .get('/api/v1/provider/listings')
+      .expect(200);
+    const body: unknown = response.body;
+
+    if (!Array.isArray(body) || body.length !== 1 || !isRecord(body[0])) {
+      throw new Error(
+        'E2E provider listings response has an unexpected shape.',
+      );
+    }
+
+    expect(body[0]).toMatchObject({
+      id: listing.id,
+      providerId: provider.id,
+      activeApplicationsCount: 1,
+    });
+    expect(body[0]).not.toHaveProperty('_count');
+    expect(body[0]).not.toHaveProperty('applicant');
+  });
+
   describe('re-applying after withdrawal', () => {
     async function createApplicantAndListing() {
       const applicantAgent = request.agent(getServer());
