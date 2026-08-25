@@ -19,6 +19,7 @@ import {
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
+import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
 
 const ACTIVE_APPLICATIONS_LIMIT = 5;
 const SERIALIZABLE_TRANSACTION_RETRIES = 8;
@@ -406,7 +407,7 @@ export class ApplicationsService {
   async findActiveByListing(
     listingId: string,
     providerId: string,
-  ): Promise<Application[]> {
+  ): Promise<ProviderActiveApplicationRecord[]> {
     const listing = await this.prisma.listing.findFirst({
       where: { id: listingId, providerId },
     });
@@ -422,6 +423,36 @@ export class ApplicationsService {
         listing: { providerId },
       },
       orderBy: { createdAt: 'asc' },
+      take: ACTIVE_APPLICATIONS_LIMIT,
+      select: {
+        id: true,
+        listingId: true,
+        applicantId: true,
+        status: true,
+        rejectedAt: true,
+        publicReason: true,
+        createdAt: true,
+        updatedAt: true,
+        applicant: {
+          select: {
+            name: true,
+            email: true,
+            profile: {
+              select: {
+                peopleCount: true,
+                adultsCount: true,
+                childrenCount: true,
+                householdNetIncome: true,
+                incomeProofAvailable: true,
+                schufaAvailable: true,
+                hasPets: true,
+                petsNote: true,
+                smokingStatus: true,
+              },
+            },
+          },
+        },
+      },
     });
   }
 
