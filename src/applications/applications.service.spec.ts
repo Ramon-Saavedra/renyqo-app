@@ -656,17 +656,8 @@ describe('ApplicationsService', () => {
           ...makeRawApplication(),
           applicant: {
             name: 'Anna Applicant',
-            email: 'anna@example.com',
             profile: {
               peopleCount: 2,
-              adultsCount: 2,
-              childrenCount: 0,
-              householdNetIncome: 3500,
-              incomeProofAvailable: true,
-              schufaAvailable: true,
-              hasPets: false,
-              petsNote: null,
-              smokingStatus: null,
             },
           },
         },
@@ -677,6 +668,10 @@ describe('ApplicationsService', () => {
       await expect(
         service.findActiveByListing(LISTING_ID, PROVIDER_ID),
       ).resolves.toEqual(applications);
+      expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
+        where: { id: LISTING_ID, providerId: PROVIDER_ID },
+        select: { id: true },
+      });
       expect(prismaMock.application.findMany).toHaveBeenCalledWith({
         where: {
           listingId: LISTING_ID,
@@ -688,27 +683,13 @@ describe('ApplicationsService', () => {
         select: {
           id: true,
           listingId: true,
-          applicantId: true,
           status: true,
-          rejectedAt: true,
-          publicReason: true,
-          createdAt: true,
-          updatedAt: true,
           applicant: {
             select: {
               name: true,
-              email: true,
               profile: {
                 select: {
                   peopleCount: true,
-                  adultsCount: true,
-                  childrenCount: true,
-                  householdNetIncome: true,
-                  incomeProofAvailable: true,
-                  schufaAvailable: true,
-                  hasPets: true,
-                  petsNote: true,
-                  smokingStatus: true,
                 },
               },
             },

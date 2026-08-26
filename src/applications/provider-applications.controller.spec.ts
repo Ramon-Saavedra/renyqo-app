@@ -18,7 +18,6 @@ import {
   ProviderActiveApplicationResponseDto,
   type ProviderActiveApplicationRecord,
 } from './dto/provider-active-application-response.dto';
-import { SmokingStatus } from '../generated/prisma/enums';
 
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
@@ -73,25 +72,11 @@ const makeApplication = (): Application => ({
 const makeActiveApplicationRecord = (): ProviderActiveApplicationRecord => ({
   id: APPLICATION_ID,
   listingId: LISTING_ID,
-  applicantId: APPLICANT_ID,
   status: ApplicationStatus.ACTIVE,
-  rejectedAt: null,
-  publicReason: null,
-  createdAt: new Date('2024-01-01'),
-  updatedAt: new Date('2024-01-01'),
   applicant: {
     name: 'Anna Applicant',
-    email: 'anna@example.com',
     profile: {
       peopleCount: 2,
-      adultsCount: 2,
-      childrenCount: 0,
-      householdNetIncome: 3500,
-      incomeProofAvailable: true,
-      schufaAvailable: true,
-      hasPets: false,
-      petsNote: null,
-      smokingStatus: SmokingStatus.NON_SMOKER,
     },
   },
 });
