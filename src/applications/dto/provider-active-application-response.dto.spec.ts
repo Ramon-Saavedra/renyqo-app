@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { ApplicationStatus, SmokingStatus } from '../../generated/prisma/enums';
+import { ApplicationStatus } from '../../generated/prisma/enums';
 import {
   ProviderActiveApplicationResponseDto,
   type ProviderActiveApplicationRecord,
@@ -8,33 +8,17 @@ import {
 
 const APPLICATION_ID = '00000000-0000-4000-8000-000000000010';
 const LISTING_ID = '00000000-0000-4000-8000-000000000011';
-const APPLICANT_ID = '00000000-0000-4000-8000-000000000012';
-
 function makeRecord(
   overrides: Partial<ProviderActiveApplicationRecord> = {},
 ): ProviderActiveApplicationRecord {
   return {
     id: APPLICATION_ID,
     listingId: LISTING_ID,
-    applicantId: APPLICANT_ID,
     status: ApplicationStatus.ACTIVE,
-    rejectedAt: null,
-    publicReason: null,
-    createdAt: new Date('2024-01-01T00:00:00.000Z'),
-    updatedAt: new Date('2024-01-02T00:00:00.000Z'),
     applicant: {
       name: 'Anna Applicant',
-      email: 'anna@example.com',
       profile: {
         peopleCount: 3,
-        adultsCount: 2,
-        childrenCount: 1,
-        householdNetIncome: 4200,
-        incomeProofAvailable: true,
-        schufaAvailable: true,
-        hasPets: true,
-        petsNote: 'One cat',
-        smokingStatus: SmokingStatus.NON_SMOKER,
       },
     },
     ...overrides,
@@ -42,35 +26,35 @@ function makeRecord(
 }
 
 describe('ProviderActiveApplicationResponseDto', () => {
-  it('maps application fields and nested provider-safe applicant summary', () => {
+  it('maps only the minimal provider application summary', () => {
     const dto = new ProviderActiveApplicationResponseDto(makeRecord());
 
     expect(dto).toEqual({
       id: APPLICATION_ID,
       listingId: LISTING_ID,
-      applicantId: APPLICANT_ID,
       status: ApplicationStatus.ACTIVE,
-      rejectedAt: null,
-      publicReason: null,
-      createdAt: new Date('2024-01-01T00:00:00.000Z'),
-      updatedAt: new Date('2024-01-02T00:00:00.000Z'),
       applicant: {
         name: 'Anna Applicant',
-        email: 'anna@example.com',
         peopleCount: 3,
-        adultsCount: 2,
-        childrenCount: 1,
-        householdNetIncome: 4200,
-        incomeProofAvailable: true,
-        schufaAvailable: true,
-        hasPets: true,
-        petsNote: 'One cat',
-        smokingStatus: SmokingStatus.NON_SMOKER,
       },
     });
+    expect(dto).not.toHaveProperty('applicantId');
     expect(dto).not.toHaveProperty('queueOrder');
+    expect(dto).not.toHaveProperty('createdAt');
+    expect(dto).not.toHaveProperty('updatedAt');
+    expect(dto).not.toHaveProperty('rejectedAt');
+    expect(dto).not.toHaveProperty('publicReason');
     expect(dto.applicant).not.toHaveProperty('id');
+    expect(dto.applicant).not.toHaveProperty('email');
     expect(dto.applicant).not.toHaveProperty('passwordHash');
+    expect(dto.applicant).not.toHaveProperty('householdNetIncome');
+    expect(dto.applicant).not.toHaveProperty('incomeProofAvailable');
+    expect(dto.applicant).not.toHaveProperty('schufaAvailable');
+    expect(dto.applicant).not.toHaveProperty('adultsCount');
+    expect(dto.applicant).not.toHaveProperty('childrenCount');
+    expect(dto.applicant).not.toHaveProperty('hasPets');
+    expect(dto.applicant).not.toHaveProperty('petsNote');
+    expect(dto.applicant).not.toHaveProperty('smokingStatus');
   });
 
   it('returns null profile fields when the applicant has no profile', () => {
@@ -78,7 +62,6 @@ describe('ProviderActiveApplicationResponseDto', () => {
       makeRecord({
         applicant: {
           name: 'No Profile',
-          email: 'noprofile@example.com',
           profile: null,
         },
       }),
@@ -86,16 +69,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
 
     expect(dto.applicant).toEqual({
       name: 'No Profile',
-      email: 'noprofile@example.com',
       peopleCount: null,
-      adultsCount: null,
-      childrenCount: null,
-      householdNetIncome: null,
-      incomeProofAvailable: null,
-      schufaAvailable: null,
-      hasPets: null,
-      petsNote: null,
-      smokingStatus: null,
     });
   });
 });

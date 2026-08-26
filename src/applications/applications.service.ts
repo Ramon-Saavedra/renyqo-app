@@ -410,6 +410,7 @@ export class ApplicationsService {
   ): Promise<ProviderActiveApplicationRecord[]> {
     const listing = await this.prisma.listing.findFirst({
       where: { id: listingId, providerId },
+      select: { id: true },
     });
 
     if (!listing) {
@@ -427,27 +428,13 @@ export class ApplicationsService {
       select: {
         id: true,
         listingId: true,
-        applicantId: true,
         status: true,
-        rejectedAt: true,
-        publicReason: true,
-        createdAt: true,
-        updatedAt: true,
         applicant: {
           select: {
             name: true,
-            email: true,
             profile: {
               select: {
                 peopleCount: true,
-                adultsCount: true,
-                childrenCount: true,
-                householdNetIncome: true,
-                incomeProofAvailable: true,
-                schufaAvailable: true,
-                hasPets: true,
-                petsNote: true,
-                smokingStatus: true,
               },
             },
           },

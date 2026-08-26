@@ -43,24 +43,10 @@ type SafeUserBody = {
 type ProviderActiveApplicationBody = {
   id: string;
   listingId: string;
-  applicantId: string;
   status: string;
-  rejectedAt: string | null;
-  publicReason: string | null;
-  createdAt: string;
-  updatedAt: string;
   applicant: {
     name: string;
-    email: string;
     peopleCount: number | null;
-    adultsCount: number | null;
-    childrenCount: number | null;
-    householdNetIncome: number | null;
-    incomeProofAvailable: boolean | null;
-    schufaAvailable: boolean | null;
-    hasPets: boolean | null;
-    petsNote: string | null;
-    smokingStatus: string | null;
   };
 };
 
@@ -216,30 +202,12 @@ function isProviderActiveApplicationBody(
   return (
     typeof value.id === 'string' &&
     typeof value.listingId === 'string' &&
-    typeof value.applicantId === 'string' &&
     typeof value.status === 'string' &&
-    typeof value.createdAt === 'string' &&
-    typeof value.updatedAt === 'string' &&
     typeof value.applicant.name === 'string' &&
-    typeof value.applicant.email === 'string' &&
     (value.applicant.peopleCount === null ||
       typeof value.applicant.peopleCount === 'number') &&
-    (value.applicant.adultsCount === null ||
-      typeof value.applicant.adultsCount === 'number') &&
-    (value.applicant.childrenCount === null ||
-      typeof value.applicant.childrenCount === 'number') &&
-    (value.applicant.householdNetIncome === null ||
-      typeof value.applicant.householdNetIncome === 'number') &&
-    (value.applicant.incomeProofAvailable === null ||
-      typeof value.applicant.incomeProofAvailable === 'boolean') &&
-    (value.applicant.schufaAvailable === null ||
-      typeof value.applicant.schufaAvailable === 'boolean') &&
-    (value.applicant.hasPets === null ||
-      typeof value.applicant.hasPets === 'boolean') &&
-    (value.applicant.petsNote === null ||
-      typeof value.applicant.petsNote === 'string') &&
-    (value.applicant.smokingStatus === null ||
-      typeof value.applicant.smokingStatus === 'string')
+    Object.keys(value).length === 4 &&
+    Object.keys(value.applicant).length === 2
   );
 }
 
@@ -297,7 +265,7 @@ async function registerApplicantWithProfile(options: {
     },
   });
 
-  return { agent, applicant, email };
+  return { agent, applicant };
 }
 
 async function publishListing(providerId: string) {
@@ -435,7 +403,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       .expect({ waitingCount: 0 });
   });
 
-  it('returns provider-safe applicant summaries for 1–4 ACTIVE applications in createdAt ASC order', async () => {
+  it('returns minimal applicant summaries for 1–4 ACTIVE applications in createdAt ASC order', async () => {
     const { agent, provider } = await registerProvider();
     const listing = await publishListing(provider.id);
 
@@ -473,42 +441,28 @@ describe('Provider ACTIVE applications summary E2E', () => {
     ]);
     expect(bodies[0]).toMatchObject({
       listingId: listing.id,
-      applicantId: first.applicant.id,
       status: 'ACTIVE',
       applicant: {
         name: 'First Applicant',
-        email: first.email,
         peopleCount: 1,
-        adultsCount: 1,
-        childrenCount: 0,
-        householdNetIncome: 3000,
-        incomeProofAvailable: true,
-        schufaAvailable: true,
-        hasPets: false,
-        petsNote: null,
-        smokingStatus: 'NON_SMOKER',
       },
     });
     expect(bodies[1]).toMatchObject({
-      applicantId: second.applicant.id,
       applicant: {
         name: 'Second Applicant',
-        email: second.email,
         peopleCount: 3,
-        adultsCount: 2,
-        childrenCount: 1,
-        householdNetIncome: 4500,
-        hasPets: true,
-        petsNote: 'One dog',
-        smokingStatus: 'OCCASIONALLY',
       },
     });
-    expect(bodies[0]).not.toHaveProperty('queueOrder');
-    expect(bodies[0].applicant).not.toHaveProperty('passwordHash');
-    expect(bodies[0].applicant).not.toHaveProperty('id');
-    expect(new Date(bodies[0].createdAt).getTime()).toBeLessThanOrEqual(
-      new Date(bodies[1].createdAt).getTime(),
-    );
+    expect(Object.keys(bodies[0]).sort()).toEqual([
+      'applicant',
+      'id',
+      'listingId',
+      'status',
+    ]);
+    expect(Object.keys(bodies[0].applicant).sort()).toEqual([
+      'name',
+      'peopleCount',
+    ]);
 
     await agent
       .get(`/api/v1/provider/listings/${listing.id}/waiting-count`)
@@ -569,12 +523,8 @@ describe('Provider ACTIVE applications summary E2E', () => {
         (item) =>
           item.id === waiting[0].id ||
           item.id === waiting[1].id ||
-          item.applicantId === waiting[0].applicantId ||
-          item.applicantId === waiting[1].applicantId ||
           item.applicant.name === 'Applicant 6' ||
-          item.applicant.name === 'Applicant 7' ||
-          item.applicant.email === applicants[5].email ||
-          item.applicant.email === applicants[6].email,
+          item.applicant.name === 'Applicant 7',
       ),
     ).toBe(false);
 
@@ -582,6 +532,39 @@ describe('Provider ACTIVE applications summary E2E', () => {
       .get(`/api/v1/provider/listings/${listing.id}/waiting-count`)
       .expect(200)
       .expect({ waitingCount: 2 });
+  });
+
+  it('returns a null household total when an ACTIVE applicant has no profile', async () => {
+    const { agent, provider } = await registerProvider();
+    const listing = await publishListing(provider.id);
+    const applicantAgent = request.agent(getServer());
+    const applicantResponse = await applicantAgent
+      .post('/api/v1/auth/register')
+      .send(applicantPayload('No Profile Applicant'))
+      .expect(201);
+    const applicant = safeUserBody(applicantResponse);
+
+    await getPrisma().application.create({
+      data: {
+        listingId: listing.id,
+        applicantId: applicant.id,
+        status: 'ACTIVE',
+      },
+    });
+
+    const response = await agent
+      .get(`/api/v1/provider/listings/${listing.id}/active-applications`)
+      .expect(200);
+
+    const bodies = activeApplicationBodies(response);
+
+    expect(bodies).toHaveLength(1);
+    expect(typeof bodies[0]?.id).toBe('string');
+    expect(bodies[0]).toMatchObject({
+      listingId: listing.id,
+      status: 'ACTIVE',
+      applicant: { name: 'No Profile Applicant', peopleCount: null },
+    });
   });
 
   it('rejects unauthenticated and non-provider access to ACTIVE applications', async () => {

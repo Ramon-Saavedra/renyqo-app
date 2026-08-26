@@ -327,7 +327,7 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 
-`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered by `createdAt` ascending. Each item includes the application fields plus a nested `applicant` summary with Provider-safe identity and profile fields (`name`, `email`, household counts, income proof flags, pets and smoking). It never includes `WAITING` applications, `queueOrder`, password hashes or unrelated user fields.
+`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered internally by `createdAt` ascending. Each item contains only `id`, `listingId`, `status`, and a nested `applicant` summary with `name` and nullable `peopleCount`. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, timestamps, `queueOrder`, password hashes, or unrelated user fields.
 
 `GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns `canApply`, `reasons`, `warnings` and `evaluatedAt`. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
 
