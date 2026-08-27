@@ -8,6 +8,7 @@ import {
 
 const APPLICATION_ID = '00000000-0000-4000-8000-000000000010';
 const LISTING_ID = '00000000-0000-4000-8000-000000000011';
+
 function makeRecord(
   overrides: Partial<ProviderActiveApplicationRecord> = {},
 ): ProviderActiveApplicationRecord {
@@ -21,6 +22,7 @@ function makeRecord(
         peopleCount: 3,
       },
     },
+    warnings: [],
     ...overrides,
   };
 }
@@ -36,6 +38,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
       applicant: {
         name: 'Anna Applicant',
         peopleCount: 3,
+        warnings: [],
       },
     });
     expect(dto).not.toHaveProperty('applicantId');
@@ -55,6 +58,15 @@ describe('ProviderActiveApplicationResponseDto', () => {
     expect(dto.applicant).not.toHaveProperty('hasPets');
     expect(dto.applicant).not.toHaveProperty('petsNote');
     expect(dto.applicant).not.toHaveProperty('smokingStatus');
+    expect(dto.applicant).not.toHaveProperty('isSmoker');
+  });
+
+  it('returns warnings from the service record', () => {
+    const dto = new ProviderActiveApplicationResponseDto(
+      makeRecord({ warnings: ['pets_by_arrangement'] }),
+    );
+
+    expect(dto.applicant.warnings).toEqual(['pets_by_arrangement']);
   });
 
   it('returns null profile fields when the applicant has no profile', () => {
@@ -70,6 +82,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
     expect(dto.applicant).toEqual({
       name: 'No Profile',
       peopleCount: null,
+      warnings: [],
     });
   });
 });

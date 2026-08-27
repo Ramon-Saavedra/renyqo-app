@@ -7,11 +7,18 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 
-import type { Application, Listing } from '../generated/prisma/client';
+import type {
+  ApplicantProfile,
+  Application,
+  Listing,
+} from '../generated/prisma/client';
 import {
+  ApplicationRejectionReason,
   ApplicationStatus,
   ListingStatus,
   ObjectType,
+  PetsPolicy,
+  SmokingPolicy,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
@@ -94,7 +101,9 @@ describe('ApplicationsService', () => {
       findMany: jest.MockedFunction<(args?: unknown) => Promise<unknown[]>>;
     };
     applicantProfile: {
-      findUnique: jest.MockedFunction<(args?: unknown) => Promise<null>>;
+      findUnique: jest.MockedFunction<
+        (args?: unknown) => Promise<ApplicantProfile | null>
+      >;
     };
     $transaction: jest.MockedFunction<
       (
@@ -120,7 +129,8 @@ describe('ApplicationsService', () => {
         findMany: jest.fn<(args?: unknown) => Promise<unknown[]>>(),
       },
       applicantProfile: {
-        findUnique: jest.fn<(args?: unknown) => Promise<null>>(),
+        findUnique:
+          jest.fn<(args?: unknown) => Promise<ApplicantProfile | null>>(),
       },
       $transaction: jest.fn(),
       $queryRaw: jest.fn(),
@@ -515,8 +525,8 @@ describe('ApplicationsService', () => {
       });
       const rejected = makeRawApplication({
         status: ApplicationStatus.REJECTED,
-        rejectedAt: expect.any(Date) as unknown as Date,
-        publicReason: 'NOT_SELECTED' as unknown as Application['publicReason'],
+        rejectedAt: new Date(),
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
       });
       prismaMock.application.findUnique
         .mockResolvedValueOnce({
@@ -651,26 +661,43 @@ describe('ApplicationsService', () => {
 
   describe('findActiveByListing', () => {
     it('returns ACTIVE applications with provider-safe applicant data for an owned listing', async () => {
-      const applications = [
+      const listing = makeRawListing();
+      const rawApplications = [
         {
           ...makeRawApplication(),
           applicant: {
             name: 'Anna Applicant',
             profile: {
               peopleCount: 2,
+              hasPets: false,
+              isSmoker: false,
             },
           },
         },
       ];
-      prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
-      prismaMock.application.findMany.mockResolvedValue(applications);
+      const expected = [
+        {
+          id: rawApplications[0].id,
+          listingId: rawApplications[0].listingId,
+          status: rawApplications[0].status,
+          applicant: {
+            name: 'Anna Applicant',
+            profile: {
+              peopleCount: 2,
+            },
+          },
+          warnings: [],
+        },
+      ];
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.application.findMany.mockResolvedValue(rawApplications);
 
       await expect(
         service.findActiveByListing(LISTING_ID, PROVIDER_ID),
-      ).resolves.toEqual(applications);
+      ).resolves.toEqual(expected);
       expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
         where: { id: LISTING_ID, providerId: PROVIDER_ID },
-        select: { id: true },
+        select: { id: true, petsPolicy: true, smokingPolicy: true },
       });
       expect(prismaMock.application.findMany).toHaveBeenCalledWith({
         where: {
@@ -690,12 +717,145 @@ describe('ApplicationsService', () => {
               profile: {
                 select: {
                   peopleCount: true,
+                  hasPets: true,
+                  isSmoker: true,
                 },
               },
             },
           },
         },
       });
+    });
+
+    it('returns arrangement warnings derived from applicant profile and listing policy', async () => {
+      const listing = makeRawListing({
+        petsPolicy: PetsPolicy.BY_ARRANGEMENT,
+        smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
+      });
+      const rawApplications = [
+        {
+          ...makeRawApplication(),
+          applicant: {
+            name: 'Pet Owner Smoker',
+            profile: {
+              peopleCount: 2,
+              hasPets: true,
+              isSmoker: true,
+            },
+          },
+        },
+      ];
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.application.findMany.mockResolvedValue(rawApplications);
+
+      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+
+      expect(result[0]?.warnings).toEqual([
+        'pets_by_arrangement',
+        'smoking_by_arrangement',
+      ]);
+      expect(result[0]?.applicant.profile).not.toHaveProperty('hasPets');
+      expect(result[0]?.applicant.profile).not.toHaveProperty('isSmoker');
+    });
+
+    it('returns only the pets_by_arrangement warning', async () => {
+      const listing = makeRawListing({
+        petsPolicy: PetsPolicy.BY_ARRANGEMENT,
+        smokingPolicy: SmokingPolicy.ALLOWED,
+      });
+      const rawApplications = [
+        {
+          ...makeRawApplication(),
+          applicant: {
+            name: 'Pet Owner',
+            profile: {
+              peopleCount: 2,
+              hasPets: true,
+              isSmoker: false,
+            },
+          },
+        },
+      ];
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.application.findMany.mockResolvedValue(rawApplications);
+
+      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+
+      expect(result[0]?.warnings).toEqual(['pets_by_arrangement']);
+    });
+
+    it('returns only the smoking_by_arrangement warning', async () => {
+      const listing = makeRawListing({
+        petsPolicy: PetsPolicy.ALLOWED,
+        smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
+      });
+      const rawApplications = [
+        {
+          ...makeRawApplication(),
+          applicant: {
+            name: 'Smoker',
+            profile: {
+              peopleCount: 1,
+              hasPets: false,
+              isSmoker: true,
+            },
+          },
+        },
+      ];
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.application.findMany.mockResolvedValue(rawApplications);
+
+      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+
+      expect(result[0]?.warnings).toEqual(['smoking_by_arrangement']);
+    });
+
+    it('returns empty warnings when the listing does not require arrangement', async () => {
+      const listing = makeRawListing({
+        petsPolicy: PetsPolicy.ALLOWED,
+        smokingPolicy: SmokingPolicy.ALLOWED,
+      });
+      const rawApplications = [
+        {
+          ...makeRawApplication(),
+          applicant: {
+            name: 'No Arrangement Needed',
+            profile: {
+              peopleCount: 1,
+              hasPets: true,
+              isSmoker: true,
+            },
+          },
+        },
+      ];
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.application.findMany.mockResolvedValue(rawApplications);
+
+      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+
+      expect(result[0]?.warnings).toEqual([]);
+    });
+
+    it('returns empty warnings when the applicant has no profile', async () => {
+      const listing = makeRawListing({
+        petsPolicy: PetsPolicy.BY_ARRANGEMENT,
+        smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
+      });
+      const rawApplications = [
+        {
+          ...makeRawApplication(),
+          applicant: {
+            name: 'No Profile',
+            profile: null,
+          },
+        },
+      ];
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.application.findMany.mockResolvedValue(rawApplications);
+
+      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+
+      expect(result[0]?.warnings).toEqual([]);
     });
 
     it('throws NotFoundException when listing does not belong to the provider', async () => {

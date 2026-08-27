@@ -8,6 +8,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 
 import {
   Prisma,
+  type ApplicantProfile,
   type Application,
   type Listing,
 } from '../generated/prisma/client';
@@ -15,10 +16,13 @@ import {
   ApplicationRejectionReason,
   ApplicationStatus,
   ListingStatus,
+  PetsPolicy,
+  SmokingPolicy,
 } from '../generated/prisma/enums';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
+import type { EligibilityWarning } from '../eligibility/dto/eligibility-response.dto';
 import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
 
 const ACTIVE_APPLICATIONS_LIMIT = 5;
@@ -58,6 +62,36 @@ function isSerializationConflict(error: unknown): boolean {
     isRecord(driverAdapterError) &&
     hasSerializationCode(driverAdapterError.cause)
   );
+}
+
+function computeProviderActiveApplicantWarnings(
+  profile: Pick<ApplicantProfile, 'hasPets' | 'isSmoker'> | null,
+  listing: {
+    petsPolicy: PetsPolicy | null;
+    smokingPolicy: SmokingPolicy | null;
+  },
+): EligibilityWarning[] {
+  const warnings: EligibilityWarning[] = [];
+
+  if (profile === null) {
+    return warnings;
+  }
+
+  if (
+    profile.hasPets === true &&
+    listing.petsPolicy === PetsPolicy.BY_ARRANGEMENT
+  ) {
+    warnings.push('pets_by_arrangement');
+  }
+
+  if (
+    profile.isSmoker === true &&
+    listing.smokingPolicy === SmokingPolicy.BY_ARRANGEMENT
+  ) {
+    warnings.push('smoking_by_arrangement');
+  }
+
+  return warnings;
 }
 
 @Injectable()
@@ -410,14 +444,14 @@ export class ApplicationsService {
   ): Promise<ProviderActiveApplicationRecord[]> {
     const listing = await this.prisma.listing.findFirst({
       where: { id: listingId, providerId },
-      select: { id: true },
+      select: { id: true, petsPolicy: true, smokingPolicy: true },
     });
 
     if (!listing) {
       throw new NotFoundException('Listing not found');
     }
 
-    return this.prisma.application.findMany({
+    const applications = await this.prisma.application.findMany({
       where: {
         listingId,
         status: ApplicationStatus.ACTIVE,
@@ -435,12 +469,30 @@ export class ApplicationsService {
             profile: {
               select: {
                 peopleCount: true,
+                hasPets: true,
+                isSmoker: true,
               },
             },
           },
         },
       },
     });
+
+    return applications.map((application) => ({
+      id: application.id,
+      listingId: application.listingId,
+      status: application.status,
+      applicant: {
+        name: application.applicant.name,
+        profile: application.applicant.profile
+          ? { peopleCount: application.applicant.profile.peopleCount }
+          : null,
+      },
+      warnings: computeProviderActiveApplicantWarnings(
+        application.applicant.profile,
+        listing,
+      ),
+    }));
   }
 
   private async runSerializableTransaction<T>(

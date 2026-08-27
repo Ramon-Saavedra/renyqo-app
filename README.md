@@ -392,7 +392,7 @@ Both `GET` and `PATCH` return only business fields:
 ```text
 householdNetIncome, incomeProofAvailable, schufaAvailable,
 peopleCount, adultsCount, childrenCount,
-hasPets, petsNote, smokingStatus
+hasPets, isSmoker
 ```
 
 Internal identifiers and timestamps are not exposed.

@@ -3,7 +3,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { ApplicantProfile } from '../generated/prisma/client';
-import { SmokingStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplicantProfileService } from './applicant-profile.service';
 import type { UpdateApplicantProfileDto } from './dto/update-applicant-profile.dto';
@@ -23,8 +22,7 @@ const makeRawProfile = (
   adultsCount: null,
   childrenCount: null,
   hasPets: null,
-  petsNote: null,
-  smokingStatus: null,
+  isSmoker: null,
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
   ...overrides,
@@ -96,12 +94,12 @@ describe('ApplicantProfileService', () => {
       const dto: UpdateApplicantProfileDto = {
         householdNetIncome: 3000,
         hasPets: false,
-        smokingStatus: SmokingStatus.NON_SMOKER,
+        isSmoker: false,
       };
       const profile = makeRawProfile({
         householdNetIncome: 3000,
         hasPets: false,
-        smokingStatus: SmokingStatus.NON_SMOKER,
+        isSmoker: false,
       });
       prismaMock.applicantProfile.findUnique.mockResolvedValue(null);
       prismaMock.applicantProfile.upsert.mockResolvedValue(profile);

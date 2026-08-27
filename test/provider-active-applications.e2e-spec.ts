@@ -7,7 +7,13 @@ import passport from 'passport';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
 import type { EnvironmentVariables } from '../src/config/env.validation';
-import { ListingStatus, SmokingStatus } from '../src/generated/prisma/enums';
+import {
+  ApplicationStatus,
+  ListingStatus,
+  PetsPolicy,
+  SmokingPolicy,
+} from '../src/generated/prisma/enums';
+import { PublicProviderType, PublicRole } from '../src/auth/dto/register.dto';
 import { CloudinaryService } from '../src/listing-images/cloudinary.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
@@ -22,10 +28,10 @@ type RegisterPayload = {
   name: string;
   email: string;
   password: string;
-  role: 'applicant' | 'provider';
+  role: PublicRole;
   acceptedTerms: true;
   acceptedPrivacy: true;
-  providerType?: 'private' | 'company';
+  providerType?: PublicProviderType;
   companyName?: string;
 };
 
@@ -34,7 +40,7 @@ type SafeUserBody = {
   name: string;
   email: string;
   role: string;
-  providerType: 'private' | 'company' | null;
+  providerType: PublicProviderType | null;
   companyName: string | null;
   emailVerified: boolean;
   status: string;
@@ -47,6 +53,7 @@ type ProviderActiveApplicationBody = {
   applicant: {
     name: string;
     peopleCount: number | null;
+    warnings: Array<'pets_by_arrangement' | 'smoking_by_arrangement'>;
   };
 };
 
@@ -114,8 +121,8 @@ function isSafeUserBody(value: unknown): value is SafeUserBody {
     typeof value.email === 'string' &&
     typeof value.role === 'string' &&
     (value.providerType === null ||
-      value.providerType === 'private' ||
-      value.providerType === 'company') &&
+      value.providerType === PublicProviderType.PRIVATE ||
+      value.providerType === PublicProviderType.COMPANY) &&
     (value.companyName === null || typeof value.companyName === 'string') &&
     typeof value.emailVerified === 'boolean' &&
     typeof value.status === 'string'
@@ -156,7 +163,7 @@ function applicantPayload(
     name,
     email,
     password: userPassword,
-    role: 'applicant',
+    role: PublicRole.APPLICANT,
     acceptedTerms: true,
     acceptedPrivacy: true,
   };
@@ -167,8 +174,8 @@ function providerPayload(email = uniqueEmail('provider')): RegisterPayload {
     name: 'Renyqo Provider',
     email,
     password: userPassword,
-    role: 'provider',
-    providerType: 'private',
+    role: PublicRole.PROVIDER,
+    providerType: PublicProviderType.PRIVATE,
     acceptedTerms: true,
     acceptedPrivacy: true,
   };
@@ -206,8 +213,12 @@ function isProviderActiveApplicationBody(
     typeof value.applicant.name === 'string' &&
     (value.applicant.peopleCount === null ||
       typeof value.applicant.peopleCount === 'number') &&
+    Array.isArray(value.applicant.warnings) &&
+    value.applicant.warnings.every((warning: string) =>
+      ['pets_by_arrangement', 'smoking_by_arrangement'].includes(warning),
+    ) &&
     Object.keys(value).length === 4 &&
-    Object.keys(value.applicant).length === 2
+    Object.keys(value.applicant).length === 3
   );
 }
 
@@ -239,8 +250,7 @@ async function registerApplicantWithProfile(options: {
   childrenCount: number;
   householdNetIncome: number;
   hasPets: boolean;
-  petsNote: string | null;
-  smokingStatus: SmokingStatus;
+  isSmoker: boolean;
 }) {
   const agent = request.agent(getServer());
   const email = uniqueEmail('applicant');
@@ -260,8 +270,7 @@ async function registerApplicantWithProfile(options: {
       incomeProofAvailable: true,
       schufaAvailable: true,
       hasPets: options.hasPets,
-      petsNote: options.petsNote,
-      smokingStatus: options.smokingStatus,
+      isSmoker: options.isSmoker,
     },
   });
 
@@ -403,6 +412,102 @@ describe('Provider ACTIVE applications summary E2E', () => {
       .expect({ waitingCount: 0 });
   });
 
+  it('returns arrangement warnings for ACTIVE applicants that need clarification', async () => {
+    const { agent, provider } = await registerProvider();
+    const listing = await getPrisma().listing.create({
+      data: {
+        providerId: provider.id,
+        status: ListingStatus.PUBLISHED,
+        publishedAt: new Date(),
+        city: 'Berlin',
+        street: 'Test Street 1',
+        title: 'Provider Active Applications Listing',
+        coldRent: 800,
+        livingArea: 50,
+        rooms: 2,
+        bedrooms: 1,
+        availableFrom: new Date(),
+        petsPolicy: PetsPolicy.BY_ARRANGEMENT,
+        smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
+      },
+    });
+
+    const petsOnly = await registerApplicantWithProfile({
+      name: 'Pets Only',
+      adultsCount: 1,
+      childrenCount: 0,
+      householdNetIncome: 3000,
+      hasPets: true,
+      isSmoker: false,
+    });
+    const smokerOnly = await registerApplicantWithProfile({
+      name: 'Smoker Only',
+      adultsCount: 1,
+      childrenCount: 0,
+      householdNetIncome: 3000,
+      hasPets: false,
+      isSmoker: true,
+    });
+    const both = await registerApplicantWithProfile({
+      name: 'Both',
+      adultsCount: 1,
+      childrenCount: 0,
+      householdNetIncome: 3000,
+      hasPets: true,
+      isSmoker: true,
+    });
+    const none = await registerApplicantWithProfile({
+      name: 'None',
+      adultsCount: 1,
+      childrenCount: 0,
+      householdNetIncome: 3000,
+      hasPets: false,
+      isSmoker: false,
+    });
+
+    await petsOnly.agent
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(201);
+    await smokerOnly.agent
+      .post(`/api/v1/listings/${listing.id}/apply`)
+      .expect(201);
+    await both.agent.post(`/api/v1/listings/${listing.id}/apply`).expect(201);
+    await none.agent.post(`/api/v1/listings/${listing.id}/apply`).expect(201);
+
+    const response = await agent
+      .get(`/api/v1/provider/listings/${listing.id}/active-applications`)
+      .expect(200);
+    const bodies = activeApplicationBodies(response);
+
+    expect(bodies).toHaveLength(4);
+    expect(
+      bodies.map((item) => ({
+        name: item.applicant.name,
+        warnings: item.applicant.warnings,
+      })),
+    ).toEqual([
+      { name: 'Pets Only', warnings: ['pets_by_arrangement'] },
+      { name: 'Smoker Only', warnings: ['smoking_by_arrangement'] },
+      {
+        name: 'Both',
+        warnings: ['pets_by_arrangement', 'smoking_by_arrangement'],
+      },
+      { name: 'None', warnings: [] },
+    ]);
+    expect(
+      bodies.every(
+        (item) =>
+          !Object.prototype.hasOwnProperty.call(item.applicant, 'hasPets'),
+      ),
+    ).toBe(true);
+    expect(
+      bodies.every(
+        (item) =>
+          !Object.prototype.hasOwnProperty.call(item.applicant, 'isSmoker'),
+      ),
+    ).toBe(true);
+  });
+
   it('returns minimal applicant summaries for 1–4 ACTIVE applications in createdAt ASC order', async () => {
     const { agent, provider } = await registerProvider();
     const listing = await publishListing(provider.id);
@@ -413,8 +518,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       childrenCount: 0,
       householdNetIncome: 3000,
       hasPets: false,
-      petsNote: null,
-      smokingStatus: SmokingStatus.NON_SMOKER,
+      isSmoker: false,
     });
     const second = await registerApplicantWithProfile({
       name: 'Second Applicant',
@@ -422,8 +526,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       childrenCount: 1,
       householdNetIncome: 4500,
       hasPets: true,
-      petsNote: 'One dog',
-      smokingStatus: SmokingStatus.OCCASIONALLY,
+      isSmoker: true,
     });
 
     await first.agent.post(`/api/v1/listings/${listing.id}/apply`).expect(201);
@@ -441,7 +544,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
     ]);
     expect(bodies[0]).toMatchObject({
       listingId: listing.id,
-      status: 'ACTIVE',
+      status: ApplicationStatus.ACTIVE,
       applicant: {
         name: 'First Applicant',
         peopleCount: 1,
@@ -462,6 +565,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
     expect(Object.keys(bodies[0].applicant).sort()).toEqual([
       'name',
       'peopleCount',
+      'warnings',
     ]);
 
     await agent
@@ -485,8 +589,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
           childrenCount: 0,
           householdNetIncome: 3200 + index,
           hasPets: false,
-          petsNote: null,
-          smokingStatus: SmokingStatus.NON_SMOKER,
+          isSmoker: false,
         }),
       );
     }
@@ -498,7 +601,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
     }
 
     const waiting = await getPrisma().application.findMany({
-      where: { listingId: listing.id, status: 'WAITING' },
+      where: { listingId: listing.id, status: ApplicationStatus.WAITING },
       orderBy: { createdAt: 'asc' },
       select: { id: true, applicantId: true },
     });
@@ -510,7 +613,9 @@ describe('Provider ACTIVE applications summary E2E', () => {
     const bodies = activeApplicationBodies(response);
 
     expect(bodies).toHaveLength(5);
-    expect(bodies.every((item) => item.status === 'ACTIVE')).toBe(true);
+    expect(
+      bodies.every((item) => item.status === ApplicationStatus.ACTIVE),
+    ).toBe(true);
     expect(bodies.map((item) => item.applicant.name)).toEqual([
       'Applicant 1',
       'Applicant 2',
@@ -548,7 +653,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       data: {
         listingId: listing.id,
         applicantId: applicant.id,
-        status: 'ACTIVE',
+        status: ApplicationStatus.ACTIVE,
       },
     });
 
@@ -562,7 +667,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
     expect(typeof bodies[0]?.id).toBe('string');
     expect(bodies[0]).toMatchObject({
       listingId: listing.id,
-      status: 'ACTIVE',
+      status: ApplicationStatus.ACTIVE,
       applicant: { name: 'No Profile Applicant', peopleCount: null },
     });
   });
@@ -576,8 +681,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       childrenCount: 0,
       householdNetIncome: 3000,
       hasPets: false,
-      petsNote: null,
-      smokingStatus: SmokingStatus.NON_SMOKER,
+      isSmoker: false,
     });
 
     await request(getServer())
@@ -598,8 +702,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       childrenCount: 0,
       householdNetIncome: 3000,
       hasPets: false,
-      petsNote: null,
-      smokingStatus: SmokingStatus.NON_SMOKER,
+      isSmoker: false,
     });
 
     await applicant.agent

@@ -42,9 +42,9 @@ enum PetsPolicy {
 }
 
 enum SmokingPolicy {
-  ALLOWED               @map("allowed")
-  BY_ARRANGEMENT        @map("by_arrangement")
-  NON_SMOKERS_PREFERRED @map("non_smokers_preferred")
+  ALLOWED        @map("allowed")
+  BY_ARRANGEMENT @map("by_arrangement")
+  NOT_ALLOWED    @map("not_allowed")
 }
 
 enum ApplicationStatus {
@@ -58,12 +58,6 @@ enum ApplicationStatus {
 enum ApplicationRejectionReason {
   NOT_SELECTED    @map("not_selected")
   LISTING_RENTED  @map("listing_rented")
-}
-
-enum SmokingStatus {
-  SMOKER       @map("smoker")
-  NON_SMOKER   @map("non_smoker")
-  OCCASIONALLY @map("occasionally")
 }
 
 enum ProviderType {
@@ -203,8 +197,7 @@ model ApplicantProfile {
   adultsCount          Int?           @map("adults_count")
   childrenCount        Int?           @map("children_count")
   hasPets              Boolean?       @map("has_pets")
-  petsNote             String?        @map("pets_note")
-  smokingStatus        SmokingStatus? @map("smoking_status")
+  isSmoker             Boolean?       @map("is_smoker")
   createdAt            DateTime       @default(now()) @map("created_at")
   updatedAt            DateTime       @updatedAt @map("updated_at")
 

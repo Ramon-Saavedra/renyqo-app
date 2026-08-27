@@ -234,7 +234,7 @@ async function createPublishedListing(
     incomeProofRequired: false,
     suitableForPeopleCount: 2,
     petsPolicy: PetsPolicy.ALLOWED,
-    smokingPolicy: SmokingPolicy.NON_SMOKERS_PREFERRED,
+    smokingPolicy: SmokingPolicy.NOT_ALLOWED,
     ...overrides,
   };
 

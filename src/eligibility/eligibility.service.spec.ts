@@ -5,13 +5,16 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import type { ApplicantProfile, Listing } from '../generated/prisma/client';
+import type {
+  ApplicantProfile,
+  Listing,
+  Prisma,
+} from '../generated/prisma/client';
 import {
   ListingStatus,
   ObjectType,
   PetsPolicy,
   SmokingPolicy,
-  SmokingStatus,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { EligibilityService } from './eligibility.service';
@@ -19,6 +22,16 @@ import { EligibilityService } from './eligibility.service';
 const LISTING_ID = '00000000-0000-4000-8000-000000000001';
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000002';
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000003';
+
+function getAndConditions(
+  where: Prisma.ListingWhereInput,
+): Prisma.ListingWhereInput[] {
+  if (!where.AND || !Array.isArray(where.AND)) {
+    throw new Error('Expected AND conditions');
+  }
+
+  return where.AND;
+}
 
 const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
@@ -67,8 +80,7 @@ const makeProfile = (
   adultsCount: 2,
   childrenCount: 0,
   hasPets: false,
-  petsNote: null,
-  smokingStatus: SmokingStatus.NON_SMOKER,
+  isSmoker: false,
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
   ...overrides,
@@ -197,24 +209,24 @@ describe('EligibilityService', () => {
     });
   });
 
-  it('returns warnings without blocking for preference policies', async () => {
+  it('returns warnings without blocking for arrangement policies', async () => {
     prismaMock.listing.findUnique.mockResolvedValue(
       makeListing({
         petsPolicy: PetsPolicy.BY_ARRANGEMENT,
-        smokingPolicy: SmokingPolicy.NON_SMOKERS_PREFERRED,
+        smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
       }),
     );
     prismaMock.applicantProfile.findUnique.mockResolvedValue(
       makeProfile({
         hasPets: true,
-        smokingStatus: SmokingStatus.SMOKER,
+        isSmoker: true,
       }),
     );
 
     await expect(service.check(LISTING_ID, APPLICANT_ID)).resolves.toEqual({
       canApply: true,
       reasons: [],
-      warnings: ['pets_by_arrangement', 'smoking_not_preferred'],
+      warnings: ['pets_by_arrangement', 'smoking_by_arrangement'],
       evaluatedAt: expect.any(Date),
     });
   });
@@ -265,7 +277,7 @@ describe('EligibilityService', () => {
     prismaMock.applicantProfile.findUnique.mockResolvedValue(
       makeProfile({
         hasPets: true,
-        smokingStatus: SmokingStatus.OCCASIONALLY,
+        isSmoker: true,
       }),
     );
 
@@ -285,7 +297,7 @@ describe('EligibilityService', () => {
       }),
     );
     prismaMock.applicantProfile.findUnique.mockResolvedValue(
-      makeProfile({ hasPets: true, smokingStatus: SmokingStatus.NON_SMOKER }),
+      makeProfile({ hasPets: true, isSmoker: false }),
     );
 
     await expect(service.check(LISTING_ID, APPLICANT_ID)).resolves.toEqual({
@@ -389,7 +401,7 @@ describe('EligibilityService', () => {
   });
 
   describe('buildHardMatchWhere', () => {
-    it('full profile returns AND with 4 conditions', () => {
+    it('full profile returns AND with six conditions', () => {
       const profile = makeProfile({
         householdNetIncome: 3000,
         schufaAvailable: true,
@@ -402,10 +414,10 @@ describe('EligibilityService', () => {
       const result = service.buildHardMatchWhere(profile);
 
       expect(result).toHaveProperty('AND');
-      const andArray = (result as { AND: unknown[] }).AND;
-      expect(andArray).toHaveLength(5);
+      const andArray = getAndConditions(result);
+      expect(andArray).toHaveLength(6);
 
-      const [income, schufa, incomeProof, household, pets] = andArray;
+      const [income, schufa, incomeProof, household, pets, smoking] = andArray;
 
       expect(income).toEqual({
         OR: [
@@ -426,6 +438,7 @@ describe('EligibilityService', () => {
       });
 
       expect(pets).toEqual({});
+      expect(smoking).toEqual({});
     });
 
     it('missing income returns null income condition', () => {
@@ -438,7 +451,7 @@ describe('EligibilityService', () => {
       });
 
       const result = service.buildHardMatchWhere(profile);
-      const andArray = (result as { AND: unknown[] }).AND;
+      const andArray = getAndConditions(result);
       const [income] = andArray;
 
       expect(income).toEqual({ minimumHouseholdNetIncome: null });
@@ -454,7 +467,7 @@ describe('EligibilityService', () => {
       });
 
       const result = service.buildHardMatchWhere(profile);
-      const andArray = (result as { AND: unknown[] }).AND;
+      const andArray = getAndConditions(result);
       const [, schufa] = andArray;
 
       expect(schufa).toEqual({ schufaRequired: false });
@@ -470,7 +483,7 @@ describe('EligibilityService', () => {
       });
 
       const result = service.buildHardMatchWhere(profile);
-      const andArray = (result as { AND: unknown[] }).AND;
+      const andArray = getAndConditions(result);
       const [, schufa] = andArray;
 
       expect(schufa).toEqual({ schufaRequired: false });
@@ -486,7 +499,7 @@ describe('EligibilityService', () => {
       });
 
       const result = service.buildHardMatchWhere(profile);
-      const andArray = (result as { AND: unknown[] }).AND;
+      const andArray = getAndConditions(result);
       const [, , incomeProof] = andArray;
 
       expect(incomeProof).toEqual({ incomeProofRequired: false });
@@ -503,7 +516,7 @@ describe('EligibilityService', () => {
       });
 
       const result = service.buildHardMatchWhere(profile);
-      const andArray = (result as { AND: unknown[] }).AND;
+      const andArray = getAndConditions(result);
       const [, , , household] = andArray;
 
       expect(household).toEqual({ suitableForPeopleCount: null });
@@ -520,7 +533,7 @@ describe('EligibilityService', () => {
       });
 
       const result = service.buildHardMatchWhere(profile);
-      const andArray = (result as { AND: unknown[] }).AND;
+      const andArray = getAndConditions(result);
       const [income, schufa, incomeProof, household, pets] = andArray;
 
       expect(income).toEqual({
@@ -546,11 +559,14 @@ describe('EligibilityService', () => {
       });
 
       const result = service.buildHardMatchWhere(profile);
-      const andArray = (result as { AND: unknown[] }).AND;
+      const andArray = getAndConditions(result);
       const [, , , , pets] = andArray;
 
       expect(pets).toEqual({
-        OR: [{ petsPolicy: { not: 'NOT_ALLOWED' } }, { petsPolicy: null }],
+        OR: [
+          { petsPolicy: { not: PetsPolicy.NOT_ALLOWED } },
+          { petsPolicy: null },
+        ],
       });
     });
 
@@ -565,10 +581,49 @@ describe('EligibilityService', () => {
       });
 
       const result = service.buildHardMatchWhere(profile);
-      const andArray = (result as { AND: unknown[] }).AND;
+      const andArray = getAndConditions(result);
       const [, , , , pets] = andArray;
 
       expect(pets).toEqual({});
+    });
+
+    it('excludes NOT_ALLOWED for applicants who smoke', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: false,
+        incomeProofAvailable: false,
+        adultsCount: null,
+        childrenCount: null,
+        isSmoker: true,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = getAndConditions(result);
+      const [, , , , , smoking] = andArray;
+
+      expect(smoking).toEqual({
+        OR: [
+          { smokingPolicy: { not: SmokingPolicy.NOT_ALLOWED } },
+          { smokingPolicy: null },
+        ],
+      });
+    });
+
+    it('includes empty smoking condition for applicants who do not smoke', () => {
+      const profile = makeProfile({
+        householdNetIncome: 3000,
+        schufaAvailable: false,
+        incomeProofAvailable: false,
+        adultsCount: null,
+        childrenCount: null,
+        isSmoker: false,
+      });
+
+      const result = service.buildHardMatchWhere(profile);
+      const andArray = getAndConditions(result);
+      const [, , , , , smoking] = andArray;
+
+      expect(smoking).toEqual({});
     });
   });
 
@@ -611,14 +666,9 @@ describe('EligibilityService', () => {
       expect(service.isProfileComplete(profile)).toBe(false);
     });
 
-    it('smokingStatus null returns false', () => {
-      const profile = makeProfile({ smokingStatus: null });
+    it('isSmoker null returns false', () => {
+      const profile = makeProfile({ isSmoker: null });
       expect(service.isProfileComplete(profile)).toBe(false);
-    });
-
-    it('petsNote null but all others non-null returns true', () => {
-      const profile = makeProfile({ petsNote: null });
-      expect(service.isProfileComplete(profile)).toBe(true);
     });
   });
 
@@ -724,8 +774,8 @@ describe('EligibilityService', () => {
         schufaRequired: true,
         incomeProofRequired: true,
         suitableForPeopleCount: 2,
-        petsPolicy: 'ALLOWED' as const,
-        smokingPolicy: 'NON_SMOKERS_PREFERRED' as const,
+        petsPolicy: PetsPolicy.ALLOWED,
+        smokingPolicy: SmokingPolicy.NOT_ALLOWED,
       };
 
       const result = service.evaluateCriteria(criteria, profile);
@@ -741,7 +791,7 @@ describe('EligibilityService', () => {
         schufaRequired: false,
         incomeProofRequired: false,
         suitableForPeopleCount: null,
-        petsPolicy: 'BY_ARRANGEMENT' as const,
+        petsPolicy: PetsPolicy.BY_ARRANGEMENT,
         smokingPolicy: null,
       };
 
@@ -751,9 +801,9 @@ describe('EligibilityService', () => {
       expect(result.warnings).toContain('pets_by_arrangement');
     });
 
-    it('smoking not preferred warning returns canApply true with warning', () => {
+    it('smoking not allowed returns a blocking reason', () => {
       const profile = makeProfile({
-        smokingStatus: SmokingStatus.SMOKER,
+        isSmoker: true,
       });
       const criteria = {
         minimumHouseholdNetIncome: null,
@@ -761,13 +811,13 @@ describe('EligibilityService', () => {
         incomeProofRequired: false,
         suitableForPeopleCount: null,
         petsPolicy: null,
-        smokingPolicy: 'NON_SMOKERS_PREFERRED' as const,
+        smokingPolicy: SmokingPolicy.NOT_ALLOWED,
       };
 
       const result = service.evaluateCriteria(criteria, profile);
 
-      expect(result.canApply).toBe(true);
-      expect(result.warnings).toContain('smoking_not_preferred');
+      expect(result.canApply).toBe(false);
+      expect(result.reasons).toContain('smoking_not_allowed');
     });
   });
 });

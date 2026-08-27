@@ -1,21 +1,24 @@
-import {
-  IsBoolean,
-  IsEnum,
-  IsInt,
-  IsNumber,
-  IsOptional,
-  IsString,
-  MaxLength,
-  Min,
-} from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 import type { TransformFnParams } from 'class-transformer';
 
-import { SmokingStatus } from '../../generated/prisma/enums';
+const toOptionalBoolean = ({ value }: TransformFnParams): unknown => {
+  if (value === undefined || value === null || typeof value === 'boolean') {
+    return value;
+  }
 
-const toNullIfBlank = ({ value }: TransformFnParams): unknown => {
-  if (typeof value === 'string' && value.trim().length === 0) {
-    return null;
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === 'true') {
+    return true;
+  }
+
+  if (normalized === 'false') {
+    return false;
   }
 
   return value;
@@ -29,10 +32,12 @@ export class UpdateApplicantProfileDto {
 
   @IsOptional()
   @IsBoolean()
+  @Transform(toOptionalBoolean)
   incomeProofAvailable?: boolean | null;
 
   @IsOptional()
   @IsBoolean()
+  @Transform(toOptionalBoolean)
   schufaAvailable?: boolean | null;
 
   @IsOptional()
@@ -47,15 +52,11 @@ export class UpdateApplicantProfileDto {
 
   @IsOptional()
   @IsBoolean()
+  @Transform(toOptionalBoolean)
   hasPets?: boolean | null;
 
   @IsOptional()
-  @IsString()
-  @Transform(toNullIfBlank)
-  @MaxLength(500)
-  petsNote?: string | null;
-
-  @IsOptional()
-  @IsEnum(SmokingStatus)
-  smokingStatus?: SmokingStatus | null;
+  @IsBoolean()
+  @Transform(toOptionalBoolean)
+  isSmoker?: boolean | null;
 }

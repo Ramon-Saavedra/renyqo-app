@@ -79,6 +79,7 @@ const makeActiveApplicationRecord = (): ProviderActiveApplicationRecord => ({
       peopleCount: 2,
     },
   },
+  warnings: [],
 });
 
 const getRouteArgMetadata = (

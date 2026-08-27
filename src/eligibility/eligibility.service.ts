@@ -13,7 +13,6 @@ import {
   ListingStatus,
   PetsPolicy,
   SmokingPolicy,
-  SmokingStatus,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -38,7 +37,7 @@ const COMPLETE_PROFILE_FIELDS = [
   'adultsCount',
   'childrenCount',
   'hasPets',
-  'smokingStatus',
+  'isSmoker',
 ] as const;
 
 @Injectable()
@@ -160,6 +159,15 @@ export class EligibilityService {
             ],
           }
         : {};
+    const smokingCondition: Prisma.ListingWhereInput =
+      profile.isSmoker === true
+        ? {
+            OR: [
+              { smokingPolicy: { not: SmokingPolicy.NOT_ALLOWED } },
+              { smokingPolicy: null },
+            ],
+          }
+        : {};
 
     return {
       AND: [
@@ -168,6 +176,7 @@ export class EligibilityService {
         incomeProofCondition,
         householdCondition,
         petsCondition,
+        smokingCondition,
       ],
     };
   }
@@ -209,6 +218,12 @@ export class EligibilityService {
       profile?.hasPets === true
     ) {
       reasons.push('pets_not_allowed');
+    }
+    if (
+      listing.smokingPolicy === SmokingPolicy.NOT_ALLOWED &&
+      profile?.isSmoker === true
+    ) {
+      reasons.push('smoking_not_allowed');
     }
 
     return reasons;
@@ -255,6 +270,12 @@ export class EligibilityService {
     ) {
       reasons.push('pets_not_allowed');
     }
+    if (
+      criteria.smokingPolicy === SmokingPolicy.NOT_ALLOWED &&
+      profile?.isSmoker === true
+    ) {
+      reasons.push('smoking_not_allowed');
+    }
 
     return reasons;
   }
@@ -269,9 +290,7 @@ export class EligibilityService {
 
     const warnings: EligibilityWarning[] = [];
     const hasPets = profile.hasPets === true;
-    const smokes =
-      profile.smokingStatus === SmokingStatus.SMOKER ||
-      profile.smokingStatus === SmokingStatus.OCCASIONALLY;
+    const smokes = profile.isSmoker === true;
 
     if (hasPets && listing.petsPolicy === PetsPolicy.BY_ARRANGEMENT) {
       warnings.push('pets_by_arrangement');
@@ -279,13 +298,6 @@ export class EligibilityService {
 
     if (smokes && listing.smokingPolicy === SmokingPolicy.BY_ARRANGEMENT) {
       warnings.push('smoking_by_arrangement');
-    }
-
-    if (
-      smokes &&
-      listing.smokingPolicy === SmokingPolicy.NON_SMOKERS_PREFERRED
-    ) {
-      warnings.push('smoking_not_preferred');
     }
 
     return warnings;
@@ -301,9 +313,7 @@ export class EligibilityService {
 
     const warnings: EligibilityWarning[] = [];
     const hasPets = profile.hasPets === true;
-    const smokes =
-      profile.smokingStatus === SmokingStatus.SMOKER ||
-      profile.smokingStatus === SmokingStatus.OCCASIONALLY;
+    const smokes = profile.isSmoker === true;
 
     if (hasPets && criteria.petsPolicy === PetsPolicy.BY_ARRANGEMENT) {
       warnings.push('pets_by_arrangement');
@@ -311,13 +321,6 @@ export class EligibilityService {
 
     if (smokes && criteria.smokingPolicy === SmokingPolicy.BY_ARRANGEMENT) {
       warnings.push('smoking_by_arrangement');
-    }
-
-    if (
-      smokes &&
-      criteria.smokingPolicy === SmokingPolicy.NON_SMOKERS_PREFERRED
-    ) {
-      warnings.push('smoking_not_preferred');
     }
 
     return warnings;
