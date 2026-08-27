@@ -8,8 +8,7 @@ export class ApplicantProfileResponseDto {
   readonly adultsCount: number | null;
   readonly childrenCount: number | null;
   readonly hasPets: boolean | null;
-  readonly petsNote: string | null;
-  readonly smokingStatus: ApplicantProfile['smokingStatus'];
+  readonly isSmoker: boolean | null;
 
   constructor(profile: ApplicantProfile) {
     this.householdNetIncome = profile.householdNetIncome;
@@ -19,7 +18,6 @@ export class ApplicantProfileResponseDto {
     this.adultsCount = profile.adultsCount;
     this.childrenCount = profile.childrenCount;
     this.hasPets = profile.hasPets;
-    this.petsNote = profile.petsNote;
-    this.smokingStatus = profile.smokingStatus;
+    this.isSmoker = profile.isSmoker;
   }
 }

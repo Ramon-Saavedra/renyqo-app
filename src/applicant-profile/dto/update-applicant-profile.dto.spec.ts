@@ -2,7 +2,6 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { describe, expect, it } from '@jest/globals';
 
-import { SmokingStatus } from '../../generated/prisma/enums';
 import { UpdateApplicantProfileDto } from './update-applicant-profile.dto';
 
 const validateDto = (payload: Record<string, unknown>) =>
@@ -41,30 +40,6 @@ describe('UpdateApplicantProfileDto', () => {
     expect(errors[0]?.property).toBe('peopleCount');
   });
 
-  it('normalizes empty petsNote to null', () => {
-    const instance = plainToInstance(UpdateApplicantProfileDto, {
-      petsNote: '',
-    });
-
-    expect(instance.petsNote).toBeNull();
-  });
-
-  it('normalizes whitespace-only petsNote to null', () => {
-    const instance = plainToInstance(UpdateApplicantProfileDto, {
-      petsNote: '   ',
-    });
-
-    expect(instance.petsNote).toBeNull();
-  });
-
-  it('preserves non-blank petsNote', () => {
-    const instance = plainToInstance(UpdateApplicantProfileDto, {
-      petsNote: 'Two cats',
-    });
-
-    expect(instance.petsNote).toBe('Two cats');
-  });
-
   it('accepts valid household counts', async () => {
     const errors = await validateDto({ adultsCount: 2, childrenCount: 1 });
 
@@ -84,20 +59,57 @@ describe('UpdateApplicantProfileDto', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('accepts null petsNote', async () => {
-    const instance = plainToInstance(UpdateApplicantProfileDto, {
-      petsNote: null,
-    });
-
-    await expect(validate(instance)).resolves.toHaveLength(0);
-    expect(instance.petsNote).toBeNull();
-  });
-
-  it('accepts valid smoking status', async () => {
-    const errors = await validateDto({
-      smokingStatus: SmokingStatus.NON_SMOKER,
-    });
+  it('accepts nullable smoker answers', async () => {
+    const errors = await validateDto({ isSmoker: null });
 
     expect(errors).toHaveLength(0);
+  });
+
+  it.each([
+    { input: 'true', expected: true },
+    { input: 'false', expected: false },
+    { input: true, expected: true },
+    { input: false, expected: false },
+    { input: null, expected: null },
+  ])(
+    'transforms isSmoker string "$input" to boolean $expected',
+    async ({ input, expected }) => {
+      const instance = plainToInstance(UpdateApplicantProfileDto, {
+        isSmoker: input,
+      });
+
+      await expect(validate(instance)).resolves.toHaveLength(0);
+      expect(instance.isSmoker).toBe(expected);
+    },
+  );
+
+  it.each([
+    { input: 'true', expected: true },
+    { input: 'false', expected: false },
+    { input: true, expected: true },
+    { input: false, expected: false },
+    { input: null, expected: null },
+  ])(
+    'transforms hasPets string "$input" to boolean $expected',
+    async ({ input, expected }) => {
+      const instance = plainToInstance(UpdateApplicantProfileDto, {
+        hasPets: input,
+      });
+
+      await expect(validate(instance)).resolves.toHaveLength(0);
+      expect(instance.hasPets).toBe(expected);
+    },
+  );
+
+  it('rejects ambiguous boolean strings', async () => {
+    const instance = plainToInstance(UpdateApplicantProfileDto, {
+      isSmoker: 'maybe',
+    });
+
+    expect(instance.isSmoker).toBe('maybe');
+
+    const errors = await validate(instance);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.property).toBe('isSmoker');
   });
 });

@@ -3,7 +3,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { ApplicantProfile } from '../generated/prisma/client';
-import { SmokingStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { UserStatus } from '../generated/prisma/enums';
 import { Role } from '../generated/prisma/enums';
@@ -40,8 +39,7 @@ const makeProfile = (): ApplicantProfile => ({
   adultsCount: 2,
   childrenCount: 0,
   hasPets: false,
-  petsNote: null,
-  smokingStatus: SmokingStatus.NON_SMOKER,
+  isSmoker: false,
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 });

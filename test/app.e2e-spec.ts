@@ -1443,7 +1443,7 @@ describe('Backend API E2E', () => {
       expect(body.peopleCount).toBeNull();
     });
 
-    it('normalizes empty and whitespace petsNote strings to null', async () => {
+    it('rejects removed petsNote and smokingStatus fields', async () => {
       const applicantAgent = request.agent(getServer());
       await applicantAgent
         .post('/api/v1/auth/register')
@@ -1453,22 +1453,12 @@ describe('Backend API E2E', () => {
       await applicantAgent
         .patch('/api/v1/applicant/profile')
         .send({ petsNote: '' })
-        .expect(200);
-
-      let response = await applicantAgent
-        .get('/api/v1/applicant/profile')
-        .expect(200);
-      expect(responseBody(response).petsNote).toBeNull();
+        .expect(400);
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ petsNote: '   ' })
-        .expect(200);
-
-      response = await applicantAgent
-        .get('/api/v1/applicant/profile')
-        .expect(200);
-      expect(responseBody(response).petsNote).toBeNull();
+        .send({ smokingStatus: 'SMOKER' })
+        .expect(400);
     });
 
     it('preserves omitted fields on PATCH', async () => {

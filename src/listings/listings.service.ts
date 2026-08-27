@@ -17,6 +17,7 @@ import {
   ApplicationStatus,
   ListingStatus,
   Role,
+  UserStatus,
 } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -569,7 +570,7 @@ export class ListingsService {
 
     const isApplicant =
       applicantUser?.role === Role.APPLICANT &&
-      applicantUser.status === 'ACTIVE';
+      applicantUser.status === UserStatus.ACTIVE;
 
     let profile: ApplicantProfile | null = null;
 
@@ -622,7 +623,7 @@ export class ListingsService {
     const summaries = items.map(
       (listing) =>
         new ApplicantListingSummaryDto(
-          listing as unknown as ApplicantListingSummarySource,
+          listing as ApplicantListingSummarySource,
           profileMatchForListing(listing),
           evaluationTimestamp,
         ),
@@ -692,7 +693,7 @@ export class ListingsService {
 
     const isApplicant =
       applicantUser?.role === Role.APPLICANT &&
-      applicantUser.status === 'ACTIVE';
+      applicantUser.status === UserStatus.ACTIVE;
 
     let profileMatch = ProfileMatch.UNKNOWN;
 

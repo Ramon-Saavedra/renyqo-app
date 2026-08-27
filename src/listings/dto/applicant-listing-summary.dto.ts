@@ -19,6 +19,7 @@ export type ApplicantListingSummarySource = Pick<
   | 'availableFrom'
   | 'shortDescription'
   | 'petsPolicy'
+  | 'smokingPolicy'
   | 'publishedAt'
 > & {
   images: Pick<ListingImage, 'secureUrl' | 'position' | 'isCover'>[];

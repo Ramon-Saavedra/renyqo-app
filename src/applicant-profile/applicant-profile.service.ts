@@ -111,14 +111,10 @@ export class ApplicantProfileService {
           : (existing?.childrenCount ?? null),
       hasPets:
         dto.hasPets !== undefined ? dto.hasPets : (existing?.hasPets ?? null),
-      petsNote:
-        dto.petsNote !== undefined
-          ? dto.petsNote
-          : (existing?.petsNote ?? null),
-      smokingStatus:
-        dto.smokingStatus !== undefined
-          ? dto.smokingStatus
-          : (existing?.smokingStatus ?? null),
+      isSmoker:
+        dto.isSmoker !== undefined
+          ? dto.isSmoker
+          : (existing?.isSmoker ?? null),
     };
   }
 

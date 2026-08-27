@@ -48,6 +48,7 @@ describe('ApplicantListingSummaryDto', () => {
     availableFrom: new Date('2026-09-01'),
     shortDescription: 'Nice place',
     petsPolicy: null,
+    smokingPolicy: SmokingPolicy.NOT_ALLOWED,
     publishedAt: new Date('2025-01-01'),
     images: [
       {
@@ -237,7 +238,7 @@ describe('ApplicantListingDetailDto', () => {
     incomeProofRequired: false,
     suitableForPeopleCount: 2,
     petsPolicy: PetsPolicy.ALLOWED,
-    smokingPolicy: SmokingPolicy.NON_SMOKERS_PREFERRED,
+    smokingPolicy: SmokingPolicy.NOT_ALLOWED,
     publishedAt: new Date('2026-07-01'),
     images: [
       {
@@ -288,7 +289,7 @@ describe('ApplicantListingDetailDto', () => {
     expect(requirements.incomeProofRequired).toBe(false);
     expect(requirements.suitableForPeopleCount).toBe(2);
     expect(requirements.petsPolicy).toBe('ALLOWED');
-    expect(requirements.smokingPolicy).toBe('NON_SMOKERS_PREFERRED');
+    expect(requirements.smokingPolicy).toBe('NOT_ALLOWED');
   });
 
   it('never exposes showExactAddress flag', () => {
@@ -410,6 +411,7 @@ describe('ApplicantListingsPageDto', () => {
         availableFrom: null,
         shortDescription: null,
         petsPolicy: null,
+        smokingPolicy: null,
         publishedAt: null,
         images: [],
       },
