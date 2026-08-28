@@ -11,6 +11,7 @@ import type {
   ApplicantProfile,
   Application,
   Listing,
+  Prisma,
 } from '../generated/prisma/client';
 import {
   ApplicationRejectionReason,
@@ -1043,6 +1044,230 @@ describe('ApplicationsService', () => {
       ).resolves.toBe(0);
 
       expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('revalidateActiveAndWaitingApplications', () => {
+    const makeProfile = (
+      overrides: Partial<ApplicantProfile> = {},
+    ): ApplicantProfile => ({
+      id: '00000000-0000-4000-8000-000000000100',
+      applicantId: APPLICANT_ID,
+      householdNetIncome: null,
+      incomeProofAvailable: null,
+      schufaAvailable: null,
+      peopleCount: null,
+      adultsCount: null,
+      childrenCount: null,
+      hasPets: null,
+      isSmoker: null,
+      createdAt: new Date('2024-01-01'),
+      updatedAt: new Date('2024-01-01'),
+      ...overrides,
+    });
+
+    const makeApplicationWithListing = (
+      applicationOverrides: Partial<Application> = {},
+      listing: Listing,
+    ): Application & { listing: Listing } => ({
+      ...makeRawApplication(applicationOverrides),
+      listing,
+    });
+
+    const extractLockedListingId = (
+      strings: unknown,
+      ...values: unknown[]
+    ): string | undefined => {
+      void strings;
+      const firstValue = values[0];
+      return typeof firstValue === 'string' ? firstValue : undefined;
+    };
+
+    it('leaves eligible ACTIVE applications unchanged', async () => {
+      const listing = makeRawListing();
+      const application = makeApplicationWithListing(
+        { status: ApplicationStatus.ACTIVE },
+        listing,
+      );
+      prismaMock.application.findMany.mockResolvedValue([application]);
+
+      await service.revalidateActiveAndWaitingApplications(
+        prismaMock as unknown as Prisma.TransactionClient,
+        APPLICANT_ID,
+        makeProfile(),
+      );
+
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an ineligible ACTIVE application and promotes the next eligible WAITING applicant', async () => {
+      const listing = makeRawListing();
+      const activeApplication = makeApplicationWithListing(
+        {
+          id: '00000000-0000-4000-8000-000000000010',
+          status: ApplicationStatus.ACTIVE,
+        },
+        listing,
+      );
+      const waitingApplication = makeRawApplication({
+        id: '00000000-0000-4000-8000-000000000011',
+        applicantId: '00000000-0000-4000-8000-000000000020',
+        status: ApplicationStatus.WAITING,
+        queueOrder: BigInt(2),
+      });
+      prismaMock.application.findMany
+        .mockResolvedValueOnce([activeApplication])
+        .mockResolvedValueOnce([waitingApplication]);
+      prismaMock.application.count.mockResolvedValue(4);
+      prismaMock.application.update.mockResolvedValue(makeRawApplication());
+      eligibilityService.evaluate
+        .mockReturnValueOnce(
+          new EligibilityResponseDto(false, [], [], new Date()),
+        )
+        .mockReturnValueOnce(
+          new EligibilityResponseDto(true, [], [], new Date()),
+        );
+
+      await service.revalidateActiveAndWaitingApplications(
+        prismaMock as unknown as Prisma.TransactionClient,
+        APPLICANT_ID,
+        makeProfile(),
+      );
+
+      expect(prismaMock.application.update).toHaveBeenNthCalledWith(1, {
+        where: { id: activeApplication.id },
+        data: {
+          status: ApplicationStatus.REJECTED,
+          rejectedAt: expect.any(Date),
+          publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+        },
+      });
+      expect(prismaMock.application.update).toHaveBeenNthCalledWith(2, {
+        where: { id: waitingApplication.id },
+        data: { status: ApplicationStatus.ACTIVE },
+      });
+    });
+
+    it('rejects an ineligible WAITING application without promoting', async () => {
+      const listing = makeRawListing();
+      const waitingApplication = makeApplicationWithListing(
+        {
+          id: '00000000-0000-4000-8000-000000000012',
+          status: ApplicationStatus.WAITING,
+        },
+        listing,
+      );
+      prismaMock.application.findMany.mockResolvedValue([waitingApplication]);
+      eligibilityService.evaluate.mockReturnValue(
+        new EligibilityResponseDto(false, [], [], new Date()),
+      );
+
+      await service.revalidateActiveAndWaitingApplications(
+        prismaMock as unknown as Prisma.TransactionClient,
+        APPLICANT_ID,
+        makeProfile(),
+      );
+
+      expect(prismaMock.application.update).toHaveBeenCalledWith({
+        where: { id: waitingApplication.id },
+        data: {
+          status: ApplicationStatus.REJECTED,
+          rejectedAt: expect.any(Date),
+          publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+        },
+      });
+      expect(prismaMock.application.count).not.toHaveBeenCalled();
+    });
+
+    it('promotes waiting applicants in FIFO order when an ACTIVE slot is freed', async () => {
+      const listing = makeRawListing();
+      const activeApplication = makeApplicationWithListing(
+        {
+          id: '00000000-0000-4000-8000-000000000013',
+          status: ApplicationStatus.ACTIVE,
+        },
+        listing,
+      );
+      const firstWaiting = makeRawApplication({
+        id: '00000000-0000-4000-8000-000000000014',
+        applicantId: '00000000-0000-4000-8000-000000000021',
+        status: ApplicationStatus.WAITING,
+        queueOrder: BigInt(2),
+      });
+      const secondWaiting = makeRawApplication({
+        id: '00000000-0000-4000-8000-000000000015',
+        applicantId: '00000000-0000-4000-8000-000000000022',
+        status: ApplicationStatus.WAITING,
+        queueOrder: BigInt(3),
+      });
+      prismaMock.application.findMany
+        .mockResolvedValueOnce([activeApplication])
+        .mockResolvedValueOnce([firstWaiting, secondWaiting]);
+      prismaMock.application.count.mockResolvedValue(4);
+      prismaMock.application.update.mockResolvedValue(makeRawApplication());
+      eligibilityService.evaluate
+        .mockReturnValueOnce(
+          new EligibilityResponseDto(false, [], [], new Date()),
+        )
+        .mockReturnValueOnce(
+          new EligibilityResponseDto(true, [], [], new Date()),
+        );
+
+      await service.revalidateActiveAndWaitingApplications(
+        prismaMock as unknown as Prisma.TransactionClient,
+        APPLICANT_ID,
+        makeProfile(),
+      );
+
+      expect(prismaMock.application.update).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ where: { id: firstWaiting.id } }),
+      );
+    });
+
+    it('processes multiple listings in deterministic lexicographic order', async () => {
+      const listingB = makeRawListing({
+        id: '00000000-0000-4000-8000-0000000000b2',
+      });
+      const listingA = makeRawListing({
+        id: '00000000-0000-4000-8000-0000000000a1',
+      });
+      const applicationOnB = makeApplicationWithListing(
+        {
+          id: '00000000-0000-4000-8000-000000000030',
+          listingId: listingB.id,
+          status: ApplicationStatus.ACTIVE,
+        },
+        listingB,
+      );
+      const applicationOnA = makeApplicationWithListing(
+        {
+          id: '00000000-0000-4000-8000-000000000031',
+          listingId: listingA.id,
+          status: ApplicationStatus.ACTIVE,
+        },
+        listingA,
+      );
+      prismaMock.application.findMany.mockResolvedValue([
+        applicationOnB,
+        applicationOnA,
+      ]);
+      eligibilityService.evaluate.mockReturnValue(
+        new EligibilityResponseDto(true, [], [], new Date()),
+      );
+
+      await service.revalidateActiveAndWaitingApplications(
+        prismaMock as unknown as Prisma.TransactionClient,
+        APPLICANT_ID,
+        makeProfile(),
+      );
+
+      expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(2);
+
+      const lockedListingIds = prismaMock.$queryRaw.mock.calls
+        .map((call) => extractLockedListingId(...call))
+        .filter((id): id is string => id !== undefined);
+      expect(lockedListingIds).toEqual([listingA.id, listingB.id]);
     });
   });
 });

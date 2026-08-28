@@ -21,48 +21,16 @@ import {
 } from '../generated/prisma/enums';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
 import type { EligibilityWarning } from '../eligibility/dto/eligibility-response.dto';
 import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
 
 const ACTIVE_APPLICATIONS_LIMIT = 5;
-const SERIALIZABLE_TRANSACTION_RETRIES = 8;
 const PROMOTION_BATCH_SIZE = 50;
 const MAX_PROMOTION_CANDIDATES = 500;
 
 type TransactionClient = Prisma.TransactionClient;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function hasSerializationCode(value: unknown): boolean {
-  return isRecord(value) && value.originalCode === '40001';
-}
-
-function isSerializationConflict(error: unknown): boolean {
-  if (
-    error instanceof PrismaClientKnownRequestError &&
-    error.code === 'P2034'
-  ) {
-    return true;
-  }
-
-  if (!isRecord(error)) {
-    return false;
-  }
-
-  if (error.code === 'P2034' || hasSerializationCode(error.cause)) {
-    return true;
-  }
-
-  const meta = isRecord(error.meta) ? error.meta : undefined;
-  const driverAdapterError = meta?.driverAdapterError;
-  return (
-    isRecord(driverAdapterError) &&
-    hasSerializationCode(driverAdapterError.cause)
-  );
-}
 
 function computeProviderActiveApplicantWarnings(
   profile: Pick<ApplicantProfile, 'hasPets' | 'isSmoker'> | null,
@@ -102,7 +70,7 @@ export class ApplicationsService {
   ) {}
 
   async apply(listingId: string, applicantId: string): Promise<Application> {
-    return this.runSerializableTransaction(async (tx) => {
+    return runSerializableTransaction(this.prisma, async (tx) => {
       await this.lockListing(tx, listingId);
       const listing = await tx.listing.findUnique({
         where: { id: listingId },
@@ -177,7 +145,7 @@ export class ApplicationsService {
     applicationId: string,
     applicantId: string,
   ): Promise<Application> {
-    return this.runSerializableTransaction(async (tx) => {
+    return runSerializableTransaction(this.prisma, async (tx) => {
       const applicationReference = await tx.application.findUnique({
         where: { id: applicationId },
         select: { listingId: true },
@@ -232,7 +200,7 @@ export class ApplicationsService {
     applicationId: string,
     providerId: string,
   ): Promise<Application> {
-    return this.runSerializableTransaction(async (tx) => {
+    return runSerializableTransaction(this.prisma, async (tx) => {
       const application = await tx.application.findUnique({
         where: { id: applicationId },
         include: {
@@ -279,7 +247,7 @@ export class ApplicationsService {
   }
 
   async promoteWaitingApplications(listingId: string): Promise<number> {
-    return this.runSerializableTransaction(async (tx) => {
+    return runSerializableTransaction(this.prisma, async (tx) => {
       await this.lockListing(tx, listingId);
       const listing = await tx.listing.findUnique({
         where: { id: listingId },
@@ -362,6 +330,77 @@ export class ApplicationsService {
     }
 
     return promotedCount;
+  }
+
+  async revalidateActiveAndWaitingApplications(
+    tx: TransactionClient,
+    applicantId: string,
+    profile: ApplicantProfile,
+  ): Promise<void> {
+    const applications = await tx.application.findMany({
+      where: {
+        applicantId,
+        status: {
+          in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING],
+        },
+      },
+      include: { listing: true },
+    });
+
+    type ApplicationWithListing = Prisma.ApplicationGetPayload<{
+      include: { listing: true };
+    }>;
+    const applicationsByListing = new Map<string, ApplicationWithListing[]>();
+    for (const application of applications) {
+      const listingApplications = applicationsByListing.get(
+        application.listingId,
+      );
+      if (listingApplications === undefined) {
+        applicationsByListing.set(application.listingId, [application]);
+      } else {
+        listingApplications.push(application);
+      }
+    }
+
+    const sortedListingIds = Array.from(applicationsByListing.keys()).sort();
+
+    for (const listingId of sortedListingIds) {
+      await this.lockListing(tx, listingId);
+
+      const listingApplications = applicationsByListing.get(listingId);
+      if (listingApplications === undefined) {
+        continue;
+      }
+
+      for (const application of listingApplications) {
+        const eligibility = this.eligibilityService.evaluate(
+          application.listing,
+          profile,
+        );
+
+        if (eligibility.canApply) {
+          continue;
+        }
+
+        const wasActive = application.status === ApplicationStatus.ACTIVE;
+
+        await tx.application.update({
+          where: { id: application.id },
+          data: {
+            status: ApplicationStatus.REJECTED,
+            rejectedAt: new Date(),
+            publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+          },
+        });
+
+        if (
+          wasActive &&
+          application.listing.status === ListingStatus.PUBLISHED
+        ) {
+          await this.promoteWithinTransaction(tx, application.listing);
+        }
+      }
+    }
   }
 
   async findAllByApplicantWithListing(
@@ -493,33 +532,6 @@ export class ApplicationsService {
         listing,
       ),
     }));
-  }
-
-  private async runSerializableTransaction<T>(
-    operation: (tx: TransactionClient) => Promise<T>,
-  ): Promise<T> {
-    for (
-      let attempt = 0;
-      attempt < SERIALIZABLE_TRANSACTION_RETRIES;
-      attempt++
-    ) {
-      try {
-        return await this.prisma.$transaction(operation, {
-          isolationLevel: 'Serializable',
-        });
-      } catch (err) {
-        if (
-          !isSerializationConflict(err) ||
-          attempt === SERIALIZABLE_TRANSACTION_RETRIES - 1
-        ) {
-          throw err;
-        }
-        const delayMs = Math.min(250, 10 * 2 ** attempt);
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-
-    throw new Error('Application transaction could not be completed');
   }
 
   private async lockListing(

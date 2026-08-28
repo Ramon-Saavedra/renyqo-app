@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import { ApplicationsService } from '../applications/applications.service';
 import type { ApplicantProfile } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplicantProfileService } from './applicant-profile.service';
@@ -37,6 +38,9 @@ type TransactionMock = {
 
 describe('ApplicantProfileService', () => {
   let service: ApplicantProfileService;
+  let applicationsServiceMock: jest.Mocked<
+    Pick<ApplicationsService, 'revalidateActiveAndWaitingApplications'>
+  >;
   let prismaMock: TransactionMock & {
     $transaction: jest.MockedFunction<
       (
@@ -56,11 +60,18 @@ describe('ApplicantProfileService', () => {
         fn(prismaMock),
       ),
     };
+    applicationsServiceMock = {
+      revalidateActiveAndWaitingApplications: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ApplicantProfileService,
         { provide: PrismaService, useValue: prismaMock },
+        {
+          provide: ApplicationsService,
+          useValue: applicationsServiceMock,
+        },
       ],
     }).compile();
 
@@ -221,6 +232,25 @@ describe('ApplicantProfileService', () => {
     it('rejects an empty PATCH body', async () => {
       await expect(service.upsert(APPLICANT_ID, {})).rejects.toThrow(
         BadRequestException,
+      );
+    });
+
+    it('revalidates active and waiting applications after updating the profile', async () => {
+      const dto: UpdateApplicantProfileDto = { householdNetIncome: 3500 };
+      const updated = makeRawProfile({ householdNetIncome: 3500 });
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(
+        makeRawProfile(),
+      );
+      prismaMock.applicantProfile.upsert.mockResolvedValue(updated);
+
+      await service.upsert(APPLICANT_ID, dto);
+
+      expect(
+        applicationsServiceMock.revalidateActiveAndWaitingApplications,
+      ).toHaveBeenCalledWith(
+        expect.anything(),
+        APPLICANT_ID,
+        expect.objectContaining({ id: updated.id }),
       );
     });
   });
