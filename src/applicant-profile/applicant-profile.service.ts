@@ -1,50 +1,17 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 
-import type { ApplicantProfile, Prisma } from '../generated/prisma/client';
+import { ApplicationsService } from '../applications/applications.service';
+import type { ApplicantProfile } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import type { UpdateApplicantProfileDto } from './dto/update-applicant-profile.dto';
-
-const SERIALIZABLE_TRANSACTION_RETRIES = 8;
-
-type TransactionClient = Prisma.TransactionClient;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isP2034(error: unknown): boolean {
-  if (
-    error instanceof PrismaClientKnownRequestError &&
-    error.code === 'P2034'
-  ) {
-    return true;
-  }
-
-  if (!isRecord(error)) {
-    return false;
-  }
-
-  if (error.code === 'P2034') {
-    return true;
-  }
-
-  const meta = isRecord(error.meta) ? error.meta : undefined;
-  const driverAdapterError = meta?.driverAdapterError;
-  if (
-    isRecord(driverAdapterError) &&
-    isRecord(driverAdapterError.cause) &&
-    driverAdapterError.cause.originalCode === '40001'
-  ) {
-    return true;
-  }
-
-  return false;
-}
 
 @Injectable()
 export class ApplicantProfileService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly applicationsService: ApplicationsService,
+  ) {}
 
   async findByApplicant(applicantId: string): Promise<ApplicantProfile | null> {
     return this.prisma.applicantProfile.findUnique({ where: { applicantId } });
@@ -56,21 +23,33 @@ export class ApplicantProfileService {
   ): Promise<ApplicantProfile> {
     this.assertHasMeaningfulData(dto);
 
-    return this.runSerializableTransaction(async (tx) => {
-      const existing = await tx.applicantProfile.findUnique({
-        where: { applicantId },
-      });
+    return runSerializableTransaction(
+      this.prisma,
+      async (tx) => {
+        const existing = await tx.applicantProfile.findUnique({
+          where: { applicantId },
+        });
 
-      const merged = this.mergeProfile(existing, dto);
-      this.assertHouseholdConsistency(merged);
-      const peopleCount = this.calculatePeopleCount(merged);
+        const merged = this.mergeProfile(existing, dto);
+        this.assertHouseholdConsistency(merged);
+        const peopleCount = this.calculatePeopleCount(merged);
 
-      return tx.applicantProfile.upsert({
-        where: { applicantId },
-        create: { applicantId, ...merged, peopleCount },
-        update: { ...merged, peopleCount },
-      });
-    });
+        const profile = await tx.applicantProfile.upsert({
+          where: { applicantId },
+          create: { applicantId, ...merged, peopleCount },
+          update: { ...merged, peopleCount },
+        });
+
+        await this.applicationsService.revalidateActiveAndWaitingApplications(
+          tx,
+          applicantId,
+          profile,
+        );
+
+        return profile;
+      },
+      { fallbackMessage: 'Profile update could not be completed' },
+    );
   }
 
   private assertHasMeaningfulData(dto: UpdateApplicantProfileDto): void {
@@ -141,29 +120,5 @@ export class ApplicantProfileService {
     }
 
     return null;
-  }
-
-  private async runSerializableTransaction<T>(
-    operation: (tx: TransactionClient) => Promise<T>,
-  ): Promise<T> {
-    for (
-      let attempt = 0;
-      attempt < SERIALIZABLE_TRANSACTION_RETRIES;
-      attempt++
-    ) {
-      try {
-        return await this.prisma.$transaction(operation, {
-          isolationLevel: 'Serializable',
-        });
-      } catch (err) {
-        if (!isP2034(err) || attempt === SERIALIZABLE_TRANSACTION_RETRIES - 1) {
-          throw err;
-        }
-        const delayMs = Math.min(250, 10 * 2 ** attempt);
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-
-    throw new Error('Unreachable: retry loop exhausted');
   }
 }

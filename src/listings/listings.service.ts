@@ -21,7 +21,7 @@ import {
 } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
+import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import type { SafeUser } from '../users/types/safe-user.type';
 import type { CreateListingDto } from './dto/create-listing.dto';
@@ -63,41 +63,7 @@ const DEFAULT_DEPOSIT_MONTHS = 2;
 const MIN_DEPOSIT_MONTHS = 1;
 const MAX_DEPOSIT_MONTHS = 3;
 const DEPOSIT_AMOUNT_TOLERANCE = 0.01;
-const SERIALIZABLE_TRANSACTION_RETRIES = 8;
 
-type TransactionClient = Prisma.TransactionClient;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function hasSerializationCode(value: unknown): boolean {
-  return isRecord(value) && value.originalCode === '40001';
-}
-
-function isSerializationConflict(error: unknown): boolean {
-  if (
-    error instanceof PrismaClientKnownRequestError &&
-    error.code === 'P2034'
-  ) {
-    return true;
-  }
-
-  if (!isRecord(error)) {
-    return false;
-  }
-
-  if (error.code === 'P2034' || hasSerializationCode(error.cause)) {
-    return true;
-  }
-
-  const meta = isRecord(error.meta) ? error.meta : undefined;
-  const driverAdapterError = meta?.driverAdapterError;
-  return (
-    isRecord(driverAdapterError) &&
-    hasSerializationCode(driverAdapterError.cause)
-  );
-}
 const ELIGIBILITY_CRITERIA_FIELDS = [
   'minimumHouseholdNetIncome',
   'schufaRequired',
@@ -437,7 +403,7 @@ export class ListingsService {
     providerId: string,
     dto: RentListingDto,
   ): Promise<Listing> {
-    return this.runSerializableTransaction(async (tx) => {
+    return runSerializableTransaction(this.prisma, async (tx) => {
       await tx.$queryRaw`SELECT id FROM "listings" WHERE id = ${id} FOR UPDATE`;
 
       const listing = await tx.listing.findFirst({
@@ -1206,32 +1172,5 @@ export class ListingsService {
     if (bedrooms > rooms) {
       throw new BadRequestException('bedrooms must not be greater than rooms');
     }
-  }
-
-  private async runSerializableTransaction<T>(
-    operation: (tx: TransactionClient) => Promise<T>,
-  ): Promise<T> {
-    for (
-      let attempt = 0;
-      attempt < SERIALIZABLE_TRANSACTION_RETRIES;
-      attempt++
-    ) {
-      try {
-        return await this.prisma.$transaction(operation, {
-          isolationLevel: 'Serializable',
-        });
-      } catch (err) {
-        if (
-          !isSerializationConflict(err) ||
-          attempt === SERIALIZABLE_TRANSACTION_RETRIES - 1
-        ) {
-          throw err;
-        }
-        const delayMs = Math.min(250, 10 * 2 ** attempt);
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-
-    throw new Error('Rent listing transaction could not be completed');
   }
 }

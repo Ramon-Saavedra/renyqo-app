@@ -230,6 +230,45 @@ async function applyToListing(
   return responseBody(resp);
 }
 
+async function updateApplicantProfile(
+  agent: ReturnType<typeof request.agent>,
+  profile: {
+    adultsCount?: number;
+    childrenCount?: number;
+    householdNetIncome?: number;
+    incomeProofAvailable?: boolean;
+    schufaAvailable?: boolean;
+    hasPets?: boolean;
+    isSmoker?: boolean;
+  },
+) {
+  await agent.patch('/api/v1/applicant/profile').send(profile).expect(200);
+}
+
+async function publishListingWithRequirements(
+  providerId: string,
+  requirements: {
+    suitableForPeopleCount?: number;
+  },
+) {
+  return getPrisma().listing.create({
+    data: {
+      providerId,
+      status: ListingStatus.PUBLISHED,
+      publishedAt: new Date(),
+      city: 'Berlin',
+      street: 'Test Street 1',
+      title: 'E2E Test Listing',
+      coldRent: 800,
+      livingArea: 50,
+      rooms: 2,
+      bedrooms: 1,
+      availableFrom: new Date(),
+      ...requirements,
+    },
+  });
+}
+
 async function clearDatabase(): Promise<void> {
   const e2eDatabaseUrl = process.env['E2E_DATABASE_URL'];
   const activeDatabaseUrl = process.env['DATABASE_URL'];
@@ -714,6 +753,166 @@ describe('Application Lifecycle E2E', () => {
           expect(listingData['providerId']).toBeUndefined();
           expect(listingData['street']).toBeUndefined();
         });
+    });
+  });
+
+  describe('Applicant profile update revalidates existing applications', () => {
+    it('leaves eligible ACTIVE applications unchanged', async () => {
+      const { provider } = await registerProvider();
+      const listing = await publishListingWithRequirements(provider.id, {
+        suitableForPeopleCount: 1,
+      });
+
+      const applicant = await registerApplicant();
+      await updateApplicantProfile(applicant, {
+        adultsCount: 1,
+        childrenCount: 0,
+      });
+      const entry = await applyToListing(applicant, listing.id);
+      expect(entry['status']).toBe(ApplicationStatus.ACTIVE);
+
+      await updateApplicantProfile(applicant, {
+        adultsCount: 1,
+        childrenCount: 0,
+      });
+
+      const application = await getPrisma().application.findUnique({
+        where: { id: entry['id'] as string },
+      });
+      expect(application?.status).toBe(ApplicationStatus.ACTIVE);
+    });
+
+    it('rejects an ineligible ACTIVE application and promotes the next eligible WAITING applicant', async () => {
+      const { provider } = await registerProvider();
+      const listing = await publishListingWithRequirements(provider.id, {
+        suitableForPeopleCount: 1,
+      });
+
+      const applicants: ReturnType<typeof request.agent>[] = [];
+      for (let i = 0; i < 6; i += 1) {
+        const agent = await registerApplicant();
+        await updateApplicantProfile(agent, {
+          adultsCount: 1,
+          childrenCount: 0,
+        });
+        applicants.push(agent);
+      }
+
+      const entries: Record<string, unknown>[] = [];
+      for (const agent of applicants) {
+        const entry = await applyToListing(agent, listing.id);
+        entries.push(entry);
+      }
+      expect(
+        entries.filter((e) => e['status'] === ApplicationStatus.ACTIVE).length,
+      ).toBe(5);
+      const waitingEntry = entries.find(
+        (e) => e['status'] === ApplicationStatus.WAITING,
+      );
+      expect(waitingEntry).toBeTruthy();
+
+      await updateApplicantProfile(applicants[0], {
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+
+      const rejectedApplication = await getPrisma().application.findUnique({
+        where: { id: entries[0]['id'] as string },
+      });
+      expect(rejectedApplication?.status).toBe(ApplicationStatus.REJECTED);
+      expect(rejectedApplication?.publicReason).toBe(
+        ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+      );
+
+      const promotedApplication = await getPrisma().application.findUnique({
+        where: { id: waitingEntry?.['id'] as string },
+      });
+      expect(promotedApplication?.status).toBe(ApplicationStatus.ACTIVE);
+    });
+
+    it('rejects an ineligible WAITING application without promoting', async () => {
+      const { provider } = await registerProvider();
+      const listing = await publishListingWithRequirements(provider.id, {
+        suitableForPeopleCount: 1,
+      });
+
+      const applicants: ReturnType<typeof request.agent>[] = [];
+      for (let i = 0; i < 6; i += 1) {
+        const agent = await registerApplicant();
+        await updateApplicantProfile(agent, {
+          adultsCount: 1,
+          childrenCount: 0,
+        });
+        applicants.push(agent);
+      }
+
+      const entries: Record<string, unknown>[] = [];
+      for (const agent of applicants) {
+        const entry = await applyToListing(agent, listing.id);
+        entries.push(entry);
+      }
+      const waitingEntry = entries.find(
+        (e) => e['status'] === ApplicationStatus.WAITING,
+      );
+      expect(waitingEntry).toBeTruthy();
+
+      const waitingApplicantIndex = entries.findIndex(
+        (e) => e['id'] === waitingEntry?.['id'],
+      );
+      await updateApplicantProfile(applicants[waitingApplicantIndex], {
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+
+      const rejectedApplication = await getPrisma().application.findUnique({
+        where: { id: waitingEntry?.['id'] as string },
+      });
+      expect(rejectedApplication?.status).toBe(ApplicationStatus.REJECTED);
+      expect(rejectedApplication?.publicReason).toBe(
+        ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+      );
+
+      const activeCount = await getPrisma().application.count({
+        where: { listingId: listing.id, status: ApplicationStatus.ACTIVE },
+      });
+      expect(activeCount).toBe(5);
+    });
+
+    it('does not auto-revive a rejected application when the profile becomes eligible again', async () => {
+      const { provider } = await registerProvider();
+      const listing = await publishListingWithRequirements(provider.id, {
+        suitableForPeopleCount: 1,
+      });
+
+      const applicant = await registerApplicant();
+      await updateApplicantProfile(applicant, {
+        adultsCount: 1,
+        childrenCount: 0,
+      });
+      const entry = await applyToListing(applicant, listing.id);
+      expect(entry['status']).toBe(ApplicationStatus.ACTIVE);
+
+      await updateApplicantProfile(applicant, {
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+
+      const rejectedApplication = await getPrisma().application.findUnique({
+        where: { id: entry['id'] as string },
+      });
+      expect(rejectedApplication?.status).toBe(ApplicationStatus.REJECTED);
+
+      await updateApplicantProfile(applicant, {
+        adultsCount: 1,
+        childrenCount: 0,
+      });
+
+      const stillRejectedApplication = await getPrisma().application.findUnique(
+        {
+          where: { id: entry['id'] as string },
+        },
+      );
+      expect(stillRejectedApplication?.status).toBe(ApplicationStatus.REJECTED);
     });
   });
 });

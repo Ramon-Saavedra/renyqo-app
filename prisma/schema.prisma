@@ -56,8 +56,9 @@ enum ApplicationStatus {
 }
 
 enum ApplicationRejectionReason {
-  NOT_SELECTED    @map("not_selected")
-  LISTING_RENTED  @map("listing_rented")
+  NOT_SELECTED                @map("not_selected")
+  LISTING_RENTED              @map("listing_rented")
+  PROFILE_NO_LONGER_ELIGIBLE  @map("profile_no_longer_eligible")
 }
 
 enum ProviderType {
