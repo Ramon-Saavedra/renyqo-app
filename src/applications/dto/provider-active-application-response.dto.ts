@@ -7,7 +7,7 @@ import type { EligibilityWarning } from '../../eligibility/dto/eligibility-respo
 
 export type ProviderActiveApplicationRecord = Pick<
   Application,
-  'id' | 'listingId' | 'status'
+  'id' | 'listingId' | 'status' | 'activeAt'
 > & {
   applicant: Pick<User, 'name'> & {
     profile: Pick<ApplicantProfile, 'peopleCount'> | null;
@@ -35,12 +35,14 @@ export class ProviderActiveApplicationResponseDto {
   readonly id: string;
   readonly listingId: string;
   readonly status: Application['status'];
+  readonly activeAt: Date | null;
   readonly applicant: ProviderActiveApplicantSummaryDto;
 
   constructor(application: ProviderActiveApplicationRecord) {
     this.id = application.id;
     this.listingId = application.listingId;
     this.status = application.status;
+    this.activeAt = application.activeAt;
     this.applicant = new ProviderActiveApplicantSummaryDto(
       application.applicant,
       application.applicant.profile,

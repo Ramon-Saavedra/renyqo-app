@@ -16,6 +16,7 @@ function makeRecord(
     id: APPLICATION_ID,
     listingId: LISTING_ID,
     status: ApplicationStatus.ACTIVE,
+    activeAt: new Date('2024-06-01T10:00:00.000Z'),
     applicant: {
       name: 'Anna Applicant',
       profile: {
@@ -35,6 +36,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
       id: APPLICATION_ID,
       listingId: LISTING_ID,
       status: ApplicationStatus.ACTIVE,
+      activeAt: new Date('2024-06-01T10:00:00.000Z'),
       applicant: {
         name: 'Anna Applicant',
         peopleCount: 3,
@@ -47,6 +49,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
     expect(dto).not.toHaveProperty('updatedAt');
     expect(dto).not.toHaveProperty('rejectedAt');
     expect(dto).not.toHaveProperty('publicReason');
+    expect(dto).not.toHaveProperty('withdrawnAt');
     expect(dto.applicant).not.toHaveProperty('id');
     expect(dto.applicant).not.toHaveProperty('email');
     expect(dto.applicant).not.toHaveProperty('passwordHash');

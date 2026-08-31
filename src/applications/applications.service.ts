@@ -25,6 +25,7 @@ import { runSerializableTransaction } from '../prisma/run-serializable-transacti
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
 import type { EligibilityWarning } from '../eligibility/dto/eligibility-response.dto';
 import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
+import type { ProviderExitedApplicationRecord } from './dto/provider-exited-application-response.dto';
 
 const ACTIVE_APPLICATIONS_LIMIT = 5;
 const PROMOTION_BATCH_SIZE = 50;
@@ -118,14 +119,21 @@ export class ApplicationsService {
       const activeCount = await tx.application.count({
         where: { listingId, status: ApplicationStatus.ACTIVE },
       });
-      const status =
-        activeCount < ACTIVE_APPLICATIONS_LIMIT
-          ? ApplicationStatus.ACTIVE
-          : ApplicationStatus.WAITING;
+      const isActive = activeCount < ACTIVE_APPLICATIONS_LIMIT;
+      const status = isActive
+        ? ApplicationStatus.ACTIVE
+        : ApplicationStatus.WAITING;
 
       try {
+        const now = new Date();
         return await tx.application.create({
-          data: { listingId, applicantId, status },
+          data: {
+            listingId,
+            applicantId,
+            status,
+            createdAt: now,
+            activeAt: isActive ? now : undefined,
+          },
         });
       } catch (err) {
         if (
@@ -179,7 +187,12 @@ export class ApplicationsService {
 
       const withdrawn = await tx.application.update({
         where: { id: applicationId },
-        data: { status: ApplicationStatus.WITHDRAWN },
+        data: {
+          status: ApplicationStatus.WITHDRAWN,
+          ...(application.status === ApplicationStatus.ACTIVE
+            ? { withdrawnAt: new Date() }
+            : {}),
+        },
       });
 
       if (application.status === ApplicationStatus.ACTIVE) {
@@ -318,7 +331,7 @@ export class ApplicationsService {
 
         await tx.application.update({
           where: { id: application.id },
-          data: { status: ApplicationStatus.ACTIVE },
+          data: { status: ApplicationStatus.ACTIVE, activeAt: new Date() },
         });
         activeCount++;
         promotedCount++;
@@ -502,6 +515,7 @@ export class ApplicationsService {
         id: true,
         listingId: true,
         status: true,
+        activeAt: true,
         applicant: {
           select: {
             name: true,
@@ -521,6 +535,7 @@ export class ApplicationsService {
       id: application.id,
       listingId: application.listingId,
       status: application.status,
+      activeAt: application.activeAt,
       applicant: {
         name: application.applicant.name,
         profile: application.applicant.profile
@@ -532,6 +547,47 @@ export class ApplicationsService {
         listing,
       ),
     }));
+  }
+
+  async findExitedByListing(
+    listingId: string,
+    providerId: string,
+  ): Promise<ProviderExitedApplicationRecord[]> {
+    const listing = await this.prisma.listing.findFirst({
+      where: { id: listingId, providerId },
+      select: { id: true },
+    });
+
+    if (!listing) {
+      throw new NotFoundException('Listing not found');
+    }
+
+    return this.prisma.application.findMany({
+      where: {
+        listingId,
+        listing: { providerId },
+        activeAt: { not: null },
+        status: {
+          in: [ApplicationStatus.WITHDRAWN, ApplicationStatus.REJECTED],
+        },
+      },
+      orderBy: [
+        { status: 'asc' },
+        { withdrawnAt: { sort: 'desc', nulls: 'last' } },
+        { rejectedAt: { sort: 'desc', nulls: 'last' } },
+      ],
+      select: {
+        id: true,
+        listingId: true,
+        status: true,
+        publicReason: true,
+        rejectedAt: true,
+        withdrawnAt: true,
+        applicant: {
+          select: { name: true },
+        },
+      },
+    });
   }
 
   private async lockListing(
