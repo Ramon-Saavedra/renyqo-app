@@ -50,6 +50,7 @@ type ProviderActiveApplicationBody = {
   id: string;
   listingId: string;
   status: string;
+  activeAt: string | null;
   applicant: {
     name: string;
     peopleCount: number | null;
@@ -210,6 +211,7 @@ function isProviderActiveApplicationBody(
     typeof value.id === 'string' &&
     typeof value.listingId === 'string' &&
     typeof value.status === 'string' &&
+    (value.activeAt === null || typeof value.activeAt === 'string') &&
     typeof value.applicant.name === 'string' &&
     (value.applicant.peopleCount === null ||
       typeof value.applicant.peopleCount === 'number') &&
@@ -217,7 +219,7 @@ function isProviderActiveApplicationBody(
     value.applicant.warnings.every((warning: string) =>
       ['pets_by_arrangement', 'smoking_by_arrangement'].includes(warning),
     ) &&
-    Object.keys(value).length === 4 &&
+    Object.keys(value).length === 5 &&
     Object.keys(value.applicant).length === 3
   );
 }
@@ -557,11 +559,15 @@ describe('Provider ACTIVE applications summary E2E', () => {
       },
     });
     expect(Object.keys(bodies[0]).sort()).toEqual([
+      'activeAt',
       'applicant',
       'id',
       'listingId',
       'status',
     ]);
+    expect(bodies.every((item) => typeof item.activeAt === 'string')).toBe(
+      true,
+    );
     expect(Object.keys(bodies[0].applicant).sort()).toEqual([
       'name',
       'peopleCount',
@@ -616,6 +622,9 @@ describe('Provider ACTIVE applications summary E2E', () => {
     expect(
       bodies.every((item) => item.status === ApplicationStatus.ACTIVE),
     ).toBe(true);
+    expect(bodies.every((item) => typeof item.activeAt === 'string')).toBe(
+      true,
+    );
     expect(bodies.map((item) => item.applicant.name)).toEqual([
       'Applicant 1',
       'Applicant 2',
@@ -654,6 +663,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
         listingId: listing.id,
         applicantId: applicant.id,
         status: ApplicationStatus.ACTIVE,
+        activeAt: new Date('2026-08-30T10:00:00.000Z'),
       },
     });
 
@@ -670,6 +680,12 @@ describe('Provider ACTIVE applications summary E2E', () => {
       status: ApplicationStatus.ACTIVE,
       applicant: { name: 'No Profile Applicant', peopleCount: null },
     });
+    const activeAt = bodies[0].activeAt;
+    expect(activeAt).not.toBeNull();
+    if (typeof activeAt !== 'string') {
+      throw new Error('Expected a persisted activeAt timestamp.');
+    }
+    expect(new Date(activeAt).toISOString()).toBe('2026-08-30T10:00:00.000Z');
   });
 
   it('rejects unauthenticated and non-provider access to ACTIVE applications', async () => {

@@ -75,6 +75,8 @@ const makeRawApplication = (
   status: ApplicationStatus.ACTIVE,
   rejectedAt: null,
   publicReason: null,
+  activeAt: null,
+  withdrawnAt: null,
   queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
@@ -209,6 +211,7 @@ describe('ApplicationsService', () => {
             listingId: LISTING_ID,
             applicantId: APPLICANT_ID,
             status: ApplicationStatus.ACTIVE,
+            activeAt: expect.any(Date),
           }),
         }),
       );
@@ -442,7 +445,10 @@ describe('ApplicationsService', () => {
       expect(result.status).toBe(ApplicationStatus.WITHDRAWN);
       expect(prismaMock.application.update).toHaveBeenCalledWith({
         where: { id: APPLICATION_ID },
-        data: { status: ApplicationStatus.WITHDRAWN },
+        data: {
+          status: ApplicationStatus.WITHDRAWN,
+          withdrawnAt: expect.any(Date),
+        },
       });
       expect(prismaMock.application.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -470,6 +476,10 @@ describe('ApplicationsService', () => {
       await expect(
         service.withdraw(APPLICATION_ID, APPLICANT_ID),
       ).resolves.toEqual(withdrawn);
+      expect(prismaMock.application.update).toHaveBeenCalledWith({
+        where: { id: APPLICATION_ID },
+        data: { status: ApplicationStatus.WITHDRAWN },
+      });
       expect(prismaMock.listing.findUnique).not.toHaveBeenCalled();
       expect(prismaMock.application.findMany).not.toHaveBeenCalled();
     });
@@ -681,6 +691,7 @@ describe('ApplicationsService', () => {
           id: rawApplications[0].id,
           listingId: rawApplications[0].listingId,
           status: rawApplications[0].status,
+          activeAt: null,
           applicant: {
             name: 'Anna Applicant',
             profile: {
@@ -712,6 +723,7 @@ describe('ApplicationsService', () => {
           id: true,
           listingId: true,
           status: true,
+          activeAt: true,
           applicant: {
             select: {
               name: true,
@@ -913,7 +925,10 @@ describe('ApplicationsService', () => {
       });
       expect(prismaMock.application.update).toHaveBeenCalledWith({
         where: { id: secondWaiting.id },
-        data: { status: ApplicationStatus.ACTIVE },
+        data: {
+          status: ApplicationStatus.ACTIVE,
+          activeAt: expect.any(Date),
+        },
       });
     });
 
@@ -1144,7 +1159,10 @@ describe('ApplicationsService', () => {
       });
       expect(prismaMock.application.update).toHaveBeenNthCalledWith(2, {
         where: { id: waitingApplication.id },
-        data: { status: ApplicationStatus.ACTIVE },
+        data: {
+          status: ApplicationStatus.ACTIVE,
+          activeAt: expect.any(Date),
+        },
       });
     });
 
@@ -1268,6 +1286,64 @@ describe('ApplicationsService', () => {
         .map((call) => extractLockedListingId(...call))
         .filter((id): id is string => id !== undefined);
       expect(lockedListingIds).toEqual([listingA.id, listingB.id]);
+    });
+  });
+
+  describe('findExitedByListing', () => {
+    it('returns exited applications that were once active for an owned listing', async () => {
+      const exitedApplication = {
+        id: '00000000-0000-4000-8000-000000000040',
+        listingId: LISTING_ID,
+        status: ApplicationStatus.REJECTED,
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        rejectedAt: new Date('2024-06-01'),
+        withdrawnAt: null,
+        applicant: { name: 'Max Mover' },
+      };
+      prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
+      prismaMock.application.findMany.mockResolvedValue([exitedApplication]);
+
+      const result = await service.findExitedByListing(LISTING_ID, PROVIDER_ID);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(exitedApplication.id);
+      expect(result[0].status).toBe(ApplicationStatus.REJECTED);
+      expect(result[0].publicReason).toBe(
+        ApplicationRejectionReason.NOT_SELECTED,
+      );
+      expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
+        where: { id: LISTING_ID, providerId: PROVIDER_ID },
+        select: { id: true },
+      });
+      expect(prismaMock.application.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            listingId: LISTING_ID,
+            activeAt: { not: null },
+            status: {
+              in: [ApplicationStatus.WITHDRAWN, ApplicationStatus.REJECTED],
+            },
+          }),
+        }),
+      );
+    });
+
+    it('throws NotFoundException when listing does not belong to provider', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.findExitedByListing(LISTING_ID, PROVIDER_ID),
+      ).rejects.toThrow(NotFoundException);
+      expect(prismaMock.application.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns empty array when no exited applications exist', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
+      prismaMock.application.findMany.mockResolvedValue([]);
+
+      const result = await service.findExitedByListing(LISTING_ID, PROVIDER_ID);
+
+      expect(result).toEqual([]);
     });
   });
 });

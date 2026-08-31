@@ -915,4 +915,207 @@ describe('Application Lifecycle E2E', () => {
       expect(stillRejectedApplication?.status).toBe(ApplicationStatus.REJECTED);
     });
   });
+
+  describe('Application lifecycle timestamps and exited applications', () => {
+    it('persists activeAt on ACTIVE create and withdrawnAt on ACTIVE withdraw', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicant = await registerApplicant();
+
+      const entry = await applyToListing(applicant, listing.id);
+      expect(entry['status']).toBe(ApplicationStatus.ACTIVE);
+
+      const createdPersisted = await getPrisma().application.findUnique({
+        where: { id: entry['id'] as string },
+      });
+      expect(createdPersisted?.activeAt).toBeInstanceOf(Date);
+      expect(createdPersisted?.createdAt?.getTime()).toBe(
+        createdPersisted?.activeAt?.getTime(),
+      );
+
+      await applicant
+        .delete(`/api/v1/applicant/applications/${entry['id'] as string}`)
+        .expect(200);
+
+      const withdrawnPersisted = await getPrisma().application.findUnique({
+        where: { id: entry['id'] as string },
+      });
+      expect(withdrawnPersisted?.status).toBe(ApplicationStatus.WITHDRAWN);
+      expect(withdrawnPersisted?.withdrawnAt).toBeInstanceOf(Date);
+
+      const exitedResponse = await providerAgent
+        .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)
+        .expect(200);
+      const exited: unknown = exitedResponse.body;
+      expect(Array.isArray(exited)).toBe(true);
+      expect(exited).toHaveLength(1);
+      const exitedRecord: Record<string, unknown> = (
+        exited as Array<Record<string, unknown>>
+      )[0];
+      expect(exitedRecord['id']).toBe(entry['id']);
+      expect(exitedRecord['status']).toBe(ApplicationStatus.WITHDRAWN);
+      expect(exitedRecord['applicantName']).toBeTruthy();
+      expect(exitedRecord['publicReason']).toBeNull();
+      expect(new Date(exitedRecord['exitedAt'] as string).getTime()).toBe(
+        withdrawnPersisted!.withdrawnAt!.getTime(),
+      );
+    });
+
+    it('does not set withdrawnAt for a WAITING withdrawal and excludes it from exited', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+
+      const agents = await Promise.all(
+        Array.from({ length: 6 }, () => registerApplicant()),
+      );
+      const entries: Array<{
+        agent: ReturnType<typeof request.agent>;
+        id: string;
+      }> = [];
+      for (const agent of agents) {
+        const res = await applyToListing(agent, listing.id);
+        entries.push({
+          agent,
+          id: res['id'] as string,
+        });
+      }
+
+      expect(entries[0].id).toBeTruthy();
+      expect(entries[5].id).toBeTruthy();
+
+      const waitingPersisted = await getPrisma().application.findUnique({
+        where: { id: entries[5].id },
+      });
+      expect(waitingPersisted?.status).toBe(ApplicationStatus.WAITING);
+      expect(waitingPersisted?.activeAt).toBeNull();
+      expect(waitingPersisted?.withdrawnAt).toBeNull();
+
+      await entries[5].agent
+        .delete(`/api/v1/applicant/applications/${entries[5].id}`)
+        .expect(200);
+
+      const waitingAfterWithdraw = await getPrisma().application.findUnique({
+        where: { id: entries[5].id },
+      });
+      expect(waitingAfterWithdraw?.status).toBe(ApplicationStatus.WITHDRAWN);
+      expect(waitingAfterWithdraw?.withdrawnAt).toBeNull();
+
+      await entries[0].agent
+        .delete(`/api/v1/applicant/applications/${entries[0].id}`)
+        .expect(200);
+
+      const exitedResponse = await providerAgent
+        .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)
+        .expect(200);
+      const exited: unknown = exitedResponse.body;
+      expect(Array.isArray(exited)).toBe(true);
+      const exitedIds = (exited as Array<Record<string, unknown>>).map(
+        (item) => item['id'],
+      );
+      expect(exitedIds).toContain(entries[0].id);
+      expect(exitedIds).not.toContain(entries[5].id);
+    });
+
+    it('includes a REJECTED ACTIVE application in exited-applications with exitedAt equal to rejectedAt', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicant = await registerApplicant();
+
+      const entry = await applyToListing(applicant, listing.id);
+      expect(entry['status']).toBe(ApplicationStatus.ACTIVE);
+      const entryId = entry['id'] as string;
+
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${entryId}/reject`)
+        .send()
+        .expect(200);
+
+      const rejectedPersisted = await getPrisma().application.findUnique({
+        where: { id: entryId },
+      });
+      expect(rejectedPersisted?.status).toBe(ApplicationStatus.REJECTED);
+      expect(rejectedPersisted?.publicReason).toBe(
+        ApplicationRejectionReason.NOT_SELECTED,
+      );
+      expect(rejectedPersisted?.rejectedAt).toBeInstanceOf(Date);
+      expect(rejectedPersisted?.activeAt).toBeInstanceOf(Date);
+
+      const exitedResponse = await providerAgent
+        .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)
+        .expect(200);
+      const exited: unknown = exitedResponse.body;
+      expect(Array.isArray(exited)).toBe(true);
+      const exitedRecords = exited as Array<Record<string, unknown>>;
+      const exitedRecord = exitedRecords.find((item) => item['id'] === entryId);
+      expect(exitedRecord).toBeTruthy();
+      expect(exitedRecord!['status']).toBe(ApplicationStatus.REJECTED);
+      expect(exitedRecord!['publicReason']).toBe(
+        ApplicationRejectionReason.NOT_SELECTED,
+      );
+      expect(new Date(exitedRecord!['exitedAt'] as string).getTime()).toBe(
+        rejectedPersisted!.rejectedAt!.getTime(),
+      );
+    });
+
+    it('sets activeAt when a WAITING applicant is promoted to ACTIVE', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+
+      const agents = await Promise.all(
+        Array.from({ length: 6 }, () => registerApplicant()),
+      );
+      const entries = await Promise.all(
+        agents.map((agent) =>
+          applyToListing(agent, listing.id).then((entry) => ({
+            agent,
+            id: entry['id'] as string,
+            status: entry['status'] as string,
+          })),
+        ),
+      );
+
+      const activeEntries = entries.filter(
+        (e) => e.status === ApplicationStatus.ACTIVE,
+      );
+      const waitingEntry = entries.find(
+        (e) => e.status === ApplicationStatus.WAITING,
+      );
+      expect(activeEntries).toHaveLength(5);
+      expect(waitingEntry).toBeTruthy();
+
+      const promotedBefore = await getPrisma().application.findUnique({
+        where: { id: waitingEntry!.id },
+      });
+      expect(promotedBefore?.status).toBe(ApplicationStatus.WAITING);
+      expect(promotedBefore?.activeAt).toBeNull();
+
+      const firstActive = activeEntries[0];
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${firstActive.id}/reject`)
+        .send()
+        .expect(200);
+
+      const promoted = await getPrisma().application.findUnique({
+        where: { id: waitingEntry!.id },
+      });
+      expect(promoted?.status).toBe(ApplicationStatus.ACTIVE);
+      expect(promoted?.activeAt).toBeInstanceOf(Date);
+
+      const activeResponse = await providerAgent
+        .get(`/api/v1/provider/listings/${listing.id}/active-applications`)
+        .expect(200);
+      const activeBody: unknown = activeResponse.body;
+      expect(Array.isArray(activeBody)).toBe(true);
+      const activeRecords = activeBody as Array<Record<string, unknown>>;
+      const promotedRecord = activeRecords.find(
+        (item) => item['id'] === waitingEntry!.id,
+      );
+      expect(promotedRecord).toBeTruthy();
+      expect(promotedRecord!['status']).toBe(ApplicationStatus.ACTIVE);
+      expect(promotedRecord!['activeAt']).toBeTruthy();
+      expect(new Date(promotedRecord!['activeAt'] as string).getTime()).toBe(
+        promoted!.activeAt!.getTime(),
+      );
+    });
+  });
 });

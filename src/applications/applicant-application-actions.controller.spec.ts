@@ -34,6 +34,8 @@ const application: Application = {
   status: ApplicationStatus.WITHDRAWN,
   rejectedAt: null,
   publicReason: null,
+  activeAt: new Date('2024-01-01'),
+  withdrawnAt: new Date('2024-01-02'),
   queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-02'),

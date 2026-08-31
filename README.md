@@ -322,12 +322,15 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 | `GET`    | `/api/v1/provider/applications`                     | Provider  | Get applications across provider listings                      |
 | `GET`    | `/api/v1/provider/listings/:id/applications`        | Provider  | Get applications for an owned listing                          |
 | `GET`    | `/api/v1/provider/listings/:id/active-applications` | Provider  | Get ACTIVE applications with provider-safe applicant summaries |
+| `GET`    | `/api/v1/provider/listings/:id/exited-applications` | Provider  | Get REJECTED and WITHDRAWN applications that were previously ACTIVE |
 | `GET`    | `/api/v1/provider/listings/:id/waiting-count`       | Provider  | Get the waiting application count for an owned listing         |
 | `PATCH`  | `/api/v1/provider/applications/:id/reject`          | Provider  | Reject one owned ACTIVE application                            |
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 
-`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered internally by `createdAt` ascending. Each item contains only `id`, `listingId`, `status`, and a nested `applicant` summary with `name` and nullable `peopleCount`. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, timestamps, `queueOrder`, password hashes, or unrelated user fields.
+`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered internally by `createdAt` ascending. Each item contains only `id`, `listingId`, `status`, `activeAt`, and a nested `applicant` summary with `name` and nullable `peopleCount`. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, `queueOrder`, password hashes, or unrelated user fields.
+
+`GET /api/v1/provider/listings/:id/exited-applications` returns applications for an owned listing that were `ACTIVE` at some point (`activeAt` is set) and have since become `REJECTED` or `WITHDRAWN`. Applications that withdrew or were re-applied while still `WAITING` never had `activeAt` set and are excluded. Results are ordered by `status` ascending, then by `withdrawnAt` descending, then by `rejectedAt` descending, with nulls last. Each item contains `id`, `listingId`, `applicantName`, `status`, `publicReason`, and `exitedAt` (`withdrawnAt` for `WITHDRAWN` rows, `rejectedAt` for `REJECTED` rows). It never exposes applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, `queueOrder`, password hashes, or unrelated user fields.
 
 `GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns `canApply`, `reasons`, `warnings` and `evaluatedAt`. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
 

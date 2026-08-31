@@ -64,6 +64,8 @@ const makeApplication = (): Application => ({
   status: ApplicationStatus.ACTIVE,
   rejectedAt: null,
   publicReason: null,
+  activeAt: null,
+  withdrawnAt: null,
   queueOrder: BigInt(1),
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
@@ -73,6 +75,7 @@ const makeActiveApplicationRecord = (): ProviderActiveApplicationRecord => ({
   id: APPLICATION_ID,
   listingId: LISTING_ID,
   status: ApplicationStatus.ACTIVE,
+  activeAt: new Date('2024-01-01'),
   applicant: {
     name: 'Anna Applicant',
     profile: {
@@ -115,6 +118,7 @@ describe('ProviderApplicationsController', () => {
             findAllByProvider: jest.fn(),
             findAllByListing: jest.fn(),
             findActiveByListing: jest.fn(),
+            findExitedByListing: jest.fn(),
             findWaitingCountByListing: jest.fn(),
             reject: jest.fn(),
           },
@@ -198,6 +202,42 @@ describe('ProviderApplicationsController', () => {
     });
   });
 
+  describe('findExitedByListing', () => {
+    it('calls applicationsService.findExitedByListing with listing id and provider id', async () => {
+      const exitedRecord = {
+        id: APPLICATION_ID,
+        listingId: LISTING_ID,
+        status: ApplicationStatus.REJECTED,
+        publicReason: 'NOT_SELECTED' as const,
+        rejectedAt: new Date('2024-06-01'),
+        withdrawnAt: null,
+        applicant: { name: 'Anna Applicant' },
+      };
+      applicationsService.findExitedByListing.mockResolvedValue([exitedRecord]);
+
+      const result = await controller.findExitedByListing(
+        LISTING_ID,
+        makeProviderUser(),
+      );
+
+      expect(applicationsService.findExitedByListing).toHaveBeenCalledWith(
+        LISTING_ID,
+        PROVIDER_ID,
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(APPLICATION_ID);
+      expect(result[0].applicantName).toBe('Anna Applicant');
+      expect(result[0].exitedAt).toEqual(new Date('2024-06-01'));
+    });
+
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('findExitedByListing', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(firstPipe(metadata)).toBeInstanceOf(ParseUUIDPipe);
+    });
+  });
+
   describe('findWaitingCount', () => {
     it('returns the waiting count for an owned listing', async () => {
       applicationsService.findWaitingCountByListing.mockResolvedValue(4);
@@ -250,6 +290,7 @@ describe('ProviderApplicationsController', () => {
         'findAll',
         'findByListing',
         'findActiveByListing',
+        'findExitedByListing',
         'findWaitingCount',
         'reject',
       ]);
@@ -260,6 +301,7 @@ describe('ProviderApplicationsController', () => {
 
     it('exposes only read-only GET routes to the provider', () => {
       expect(handlerNames().map(routeMethod)).toEqual([
+        RequestMethod.GET,
         RequestMethod.GET,
         RequestMethod.GET,
         RequestMethod.GET,
