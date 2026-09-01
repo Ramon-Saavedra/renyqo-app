@@ -552,7 +552,7 @@ export class ApplicationsService {
   async findExitedByListing(
     listingId: string,
     providerId: string,
-  ): Promise<ProviderExitedApplicationRecord[]> {
+  ): Promise<{ items: ProviderExitedApplicationRecord[]; totalCount: number }> {
     const listing = await this.prisma.listing.findFirst({
       where: { id: listingId, providerId },
       select: { id: true },
@@ -562,32 +562,102 @@ export class ApplicationsService {
       throw new NotFoundException('Listing not found');
     }
 
-    return this.prisma.application.findMany({
-      where: {
-        listingId,
-        listing: { providerId },
-        activeAt: { not: null },
-        status: {
-          in: [ApplicationStatus.WITHDRAWN, ApplicationStatus.REJECTED],
+    type ExitedApplicationRow = {
+      id: string;
+      listingId: string;
+      status: string;
+      publicReason: string | null;
+      rejectedAt: Date | null;
+      withdrawnAt: Date | null;
+      applicantName: string;
+    };
+
+    const EXITED_APPLICATIONS_LIMIT = 5;
+
+    const [rows, totalCount] = await Promise.all([
+      this.prisma.$queryRaw<ExitedApplicationRow[]>`
+        SELECT
+          a.id,
+          a.listing_id AS "listingId",
+          a.status,
+          a.public_reason AS "publicReason",
+          a.rejected_at AS "rejectedAt",
+          a.withdrawn_at AS "withdrawnAt",
+          u.name AS "applicantName"
+        FROM "applications" AS a
+        JOIN "users" AS u ON u.id = a.applicant_id
+        JOIN "listings" AS l ON l.id = a.listing_id
+        WHERE a.listing_id = ${listingId}::uuid
+          AND l.provider_id = ${providerId}::uuid
+          AND a.active_at IS NOT NULL
+          AND a.status IN ('withdrawn', 'rejected')
+        ORDER BY COALESCE(a.rejected_at, a.withdrawn_at) DESC NULLS LAST, a.id DESC
+        LIMIT ${EXITED_APPLICATIONS_LIMIT}
+      `,
+      this.prisma.application.count({
+        where: {
+          listingId,
+          listing: { providerId },
+          activeAt: { not: null },
+          status: {
+            in: [ApplicationStatus.WITHDRAWN, ApplicationStatus.REJECTED],
+          },
         },
-      },
-      orderBy: [
-        { status: 'asc' },
-        { withdrawnAt: { sort: 'desc', nulls: 'last' } },
-        { rejectedAt: { sort: 'desc', nulls: 'last' } },
-      ],
-      select: {
-        id: true,
-        listingId: true,
-        status: true,
-        publicReason: true,
-        rejectedAt: true,
-        withdrawnAt: true,
-        applicant: {
-          select: { name: true },
-        },
-      },
+      }),
+    ]);
+
+    const mapStatus = (value: string): ApplicationStatus => {
+      switch (value) {
+        case 'withdrawn':
+          return ApplicationStatus.WITHDRAWN;
+        case 'rejected':
+          return ApplicationStatus.REJECTED;
+        default:
+          throw new Error(`Unexpected exited application status: ${value}`);
+      }
+    };
+
+    const mapReason = (
+      value: string | null,
+    ): ApplicationRejectionReason | null => {
+      if (value === null) {
+        return null;
+      }
+
+      switch (value) {
+        case 'not_selected':
+          return ApplicationRejectionReason.NOT_SELECTED;
+        case 'listing_rented':
+          return ApplicationRejectionReason.LISTING_RENTED;
+        case 'profile_no_longer_eligible':
+          return ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE;
+        default:
+          throw new Error(
+            `Unexpected exited application rejection reason: ${value}`,
+          );
+      }
+    };
+
+    const items = rows.map((row) => {
+      const exitedAt = row.rejectedAt ?? row.withdrawnAt;
+
+      if (!exitedAt) {
+        throw new Error(
+          `Exited application ${row.id} has neither rejectedAt nor withdrawnAt`,
+        );
+      }
+
+      return {
+        id: row.id,
+        listingId: row.listingId,
+        status: mapStatus(row.status),
+        publicReason: mapReason(row.publicReason),
+        exitedAt,
+        applicant: { name: row.applicantName },
+      };
     });
+
+    return { items, totalCount: Number(totalCount) };
   }
 
   private async lockListing(

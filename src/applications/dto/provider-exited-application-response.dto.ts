@@ -3,9 +3,10 @@ import type { ApplicationRejectionReason } from '../../generated/prisma/enums';
 
 export type ProviderExitedApplicationRecord = Pick<
   Application,
-  'id' | 'listingId' | 'status' | 'publicReason' | 'rejectedAt' | 'withdrawnAt'
+  'id' | 'listingId' | 'status' | 'publicReason'
 > & {
   applicant: Pick<User, 'name'>;
+  exitedAt: Date;
 };
 
 export class ProviderExitedApplicationResponseDto {
@@ -22,9 +23,21 @@ export class ProviderExitedApplicationResponseDto {
     this.applicantName = application.applicant.name;
     this.status = application.status;
     this.publicReason = application.publicReason;
-    this.exitedAt =
-      application.status === 'WITHDRAWN'
-        ? application.withdrawnAt!
-        : application.rejectedAt!;
+    this.exitedAt = application.exitedAt;
+  }
+}
+
+export class ProviderExitedApplicationsResponseDto {
+  readonly items: ProviderExitedApplicationResponseDto[];
+  readonly totalCount: number;
+
+  constructor(result: {
+    items: ProviderExitedApplicationRecord[];
+    totalCount: number;
+  }) {
+    this.items = result.items.map(
+      (item) => new ProviderExitedApplicationResponseDto(item),
+    );
+    this.totalCount = result.totalCount;
   }
 }

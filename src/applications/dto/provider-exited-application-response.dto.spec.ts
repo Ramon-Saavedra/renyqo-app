@@ -4,6 +4,7 @@ import { ApplicationStatus } from '../../generated/prisma/enums';
 import { ApplicationRejectionReason } from '../../generated/prisma/enums';
 import {
   ProviderExitedApplicationResponseDto,
+  ProviderExitedApplicationsResponseDto,
   type ProviderExitedApplicationRecord,
 } from './provider-exited-application-response.dto';
 
@@ -14,18 +15,16 @@ const makeExitedRecord = (
   listingId: '00000000-0000-4000-8000-000000000002',
   status: ApplicationStatus.WITHDRAWN,
   publicReason: null,
-  rejectedAt: null,
-  withdrawnAt: new Date('2024-06-15'),
+  exitedAt: new Date('2024-06-15'),
   applicant: { name: 'Anna Applicant' },
   ...overrides,
 });
 
 describe('ProviderExitedApplicationResponseDto', () => {
-  it('maps a WITHDRAWN application with exitedAt from withdrawnAt', () => {
+  it('maps a WITHDRAWN application', () => {
     const record = makeExitedRecord({
       status: ApplicationStatus.WITHDRAWN,
-      withdrawnAt: new Date('2024-06-15'),
-      rejectedAt: null,
+      exitedAt: new Date('2024-06-15'),
     });
 
     const dto = new ProviderExitedApplicationResponseDto(record);
@@ -38,12 +37,11 @@ describe('ProviderExitedApplicationResponseDto', () => {
     expect(dto.exitedAt).toEqual(new Date('2024-06-15'));
   });
 
-  it('maps a REJECTED application with exitedAt from rejectedAt', () => {
+  it('maps a REJECTED application', () => {
     const record = makeExitedRecord({
       status: ApplicationStatus.REJECTED,
       publicReason: ApplicationRejectionReason.NOT_SELECTED,
-      rejectedAt: new Date('2024-07-01'),
-      withdrawnAt: null,
+      exitedAt: new Date('2024-07-01'),
     });
 
     const dto = new ProviderExitedApplicationResponseDto(record);
@@ -57,8 +55,7 @@ describe('ProviderExitedApplicationResponseDto', () => {
     const record = makeExitedRecord({
       status: ApplicationStatus.REJECTED,
       publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
-      rejectedAt: new Date('2024-08-01'),
-      withdrawnAt: null,
+      exitedAt: new Date('2024-08-01'),
     });
 
     const dto = new ProviderExitedApplicationResponseDto(record);
@@ -72,8 +69,7 @@ describe('ProviderExitedApplicationResponseDto', () => {
     const record = makeExitedRecord({
       status: ApplicationStatus.REJECTED,
       publicReason: ApplicationRejectionReason.LISTING_RENTED,
-      rejectedAt: new Date('2024-09-01'),
-      withdrawnAt: null,
+      exitedAt: new Date('2024-09-01'),
     });
 
     const dto = new ProviderExitedApplicationResponseDto(record);
@@ -91,5 +87,31 @@ describe('ProviderExitedApplicationResponseDto', () => {
     expect(dto).not.toHaveProperty('createdAt');
     expect(dto).not.toHaveProperty('updatedAt');
     expect(dto).not.toHaveProperty('activeAt');
+  });
+});
+
+describe('ProviderExitedApplicationsResponseDto', () => {
+  it('wraps items and totalCount', () => {
+    const record = makeExitedRecord();
+
+    const dto = new ProviderExitedApplicationsResponseDto({
+      items: [record],
+      totalCount: 7,
+    });
+
+    expect(dto.items).toHaveLength(1);
+    expect(dto.items[0]).toBeInstanceOf(ProviderExitedApplicationResponseDto);
+    expect(dto.items[0].applicantName).toBe('Anna Applicant');
+    expect(dto.totalCount).toBe(7);
+  });
+
+  it('handles empty items with zero totalCount', () => {
+    const dto = new ProviderExitedApplicationsResponseDto({
+      items: [],
+      totalCount: 0,
+    });
+
+    expect(dto.items).toEqual([]);
+    expect(dto.totalCount).toBe(0);
   });
 });
