@@ -16,7 +16,7 @@ import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsService } from './applications.service';
 import { ApplicationResponseDto } from './dto/application-response.dto';
 import { ProviderActiveApplicationResponseDto } from './dto/provider-active-application-response.dto';
-import { ProviderExitedApplicationResponseDto } from './dto/provider-exited-application-response.dto';
+import { ProviderExitedApplicationsResponseDto } from './dto/provider-exited-application-response.dto';
 import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
 
 @UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
@@ -68,14 +68,12 @@ export class ProviderApplicationsController {
   async findExitedByListing(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
     @CurrentUser() user: SafeUser,
-  ): Promise<ProviderExitedApplicationResponseDto[]> {
-    const applications = await this.applicationsService.findExitedByListing(
+  ): Promise<ProviderExitedApplicationsResponseDto> {
+    const result = await this.applicationsService.findExitedByListing(
       listingId,
       user.id,
     );
-    return applications.map(
-      (application) => new ProviderExitedApplicationResponseDto(application),
-    );
+    return new ProviderExitedApplicationsResponseDto(result);
   }
 
   @Get('listings/:id/waiting-count')

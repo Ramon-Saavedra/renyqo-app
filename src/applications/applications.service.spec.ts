@@ -1294,28 +1294,38 @@ describe('ApplicationsService', () => {
       const exitedApplication = {
         id: '00000000-0000-4000-8000-000000000040',
         listingId: LISTING_ID,
-        status: ApplicationStatus.REJECTED,
-        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        status: 'rejected',
+        publicReason: 'not_selected',
         rejectedAt: new Date('2024-06-01'),
         withdrawnAt: null,
-        applicant: { name: 'Max Mover' },
+        applicantName: 'Max Mover',
       };
       prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
-      prismaMock.application.findMany.mockResolvedValue([exitedApplication]);
+      prismaMock.$queryRaw.mockResolvedValue([exitedApplication]);
+      prismaMock.application.count.mockResolvedValue(1);
 
       const result = await service.findExitedByListing(LISTING_ID, PROVIDER_ID);
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe(exitedApplication.id);
-      expect(result[0].status).toBe(ApplicationStatus.REJECTED);
-      expect(result[0].publicReason).toBe(
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].id).toBe(exitedApplication.id);
+      expect(result.items[0].status).toBe(ApplicationStatus.REJECTED);
+      expect(result.items[0].publicReason).toBe(
         ApplicationRejectionReason.NOT_SELECTED,
       );
+      expect(result.items[0].applicant.name).toBe('Max Mover');
+      expect(result.items[0].exitedAt).toEqual(new Date('2024-06-01'));
+      expect(result.totalCount).toBe(1);
       expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
         where: { id: LISTING_ID, providerId: PROVIDER_ID },
         select: { id: true },
       });
-      expect(prismaMock.application.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.$queryRaw).toHaveBeenCalled();
+      const queryArgs = prismaMock.$queryRaw.mock.calls[0];
+      expect(String(queryArgs?.[0])).toContain('LIMIT');
+      expect(queryArgs).toContain(LISTING_ID);
+      expect(queryArgs).toContain(PROVIDER_ID);
+      expect(queryArgs).toContain(5);
+      expect(prismaMock.application.count).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             listingId: LISTING_ID,
@@ -1334,16 +1344,18 @@ describe('ApplicationsService', () => {
       await expect(
         service.findExitedByListing(LISTING_ID, PROVIDER_ID),
       ).rejects.toThrow(NotFoundException);
-      expect(prismaMock.application.findMany).not.toHaveBeenCalled();
+      expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+      expect(prismaMock.application.count).not.toHaveBeenCalled();
     });
 
-    it('returns empty array when no exited applications exist', async () => {
+    it('returns empty items and zero totalCount when no exited applications exist', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
-      prismaMock.application.findMany.mockResolvedValue([]);
+      prismaMock.$queryRaw.mockResolvedValue([]);
+      prismaMock.application.count.mockResolvedValue(0);
 
       const result = await service.findExitedByListing(LISTING_ID, PROVIDER_ID);
 
-      expect(result).toEqual([]);
+      expect(result).toEqual({ items: [], totalCount: 0 });
     });
   });
 });

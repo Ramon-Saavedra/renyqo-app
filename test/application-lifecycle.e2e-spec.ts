@@ -947,11 +947,15 @@ describe('Application Lifecycle E2E', () => {
         .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)
         .expect(200);
       const exited: unknown = exitedResponse.body;
-      expect(Array.isArray(exited)).toBe(true);
-      expect(exited).toHaveLength(1);
-      const exitedRecord: Record<string, unknown> = (
-        exited as Array<Record<string, unknown>>
-      )[0];
+      expect(Array.isArray((exited as Record<string, unknown>)['items'])).toBe(
+        true,
+      );
+      expect((exited as Record<string, unknown>)['totalCount']).toBe(1);
+      const exitedItems = (exited as Record<string, unknown>)['items'] as Array<
+        Record<string, unknown>
+      >;
+      expect(exitedItems).toHaveLength(1);
+      const exitedRecord = exitedItems[0];
       expect(exitedRecord['id']).toBe(entry['id']);
       expect(exitedRecord['status']).toBe(ApplicationStatus.WITHDRAWN);
       expect(exitedRecord['applicantName']).toBeTruthy();
@@ -1008,10 +1012,12 @@ describe('Application Lifecycle E2E', () => {
         .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)
         .expect(200);
       const exited: unknown = exitedResponse.body;
-      expect(Array.isArray(exited)).toBe(true);
-      const exitedIds = (exited as Array<Record<string, unknown>>).map(
-        (item) => item['id'],
-      );
+      const exitedItems = (exited as Record<string, unknown>)['items'] as Array<
+        Record<string, unknown>
+      >;
+      expect(Array.isArray(exitedItems)).toBe(true);
+      expect((exited as Record<string, unknown>)['totalCount']).toBe(1);
+      const exitedIds = exitedItems.map((item) => item['id']);
       expect(exitedIds).toContain(entries[0].id);
       expect(exitedIds).not.toContain(entries[5].id);
     });
@@ -1044,9 +1050,12 @@ describe('Application Lifecycle E2E', () => {
         .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)
         .expect(200);
       const exited: unknown = exitedResponse.body;
-      expect(Array.isArray(exited)).toBe(true);
-      const exitedRecords = exited as Array<Record<string, unknown>>;
-      const exitedRecord = exitedRecords.find((item) => item['id'] === entryId);
+      const exitedItems = (exited as Record<string, unknown>)['items'] as Array<
+        Record<string, unknown>
+      >;
+      expect(Array.isArray(exitedItems)).toBe(true);
+      expect((exited as Record<string, unknown>)['totalCount']).toBe(1);
+      const exitedRecord = exitedItems.find((item) => item['id'] === entryId);
       expect(exitedRecord).toBeTruthy();
       expect(exitedRecord!['status']).toBe(ApplicationStatus.REJECTED);
       expect(exitedRecord!['publicReason']).toBe(
@@ -1055,6 +1064,55 @@ describe('Application Lifecycle E2E', () => {
       expect(new Date(exitedRecord!['exitedAt'] as string).getTime()).toBe(
         rejectedPersisted!.rejectedAt!.getTime(),
       );
+    });
+
+    it('returns at most 5 newest exited applications with totalCount', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+
+      const agents = await Promise.all(
+        Array.from({ length: 7 }, () => registerApplicant()),
+      );
+      const entries: Record<string, unknown>[] = [];
+      for (const agent of agents) {
+        const entry = await applyToListing(agent, listing.id);
+        entries.push(entry);
+      }
+
+      for (let i = 0; i < entries.length; i += 1) {
+        const applicationId = entries[i]['id'] as string;
+        await agents[i]
+          .delete(`/api/v1/applicant/applications/${applicationId}`)
+          .expect(200);
+      }
+
+      const baseTime = new Date('2024-06-01T00:00:00.000Z').getTime();
+      await Promise.all(
+        entries.map((entry, index) =>
+          getPrisma().application.update({
+            where: { id: entry['id'] as string },
+            data: { withdrawnAt: new Date(baseTime + index * 60000) },
+          }),
+        ),
+      );
+
+      const exitedResponse = await providerAgent
+        .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)
+        .expect(200);
+      const exited: unknown = exitedResponse.body;
+      const exitedItems = (exited as Record<string, unknown>)['items'] as Array<
+        Record<string, unknown>
+      >;
+
+      expect(exitedItems).toHaveLength(5);
+      expect((exited as Record<string, unknown>)['totalCount']).toBe(7);
+
+      const expectedIds = [...entries]
+        .reverse()
+        .slice(0, 5)
+        .map((entry) => entry['id'] as string);
+      const actualIds = exitedItems.map((item) => item['id'] as string);
+      expect(actualIds).toEqual(expectedIds);
     });
 
     it('sets activeAt when a WAITING applicant is promoted to ACTIVE', async () => {

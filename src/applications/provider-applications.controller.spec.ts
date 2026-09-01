@@ -8,7 +8,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { Application } from '../generated/prisma/client';
-import { ApplicationStatus, Role, UserStatus } from '../generated/prisma/enums';
+import {
+  ApplicationRejectionReason,
+  ApplicationStatus,
+  Role,
+  UserStatus,
+} from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationsService } from './applications.service';
 import { ProviderApplicationsController } from './provider-applications.controller';
@@ -18,6 +23,7 @@ import {
   ProviderActiveApplicationResponseDto,
   type ProviderActiveApplicationRecord,
 } from './dto/provider-active-application-response.dto';
+import { ProviderExitedApplicationsResponseDto } from './dto/provider-exited-application-response.dto';
 
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
@@ -208,12 +214,14 @@ describe('ProviderApplicationsController', () => {
         id: APPLICATION_ID,
         listingId: LISTING_ID,
         status: ApplicationStatus.REJECTED,
-        publicReason: 'NOT_SELECTED' as const,
-        rejectedAt: new Date('2024-06-01'),
-        withdrawnAt: null,
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        exitedAt: new Date('2024-06-01'),
         applicant: { name: 'Anna Applicant' },
       };
-      applicationsService.findExitedByListing.mockResolvedValue([exitedRecord]);
+      applicationsService.findExitedByListing.mockResolvedValue({
+        items: [exitedRecord],
+        totalCount: 1,
+      });
 
       const result = await controller.findExitedByListing(
         LISTING_ID,
@@ -224,10 +232,12 @@ describe('ProviderApplicationsController', () => {
         LISTING_ID,
         PROVIDER_ID,
       );
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe(APPLICATION_ID);
-      expect(result[0].applicantName).toBe('Anna Applicant');
-      expect(result[0].exitedAt).toEqual(new Date('2024-06-01'));
+      expect(result).toEqual(
+        new ProviderExitedApplicationsResponseDto({
+          items: [exitedRecord],
+          totalCount: 1,
+        }),
+      );
     });
 
     it('validates id as a UUID v4 route parameter', () => {
