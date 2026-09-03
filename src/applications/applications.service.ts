@@ -1,5 +1,7 @@
 import {
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -15,6 +17,8 @@ import {
 import {
   ApplicationRejectionReason,
   ApplicationStatus,
+  ListingEventSource,
+  ListingEventType,
   ListingStatus,
   PetsPolicy,
   SmokingPolicy,
@@ -30,6 +34,7 @@ import type { ProviderExitedApplicationRecord } from './dto/provider-exited-appl
 const ACTIVE_APPLICATIONS_LIMIT = 5;
 const PROMOTION_BATCH_SIZE = 50;
 const MAX_PROMOTION_CANDIDATES = 500;
+const PROVIDER_CURATION_COOLDOWN_MS = 60_000;
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -236,12 +241,31 @@ export class ApplicationsService {
       await this.lockListing(tx, application.listingId);
       await this.lockApplication(tx, applicationId);
 
+      const now = new Date();
+      await this.assertProviderCurationCooldown(tx, applicationId, now);
+
       const rejected = await tx.application.update({
         where: { id: applicationId },
         data: {
           status: ApplicationStatus.REJECTED,
-          rejectedAt: new Date(),
+          rejectedAt: now,
           publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        },
+      });
+
+      await tx.listingEvent.create({
+        data: {
+          listingId: application.listingId,
+          applicationId,
+          type: ListingEventType.REJECTED_BY_PROVIDER,
+          source: ListingEventSource.PROVIDER,
+          actorUserId: providerId,
+          reason: ApplicationRejectionReason.NOT_SELECTED,
+          payload: {
+            fromStatus: ApplicationStatus.ACTIVE,
+            toStatus: ApplicationStatus.REJECTED,
+          },
+          occurredAt: now,
         },
       });
 
@@ -256,6 +280,97 @@ export class ApplicationsService {
       }
 
       return rejected;
+    });
+  }
+
+  async restore(
+    applicationId: string,
+    providerId: string,
+  ): Promise<Application> {
+    return runSerializableTransaction(this.prisma, async (tx) => {
+      const application = await tx.application.findUnique({
+        where: { id: applicationId },
+        include: {
+          listing: { select: { id: true, providerId: true } },
+        },
+      });
+
+      if (!application) {
+        throw new NotFoundException('Application not found');
+      }
+
+      if (application.listing.providerId !== providerId) {
+        throw new NotFoundException('Application not found');
+      }
+
+      if (
+        application.status !== ApplicationStatus.REJECTED ||
+        application.publicReason !== ApplicationRejectionReason.NOT_SELECTED
+      ) {
+        throw new ConflictException('This application cannot be restored');
+      }
+
+      await this.lockListing(tx, application.listingId);
+      await this.lockApplication(tx, applicationId);
+
+      const now = new Date();
+      await this.assertProviderCurationCooldown(tx, applicationId, now);
+
+      const activeCount = await tx.application.count({
+        where: {
+          listingId: application.listingId,
+          status: ApplicationStatus.ACTIVE,
+        },
+      });
+      const restoreToActive = activeCount < ACTIVE_APPLICATIONS_LIMIT;
+
+      let restored: Application;
+      if (restoreToActive) {
+        restored = await tx.application.update({
+          where: { id: applicationId },
+          data: {
+            status: ApplicationStatus.ACTIVE,
+            activeAt: now,
+            rejectedAt: null,
+            publicReason: null,
+          },
+        });
+      } else {
+        await this.assignWaitingQueueOrder(
+          tx,
+          application.listingId,
+          applicationId,
+        );
+        restored = await tx.application.update({
+          where: { id: applicationId },
+          data: {
+            status: ApplicationStatus.WAITING,
+            activeAt: null,
+            rejectedAt: null,
+            publicReason: null,
+          },
+        });
+      }
+
+      await tx.listingEvent.create({
+        data: {
+          listingId: application.listingId,
+          applicationId,
+          type: ListingEventType.RESTORED_BY_PROVIDER,
+          source: ListingEventSource.PROVIDER,
+          actorUserId: providerId,
+          reason: ApplicationRejectionReason.NOT_SELECTED,
+          payload: {
+            fromStatus: ApplicationStatus.REJECTED,
+            toStatus: restoreToActive
+              ? ApplicationStatus.ACTIVE
+              : ApplicationStatus.WAITING,
+          },
+          occurredAt: now,
+        },
+      });
+
+      return restored;
     });
   }
 
@@ -672,6 +787,58 @@ export class ApplicationsService {
     applicationId: string,
   ): Promise<void> {
     await tx.$queryRaw`SELECT id FROM "applications" WHERE id = ${applicationId} FOR UPDATE`;
+  }
+
+  private async assertProviderCurationCooldown(
+    tx: TransactionClient,
+    applicationId: string,
+    now: Date,
+  ): Promise<void> {
+    const lastEvent = await tx.listingEvent.findFirst({
+      where: {
+        applicationId,
+        type: {
+          in: [
+            ListingEventType.REJECTED_BY_PROVIDER,
+            ListingEventType.RESTORED_BY_PROVIDER,
+          ],
+        },
+      },
+      orderBy: { occurredAt: 'desc' },
+      select: { occurredAt: true },
+    });
+
+    if (
+      lastEvent &&
+      now.getTime() - lastEvent.occurredAt.getTime() <
+        PROVIDER_CURATION_COOLDOWN_MS
+    ) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          code: 'PROVIDER_CURATION_RATE_LIMITED',
+          message:
+            'Too many provider curation actions. Please try again later.',
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async assignWaitingQueueOrder(
+    tx: TransactionClient,
+    listingId: string,
+    applicationId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`
+      UPDATE "applications"
+      SET "queue_order" = COALESCE(
+        (SELECT MAX("queue_order") FROM "applications"
+         WHERE "listing_id" = ${listingId}::uuid AND "status" = 'waiting'),
+        0
+      ) + 1
+      WHERE "id" = ${applicationId}::uuid
+    `;
   }
 
   private async lockApplicantProfile(

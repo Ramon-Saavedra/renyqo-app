@@ -61,6 +61,17 @@ enum ApplicationRejectionReason {
   PROFILE_NO_LONGER_ELIGIBLE  @map("profile_no_longer_eligible")
 }
 
+enum ListingEventType {
+  REJECTED_BY_PROVIDER  @map("rejected_by_provider")
+  RESTORED_BY_PROVIDER  @map("restored_by_provider")
+}
+
+enum ListingEventSource {
+  SYSTEM    @map("system")
+  PROVIDER  @map("provider")
+  APPLICANT @map("applicant")
+}
+
 enum ProviderType {
   PRIVATE @map("private")
   COMPANY @map("company")
@@ -83,6 +94,7 @@ model User {
 
   listings     Listing[]
   applications Application[]
+  listingEvents ListingEvent[] @relation("ListingEventActor")
   profile      ApplicantProfile?
   passwordResetTokens PasswordResetToken[]
 
@@ -145,6 +157,7 @@ model Listing {
 
   applications Application[]
   images       ListingImage[]
+  listingEvents ListingEvent[]
 
   @@index([status, publishedAt, id])
   @@index([status, coldRent, id])
@@ -184,10 +197,31 @@ model Application {
 
   listing   Listing @relation(fields: [listingId], references: [id])
   applicant User    @relation(fields: [applicantId], references: [id])
+  listingEvents ListingEvent[]
 
   @@index([listingId, status, queueOrder])
   @@index([applicantId])
   @@map("applications")
+}
+
+model ListingEvent {
+  id            String             @id @default(uuid()) @db.Uuid
+  listingId     String             @map("listing_id") @db.Uuid
+  applicationId String?            @map("application_id") @db.Uuid
+  type          ListingEventType
+  source        ListingEventSource
+  actorUserId   String?            @map("actor_user_id") @db.Uuid
+  reason        String?
+  payload       Json?
+  occurredAt    DateTime           @default(now()) @map("occurred_at")
+
+  listing     Listing     @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  application Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  actor       User?       @relation("ListingEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([listingId, occurredAt])
+  @@index([applicationId, occurredAt])
+  @@map("listing_events")
 }
 
 model ApplicantProfile {

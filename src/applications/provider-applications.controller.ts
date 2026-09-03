@@ -101,4 +101,17 @@ export class ProviderApplicationsController {
     );
     return new ApplicationResponseDto(application);
   }
+
+  @Patch('applications/:id/restore')
+  @HttpCode(HttpStatus.OK)
+  async restore(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) applicationId: string,
+    @CurrentUser() user: SafeUser,
+  ): Promise<ApplicationResponseDto> {
+    const application = await this.applicationsService.restore(
+      applicationId,
+      user.id,
+    );
+    return new ApplicationResponseDto(application);
+  }
 }

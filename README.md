@@ -325,6 +325,7 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 | `GET`    | `/api/v1/provider/listings/:id/exited-applications` | Provider  | Get REJECTED and WITHDRAWN applications that were previously ACTIVE |
 | `GET`    | `/api/v1/provider/listings/:id/waiting-count`       | Provider  | Get the waiting application count for an owned listing         |
 | `PATCH`  | `/api/v1/provider/applications/:id/reject`          | Provider  | Reject one owned ACTIVE application                            |
+| `PATCH`  | `/api/v1/provider/applications/:id/restore`         | Provider  | Restore one owned REJECTED + NOT_SELECTED application          |
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 
@@ -355,6 +356,10 @@ Withdrawing an `ACTIVE` application calls the private `promoteWithinTransaction(
 ### Application lifecycle: reject, rent and terminal states
 
 `PATCH /api/v1/provider/applications/:id/reject` requires an authenticated provider session that owns the listing. Only `ACTIVE` applications may be rejected; `WAITING` applications are not visible to the provider and return `404`. The rejection reason is always `NOT_SELECTED` and is stored in `publicReason` alongside `rejectedAt`. Invalid state transitions return `409`. Rejecting an `ACTIVE` application promotes the oldest still-eligible `WAITING` application in the same Serializable transaction.
+
+`PATCH /api/v1/provider/applications/:id/restore` lets a provider bring back a `REJECTED` application whose `publicReason` is `NOT_SELECTED`. Owning providers get `404` for foreign or missing applications, and any other state (`WITHDRAWN`, `ACCEPTED`, or system rejections such as `LISTING_RENTED` and `PROFILE_NO_LONGER_ELIGIBLE`) returns `409`. The slot/queue decision is made transactionally under `Serializable` with listing and application row locks: if fewer than five `ACTIVE` applications exist the application returns to `ACTIVE` with a new `activeAt`; otherwise it is appended to the end of the listing's `WAITING` queue with a fresh `queueOrder`. On restore the current-state rejection fields (`rejectedAt`, `publicReason`) are cleared; a restore to `WAITING` also clears `activeAt`.
+
+Provider reject and restore transitions are recorded as append-only `ListingEvent` history rows so prior `ACTIVE` / `REJECTED` states are never lost, even when the current-state `Application` row is restored. A backend-enforced cooldown rejects rapid `REJECT`→`RESTORE`→`REJECT` toggling with `429` and `code: "PROVIDER_CURATION_RATE_LIMITED"` when a provider curation event for the same application happened within the last 60 seconds. History rows are immutable and never cascade-deleted by listing or application deletion, forming the foundation for the future Objektakte (full listing timeline).
 
 `PATCH /api/v1/provider/listings/:id/rent` requires `{ "selectedApplicationId": "uuid" }`. The listing must be `PUBLISHED` or `PAUSED`, and the selected application must be `ACTIVE` and belong to the listing. In one atomic Serializable transaction:
 
