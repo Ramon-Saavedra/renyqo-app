@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npx prisma validate
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npx prisma generate
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
@@ -61,7 +61,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npx prisma migrate deploy
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
