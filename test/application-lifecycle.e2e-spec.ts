@@ -631,6 +631,155 @@ describe('Application Lifecycle E2E', () => {
         .expect(409);
     });
 
+    it('returns 409 when trying to restore onto a RENTED listing', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+
+      const agents = await Promise.all(
+        Array.from({ length: 2 }, () => registerApplicant()),
+      );
+      const entries = await Promise.all(
+        agents.map((a) => applyToListing(a, listing.id)),
+      );
+
+      const targetId = entries[0]['id'] as string;
+      const selectedId = entries[1]['id'] as string;
+
+      await getPrisma().application.update({
+        where: { id: targetId },
+        data: {
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.NOT_SELECTED,
+          rejectedAt: new Date(),
+          activeAt: null,
+        },
+      });
+
+      await providerAgent
+        .patch(`/api/v1/provider/listings/${listing.id}/rent`)
+        .send({ selectedApplicationId: selectedId })
+        .expect(200);
+
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${targetId}/restore`)
+        .send()
+        .expect(409);
+
+      const persisted = await getPrisma().application.findUnique({
+        where: { id: targetId },
+      });
+      expect(persisted!.status).toBe(ApplicationStatus.REJECTED);
+      expect(persisted!.publicReason).toBe(
+        ApplicationRejectionReason.NOT_SELECTED,
+      );
+
+      const events = await getPrisma().listingEvent.findMany({
+        where: { applicationId: targetId },
+      });
+      expect(
+        events.filter((e) => e.type === ListingEventType.RESTORED_BY_PROVIDER),
+      ).toHaveLength(0);
+    });
+
+    it('returns 422 when the applicant profile is no longer eligible', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListingWithRequirements(provider.id, {
+        suitableForPeopleCount: 1,
+      });
+      const applicantAgent = await registerApplicant();
+      await updateApplicantProfile(applicantAgent, {
+        adultsCount: 1,
+        childrenCount: 0,
+      });
+      const entry = await applyToListing(applicantAgent, listing.id);
+      const entryId = entry['id'] as string;
+
+      await updateApplicantProfile(applicantAgent, {
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+
+      await getPrisma().application.update({
+        where: { id: entryId },
+        data: {
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.NOT_SELECTED,
+          rejectedAt: new Date(),
+          activeAt: null,
+        },
+      });
+
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${entryId}/restore`)
+        .send()
+        .expect(422);
+
+      const persisted = await getPrisma().application.findUnique({
+        where: { id: entryId },
+      });
+      expect(persisted!.status).toBe(ApplicationStatus.REJECTED);
+
+      const events = await getPrisma().listingEvent.findMany({
+        where: { applicationId: entryId },
+      });
+      expect(
+        events.filter((e) => e.type === ListingEventType.RESTORED_BY_PROVIDER),
+      ).toHaveLength(0);
+    });
+
+    it('restores to WAITING after a real reject + promotion fills the slot', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+
+      const agents = await Promise.all(
+        Array.from({ length: 6 }, () => registerApplicant()),
+      );
+      const entries = await Promise.all(
+        agents.map((a) => applyToListing(a, listing.id)),
+      );
+      const activeEntries = entries.filter(
+        (e) => e['status'] === ApplicationStatus.ACTIVE,
+      );
+      expect(activeEntries).toHaveLength(5);
+      const target = activeEntries[0]['id'] as string;
+
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${target}/reject`)
+        .send()
+        .expect(200);
+
+      const rejected = await getPrisma().application.findUnique({
+        where: { id: target },
+      });
+      expect(rejected!.status).toBe(ApplicationStatus.REJECTED);
+
+      await getPrisma().listingEvent.deleteMany({
+        where: { applicationId: target },
+      });
+
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${target}/restore`)
+        .send()
+        .expect(200);
+
+      const waitingRows = await getPrisma().application.findMany({
+        where: {
+          listingId: listing.id,
+          status: ApplicationStatus.WAITING,
+        },
+        select: { id: true, queueOrder: true },
+      });
+      const persisted = await getPrisma().application.findUnique({
+        where: { id: target },
+      });
+      expect(persisted!.status).toBe(ApplicationStatus.WAITING);
+      for (const row of waitingRows) {
+        if (row.id !== target) {
+          expect(persisted!.queueOrder).toBeGreaterThan(row.queueOrder);
+        }
+      }
+    });
+
     it('blocks rapid reject then restore toggling with 429 within the cooldown window', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);

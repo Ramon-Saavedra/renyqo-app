@@ -9,9 +9,12 @@
     "node": ">=22.0.0"
   },
   "overrides": {
+    "fast-uri": "^3.1.7",
     "multer": "^2.2.0",
     "@hono/node-server": "^1.19.13",
-    "deepmerge-ts": "^8.0.1"
+    "deepmerge-ts": "^8.0.1",
+    "qs": "^6.16.0",
+    "mysql2": "^3.24.3"
   },
   "scripts": {
     "build": "nest build",

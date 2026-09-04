@@ -288,19 +288,37 @@ export class ApplicationsService {
     providerId: string,
   ): Promise<Application> {
     return runSerializableTransaction(this.prisma, async (tx) => {
+      const applicationReference = await tx.application.findUnique({
+        where: { id: applicationId },
+        select: {
+          listingId: true,
+          listing: { select: { providerId: true } },
+        },
+      });
+
+      if (
+        !applicationReference ||
+        applicationReference.listing.providerId !== providerId
+      ) {
+        throw new NotFoundException('Application not found');
+      }
+
+      await this.lockListing(tx, applicationReference.listingId);
+      await this.lockApplication(tx, applicationId);
+
       const application = await tx.application.findUnique({
         where: { id: applicationId },
-        include: {
-          listing: { select: { id: true, providerId: true } },
-        },
+        include: { listing: true },
       });
 
       if (!application) {
         throw new NotFoundException('Application not found');
       }
 
-      if (application.listing.providerId !== providerId) {
-        throw new NotFoundException('Application not found');
+      if (application.listing.status !== ListingStatus.PUBLISHED) {
+        throw new ConflictException(
+          'This listing is not accepting applications',
+        );
       }
 
       if (
@@ -310,8 +328,21 @@ export class ApplicationsService {
         throw new ConflictException('This application cannot be restored');
       }
 
-      await this.lockListing(tx, application.listingId);
-      await this.lockApplication(tx, applicationId);
+      const profile = await this.lockApplicantProfile(
+        tx,
+        application.applicantId,
+      );
+      const eligibility = this.eligibilityService.evaluate(
+        application.listing,
+        profile,
+      );
+
+      if (!eligibility.canApply) {
+        throw new UnprocessableEntityException({
+          message: 'Applicant is not eligible for this listing',
+          ...eligibility,
+        });
+      }
 
       const now = new Date();
       await this.assertProviderCurationCooldown(tx, applicationId, now);

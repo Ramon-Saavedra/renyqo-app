@@ -698,12 +698,39 @@ describe('ApplicationsService', () => {
       },
     };
 
+    const reloadedRejected = {
+      ...makeRawApplication({
+        status: ApplicationStatus.REJECTED,
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+      }),
+      listing: makeRawListing({ status: ListingStatus.PUBLISHED }),
+    };
+
+    const makeApplicantProfile = (
+      overrides: Partial<ApplicantProfile> = {},
+    ): ApplicantProfile => ({
+      id: '00000000-0000-4000-8000-000000000100',
+      applicantId: APPLICANT_ID,
+      householdNetIncome: null,
+      incomeProofAvailable: null,
+      schufaAvailable: null,
+      peopleCount: null,
+      adultsCount: null,
+      childrenCount: null,
+      hasPets: null,
+      isSmoker: null,
+      createdAt: new Date('2024-01-01'),
+      updatedAt: new Date('2024-01-01'),
+      ...overrides,
+    });
+
     const mockRestoreSetup = () => {
       prismaMock.application.findUnique
         .mockResolvedValueOnce(rejectedFinding)
-        .mockResolvedValueOnce(
-          makeRawApplication({ status: ApplicationStatus.REJECTED }),
-        );
+        .mockResolvedValueOnce(reloadedRejected);
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(
+        makeApplicantProfile(),
+      );
       prismaMock.listingEvent.findFirst.mockResolvedValue(null);
       prismaMock.application.update.mockResolvedValue(
         makeRawApplication({ status: ApplicationStatus.ACTIVE }),
@@ -753,9 +780,10 @@ describe('ApplicationsService', () => {
     it('restores a NOT_SELECTED application to WAITING with a fresh queue order when slots are full', async () => {
       prismaMock.application.findUnique
         .mockResolvedValueOnce(rejectedFinding)
-        .mockResolvedValueOnce(
-          makeRawApplication({ status: ApplicationStatus.REJECTED }),
-        );
+        .mockResolvedValueOnce(reloadedRejected);
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(
+        makeApplicantProfile(),
+      );
       prismaMock.listingEvent.findFirst.mockResolvedValue(null);
       prismaMock.application.update.mockResolvedValue(
         makeRawApplication({ status: ApplicationStatus.WAITING }),
@@ -809,16 +837,61 @@ describe('ApplicationsService', () => {
     });
 
     it('rejects restoration when the application is not REJECTED + NOT_SELECTED', async () => {
-      prismaMock.application.findUnique.mockResolvedValueOnce({
-        id: APPLICATION_ID,
-        listingId: LISTING_ID,
-        status: ApplicationStatus.WITHDRAWN,
-        publicReason: null,
-        listing: {
-          id: LISTING_ID,
-          providerId: PROVIDER_ID,
-        },
-      });
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({
+          id: APPLICATION_ID,
+          listingId: LISTING_ID,
+          listing: { providerId: PROVIDER_ID },
+        })
+        .mockResolvedValueOnce({
+          ...makeRawApplication({
+            status: ApplicationStatus.WITHDRAWN,
+            publicReason: null,
+          }),
+          listing: makeRawListing({ status: ListingStatus.PUBLISHED }),
+        });
+
+      await expect(
+        service.restore(APPLICATION_ID, PROVIDER_ID),
+      ).rejects.toThrow(ConflictException);
+      expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses to restore a REJECTED application from a system rejection reason', async () => {
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({
+          id: APPLICATION_ID,
+          listingId: LISTING_ID,
+          listing: { providerId: PROVIDER_ID },
+        })
+        .mockResolvedValueOnce({
+          ...makeRawApplication({
+            status: ApplicationStatus.REJECTED,
+            publicReason: ApplicationRejectionReason.LISTING_RENTED,
+          }),
+          listing: makeRawListing({ status: ListingStatus.PUBLISHED }),
+        });
+
+      await expect(
+        service.restore(APPLICATION_ID, PROVIDER_ID),
+      ).rejects.toThrow(ConflictException);
+      expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses to restore an application onto a listing that is not PUBLISHED', async () => {
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({
+          id: APPLICATION_ID,
+          listingId: LISTING_ID,
+          listing: { providerId: PROVIDER_ID },
+        })
+        .mockResolvedValueOnce({
+          ...makeRawApplication({
+            status: ApplicationStatus.REJECTED,
+            publicReason: ApplicationRejectionReason.NOT_SELECTED,
+          }),
+          listing: makeRawListing({ status: ListingStatus.RENTED }),
+        });
 
       await expect(
         service.restore(APPLICATION_ID, PROVIDER_ID),
@@ -827,31 +900,49 @@ describe('ApplicationsService', () => {
       expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
     });
 
-    it('refuses to restore a REJECTED application from a system rejection reason', async () => {
-      prismaMock.application.findUnique.mockResolvedValueOnce({
-        id: APPLICATION_ID,
-        listingId: LISTING_ID,
-        status: ApplicationStatus.REJECTED,
-        publicReason: ApplicationRejectionReason.LISTING_RENTED,
-        listing: {
-          id: LISTING_ID,
-          providerId: PROVIDER_ID,
-        },
-      });
+    it('refuses to restore an ineligible applicant onto a PUBLISHED listing', async () => {
+      prismaMock.application.findUnique
+        .mockResolvedValueOnce({
+          id: APPLICATION_ID,
+          listingId: LISTING_ID,
+          listing: { providerId: PROVIDER_ID },
+        })
+        .mockResolvedValueOnce(reloadedRejected);
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(
+        makeApplicantProfile(),
+      );
+      eligibilityService.evaluate.mockReturnValue(
+        new EligibilityResponseDto(
+          false,
+          ['household_income_below_requirement'],
+          [],
+          new Date(),
+        ),
+      );
 
       await expect(
         service.restore(APPLICATION_ID, PROVIDER_ID),
-      ).rejects.toThrow(ConflictException);
+      ).rejects.toMatchObject({
+        constructor: UnprocessableEntityException,
+        response: {
+          message: 'Applicant is not eligible for this listing',
+          canApply: false,
+          reasons: ['household_income_below_requirement'],
+          warnings: [],
+        },
+      });
       expect(prismaMock.application.update).not.toHaveBeenCalled();
       expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
+      expect(prismaMock.application.count).not.toHaveBeenCalled();
     });
 
     it('blocks a rapid RESTORE toggle within the cooldown window', async () => {
       prismaMock.application.findUnique
         .mockResolvedValueOnce(rejectedFinding)
-        .mockResolvedValueOnce(
-          makeRawApplication({ status: ApplicationStatus.REJECTED }),
-        );
+        .mockResolvedValueOnce(reloadedRejected);
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(
+        makeApplicantProfile(),
+      );
       prismaMock.listingEvent.findFirst.mockResolvedValue({
         occurredAt: new Date(),
       });
