@@ -330,6 +330,7 @@ async function clearDatabase(): Promise<void> {
 
   await prisma.application.deleteMany();
   await prisma.listingImage.deleteMany();
+  await prisma.listingEvent.deleteMany();
   await prisma.listing.deleteMany();
   await prisma.applicantProfile.deleteMany();
   await prisma.passwordResetToken.deleteMany();

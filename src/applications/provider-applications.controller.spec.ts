@@ -127,6 +127,7 @@ describe('ProviderApplicationsController', () => {
             findExitedByListing: jest.fn(),
             findWaitingCountByListing: jest.fn(),
             reject: jest.fn(),
+            restore: jest.fn(),
           },
         },
       ],
@@ -279,6 +280,24 @@ describe('ProviderApplicationsController', () => {
     });
   });
 
+  describe('restore', () => {
+    it('restores a rejected application for the authenticated provider', async () => {
+      const application = makeApplication();
+      applicationsService.restore.mockResolvedValue(application);
+
+      const result = await controller.restore(
+        APPLICATION_ID,
+        makeProviderUser(),
+      );
+
+      expect(applicationsService.restore).toHaveBeenCalledWith(
+        APPLICATION_ID,
+        PROVIDER_ID,
+      );
+      expect(result).toEqual(new ApplicationResponseDto(application));
+    });
+  });
+
   describe('waiting queue promotion', () => {
     const handlerNames = (): string[] =>
       Object.getOwnPropertyNames(
@@ -303,6 +322,7 @@ describe('ProviderApplicationsController', () => {
         'findExitedByListing',
         'findWaitingCount',
         'reject',
+        'restore',
       ]);
       expect(names.some((name) => name.toLowerCase().includes('promote'))).toBe(
         false,
@@ -316,6 +336,7 @@ describe('ProviderApplicationsController', () => {
         RequestMethod.GET,
         RequestMethod.GET,
         RequestMethod.GET,
+        RequestMethod.PATCH,
         RequestMethod.PATCH,
       ]);
       expect(

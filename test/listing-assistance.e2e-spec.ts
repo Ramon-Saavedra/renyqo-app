@@ -253,6 +253,7 @@ async function clearDatabase(): Promise<void> {
   const client = getPrisma();
   await client.application.deleteMany();
   await client.listingImage.deleteMany();
+  await client.listingEvent.deleteMany();
   await client.listing.deleteMany();
   await client.applicantProfile.deleteMany();
   await client.passwordResetToken.deleteMany();
