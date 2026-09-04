@@ -44,7 +44,7 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npx prisma generate
       - run: npx prisma migrate deploy
       - run: npm run test:e2e -- --runInBand
