@@ -23,6 +23,8 @@ import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationsService } from '../applications/applications.service';
+import { toApplicantListingApplicationStateFields } from '../applications/applicant-listing-application-state';
+import type { BlockingApplicationState } from '../applications/applicant-listing-application-state';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import type { SafeUser } from '../users/types/safe-user.type';
 import type { CreateListingDto } from './dto/create-listing.dto';
@@ -568,10 +570,13 @@ export class ListingsService {
     const hasMore = listings.length > take;
     const items = hasMore ? listings.slice(0, take) : listings;
 
-    let appliedListingIds: ReadonlySet<string> = new Set();
+    let blockingApplicationsByListingId: ReadonlyMap<
+      string,
+      BlockingApplicationState
+    > = new Map();
     if (isApplicant && items.length > 0) {
-      appliedListingIds =
-        await this.applicationsService.findBlockingAppliedListingIds(
+      blockingApplicationsByListingId =
+        await this.applicationsService.findBlockingApplicationsForListings(
           applicantUser.id,
           items.map((listing) => listing.id),
         );
@@ -603,7 +608,9 @@ export class ListingsService {
           listing as ApplicantListingSummarySource,
           profileMatchForListing(listing),
           evaluationTimestamp,
-          appliedListingIds.has(listing.id),
+          toApplicantListingApplicationStateFields(
+            blockingApplicationsByListingId.get(listing.id),
+          ),
         ),
     );
 
@@ -675,6 +682,8 @@ export class ListingsService {
 
     let profileMatch = ProfileMatch.UNKNOWN;
 
+    let applicationState = toApplicantListingApplicationStateFields(undefined);
+
     if (isApplicant) {
       const profile = await this.prisma.applicantProfile.findUnique({
         where: { applicantId: applicantUser.id },
@@ -691,6 +700,14 @@ export class ListingsService {
           ? ProfileMatch.MATCH
           : ProfileMatch.NO_MATCH;
       }
+
+      const blockingApplication =
+        await this.applicationsService.findBlockingApplicationForListing(
+          applicantUser.id,
+          listing.id,
+        );
+      applicationState =
+        toApplicantListingApplicationStateFields(blockingApplication);
     }
 
     if (res) {
@@ -702,6 +719,7 @@ export class ListingsService {
       listing,
       profileMatch,
       evaluationTimestamp,
+      applicationState,
     );
   }
 

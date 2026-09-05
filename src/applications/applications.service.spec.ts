@@ -28,8 +28,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { ApplicationsService } from './applications.service';
-import { BLOCKING_APPLICATION_STATUSES } from './blocking-application-statuses';
-
 const LISTING_ID = '00000000-0000-4000-8000-000000000001';
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000002';
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000003';
@@ -1708,73 +1706,145 @@ describe('ApplicationsService', () => {
     });
   });
 
-  describe('findBlockingAppliedListingIds', () => {
-    it('returns an empty set when listingIds is empty without querying', async () => {
-      const result = await service.findBlockingAppliedListingIds(
+  describe('findBlockingApplicationsForListings', () => {
+    it('returns an empty map when listingIds is empty without querying', async () => {
+      const result = await service.findBlockingApplicationsForListings(
         APPLICANT_ID,
         [],
       );
 
-      expect(result).toEqual(new Set());
+      expect(result).toEqual(new Map());
       expect(prismaMock.application.findMany).not.toHaveBeenCalled();
     });
 
-    it('returns an empty set when no blocking application exists', async () => {
+    it('returns an empty map when no blocking application exists', async () => {
       prismaMock.application.findMany.mockResolvedValue([]);
 
-      const result = await service.findBlockingAppliedListingIds(APPLICANT_ID, [
-        LISTING_ID,
-      ]);
+      const result = await service.findBlockingApplicationsForListings(
+        APPLICANT_ID,
+        [LISTING_ID],
+      );
 
-      expect(result).toEqual(new Set());
-      expect(prismaMock.application.findMany).toHaveBeenCalledWith({
-        where: {
-          applicantId: APPLICANT_ID,
-          listingId: { in: [LISTING_ID] },
-          status: {
-            in: [...BLOCKING_APPLICATION_STATUSES],
-          },
-        },
-        select: { listingId: true },
-      });
+      expect(result).toEqual(new Map());
     });
 
-    it('returns listing ids for blocking applications', async () => {
+    it.each([
+      ApplicationStatus.ACTIVE,
+      ApplicationStatus.WAITING,
+      ApplicationStatus.ACCEPTED,
+    ])('maps %s with publicReason from persistence', async (status) => {
       prismaMock.application.findMany.mockResolvedValue([
-        { listingId: LISTING_ID },
-      ]);
-
-      const result = await service.findBlockingAppliedListingIds(APPLICANT_ID, [
-        LISTING_ID,
-      ]);
-
-      expect(result).toEqual(new Set([LISTING_ID]));
-      expect(prismaMock.application.findMany).toHaveBeenCalledWith({
-        where: {
-          applicantId: APPLICANT_ID,
-          listingId: { in: [LISTING_ID] },
-          status: {
-            in: [...BLOCKING_APPLICATION_STATUSES],
-          },
+        {
+          listingId: LISTING_ID,
+          status,
+          publicReason: null,
         },
-        select: { listingId: true },
+      ]);
+
+      const result = await service.findBlockingApplicationsForListings(
+        APPLICANT_ID,
+        [LISTING_ID],
+      );
+
+      expect(result.get(LISTING_ID)).toEqual({
+        status,
+        publicReason: null,
       });
     });
 
-    it('excludes WITHDRAWN applications from the result set', async () => {
-      prismaMock.application.findMany.mockResolvedValue([]);
-
-      const result = await service.findBlockingAppliedListingIds(APPLICANT_ID, [
-        LISTING_ID,
+    it('maps REJECTED with authoritative publicReason', async () => {
+      prismaMock.application.findMany.mockResolvedValue([
+        {
+          listingId: LISTING_ID,
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        },
       ]);
 
-      expect(result.has(LISTING_ID)).toBe(false);
+      const result = await service.findBlockingApplicationsForListings(
+        APPLICANT_ID,
+        [LISTING_ID],
+      );
+
+      expect(result.get(LISTING_ID)).toEqual({
+        status: ApplicationStatus.REJECTED,
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+      });
+    });
+
+    it('maps REJECTED with other publicReason values', async () => {
+      prismaMock.application.findMany.mockResolvedValue([
+        {
+          listingId: LISTING_ID,
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.LISTING_RENTED,
+        },
+      ]);
+
+      const result = await service.findBlockingApplicationsForListings(
+        APPLICANT_ID,
+        [LISTING_ID],
+      );
+
+      expect(result.get(LISTING_ID)?.publicReason).toBe(
+        ApplicationRejectionReason.LISTING_RENTED,
+      );
+    });
+
+    it('keeps the newest blocking application per listing', async () => {
+      prismaMock.application.findMany.mockResolvedValue([
+        {
+          listingId: LISTING_ID,
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        },
+        {
+          listingId: LISTING_ID,
+          status: ApplicationStatus.ACTIVE,
+          publicReason: null,
+        },
+      ]);
+
+      const result = await service.findBlockingApplicationsForListings(
+        APPLICANT_ID,
+        [LISTING_ID],
+      );
+
+      expect(result.get(LISTING_ID)).toEqual({
+        status: ApplicationStatus.REJECTED,
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+      });
+      expect(prismaMock.application.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+    });
+  });
+
+  describe('findBlockingApplicationForListing', () => {
+    it('delegates to the batched lookup for a single listing id', async () => {
+      prismaMock.application.findMany.mockResolvedValue([
+        {
+          listingId: LISTING_ID,
+          status: ApplicationStatus.ACTIVE,
+          publicReason: null,
+        },
+      ]);
+
+      const result = await service.findBlockingApplicationForListing(
+        APPLICANT_ID,
+        LISTING_ID,
+      );
+
+      expect(result).toEqual({
+        status: ApplicationStatus.ACTIVE,
+        publicReason: null,
+      });
       expect(prismaMock.application.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: {
-              in: expect.not.arrayContaining([ApplicationStatus.WITHDRAWN]),
-            },
+            listingId: { in: [LISTING_ID] },
           }),
         }),
       );
