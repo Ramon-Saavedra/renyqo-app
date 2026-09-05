@@ -1,4 +1,7 @@
 import type { Listing, ListingImage } from '../../generated/prisma/client';
+import type { ApplicationRejectionReason } from '../../generated/prisma/enums';
+import { ApplicationStatus } from '../../generated/prisma/enums';
+import type { ApplicantListingApplicationStateFields } from '../../applications/applicant-listing-application-state';
 import { ProfileMatch } from './applicant-listing-profile-match.enum';
 
 export type ApplicantListingSummarySource = Pick<
@@ -47,12 +50,14 @@ export class ApplicantListingSummaryDto {
   readonly coverImage!: { readonly secureUrl: string } | null;
   readonly profileMatch!: ProfileMatch;
   readonly hasApplied!: boolean;
+  readonly applicationStatus!: ApplicationStatus | null;
+  readonly publicReason!: ApplicationRejectionReason | null;
 
   constructor(
     listing: ApplicantListingSummarySource,
     profileMatch: ProfileMatch,
     evaluationTimestamp: Date,
-    hasApplied: boolean,
+    applicationState: ApplicantListingApplicationStateFields,
   ) {
     const coverImage = listing.images.find((image) => image.isCover);
 
@@ -76,7 +81,9 @@ export class ApplicantListingSummaryDto {
     this.petsPolicy = listing.petsPolicy;
     this.coverImage = coverImage ? { secureUrl: coverImage.secureUrl } : null;
     this.profileMatch = profileMatch;
-    this.hasApplied = hasApplied;
+    this.hasApplied = applicationState.hasApplied;
+    this.applicationStatus = applicationState.applicationStatus;
+    this.publicReason = applicationState.publicReason;
   }
 
   private computeIsNew(publishedAt: Date | null, now: Date): boolean {

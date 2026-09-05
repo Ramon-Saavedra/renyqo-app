@@ -27,6 +27,7 @@ import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { BLOCKING_APPLICATION_STATUSES } from './blocking-application-statuses';
+import type { BlockingApplicationState } from './applicant-listing-application-state';
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
 import type { EligibilityWarning } from '../eligibility/dto/eligibility-response.dto';
 import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
@@ -583,12 +584,12 @@ export class ApplicationsService {
     return applications;
   }
 
-  async findBlockingAppliedListingIds(
+  async findBlockingApplicationsForListings(
     applicantId: string,
     listingIds: readonly string[],
-  ): Promise<ReadonlySet<string>> {
+  ): Promise<ReadonlyMap<string, BlockingApplicationState>> {
     if (listingIds.length === 0) {
-      return new Set();
+      return new Map();
     }
 
     const applications = await this.prisma.application.findMany({
@@ -597,10 +598,34 @@ export class ApplicationsService {
         listingId: { in: [...listingIds] },
         status: { in: [...BLOCKING_APPLICATION_STATUSES] },
       },
-      select: { listingId: true },
+      select: { listingId: true, status: true, publicReason: true },
+      orderBy: { createdAt: 'desc' },
     });
 
-    return new Set(applications.map((application) => application.listingId));
+    const applicationsByListingId = new Map<string, BlockingApplicationState>();
+
+    for (const application of applications) {
+      if (applicationsByListingId.has(application.listingId)) {
+        continue;
+      }
+
+      applicationsByListingId.set(application.listingId, {
+        status: application.status,
+        publicReason: application.publicReason,
+      });
+    }
+
+    return applicationsByListingId;
+  }
+
+  async findBlockingApplicationForListing(
+    applicantId: string,
+    listingId: string,
+  ): Promise<BlockingApplicationState | undefined> {
+    const applicationsByListingId =
+      await this.findBlockingApplicationsForListings(applicantId, [listingId]);
+
+    return applicationsByListingId.get(listingId);
   }
 
   async findAllByProvider(providerId: string): Promise<Application[]> {
