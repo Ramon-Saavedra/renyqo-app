@@ -24,6 +24,7 @@ import {
   SmokingPolicy,
   UserStatus,
 } from '../generated/prisma/enums';
+import { ApplicationsService } from '../applications/applications.service';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EligibilityService } from '../eligibility/eligibility.service';
@@ -288,6 +289,9 @@ describe('ListingsService', () => {
     Pick<CloudinaryService, 'uploadBuffer' | 'deleteByPublicId'>
   >;
   let eligibilityMock: jest.Mocked<EligibilityService>;
+  let applicationsMock: jest.Mocked<
+    Pick<ApplicationsService, 'findBlockingAppliedListingIds'>
+  >;
 
   beforeEach(async () => {
     const transactionRunner: PrismaTransactionRunner = async (fn) =>
@@ -329,6 +333,17 @@ describe('ListingsService', () => {
       deleteByPublicId: jest.fn<(publicId: string) => Promise<void>>(),
     };
 
+    applicationsMock = {
+      findBlockingAppliedListingIds: jest
+        .fn<
+          (
+            applicantId: string,
+            listingIds: readonly string[],
+          ) => Promise<ReadonlySet<string>>
+        >()
+        .mockResolvedValue(new Set()),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ListingsService,
@@ -353,6 +368,10 @@ describe('ListingsService', () => {
             }),
             buildHardMatchWhere: jest.fn().mockReturnValue({}),
           },
+        },
+        {
+          provide: ApplicationsService,
+          useValue: applicationsMock,
         },
       ],
     }).compile();
@@ -1532,6 +1551,10 @@ describe('ListingsService', () => {
       const result = await service.findPublishedForApplicant({}, providerUser);
 
       expect(result.items[0].profileMatch).toBe(ProfileMatch.UNKNOWN);
+      expect(result.items[0].hasApplied).toBe(false);
+      expect(
+        applicationsMock.findBlockingAppliedListingIds,
+      ).not.toHaveBeenCalled();
     });
 
     it('non-ACTIVE applicant returns UNKNOWN without profile lookup', async () => {
@@ -1555,7 +1578,11 @@ describe('ListingsService', () => {
       const result = await service.findPublishedForApplicant({}, suspendedUser);
 
       expect(result.items[0].profileMatch).toBe(ProfileMatch.UNKNOWN);
+      expect(result.items[0].hasApplied).toBe(false);
       expect(prismaMock.applicantProfile.findUnique).not.toHaveBeenCalled();
+      expect(
+        applicationsMock.findBlockingAppliedListingIds,
+      ).not.toHaveBeenCalled();
     });
 
     it('sets cache-control headers on the response', async () => {
@@ -1677,6 +1704,101 @@ describe('ListingsService', () => {
           },
         }),
       );
+    });
+
+    describe('hasApplied', () => {
+      const applicantUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.APPLICANT,
+        providerType: null,
+        companyName: null,
+        emailVerified: false,
+        status: UserStatus.ACTIVE,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+
+      it('returns false when the applicant has no application', async () => {
+        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+        applicationsMock.findBlockingAppliedListingIds.mockResolvedValue(
+          new Set(),
+        );
+
+        const result = await service.findPublishedForApplicant(
+          {},
+          applicantUser,
+        );
+
+        expect(
+          applicationsMock.findBlockingAppliedListingIds,
+        ).toHaveBeenCalledWith(applicantUser.id, [LISTING_ID]);
+        expect(result.items[0].hasApplied).toBe(false);
+      });
+
+      it('maps applied listing ids from the batch lookup to hasApplied true', async () => {
+        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+        applicationsMock.findBlockingAppliedListingIds.mockResolvedValue(
+          new Set([LISTING_ID]),
+        );
+
+        const result = await service.findPublishedForApplicant(
+          {},
+          applicantUser,
+        );
+
+        expect(result.items[0].hasApplied).toBe(true);
+      });
+
+      it('does not query applications when the page is empty', async () => {
+        prismaMock.listing.findMany.mockResolvedValue([]);
+
+        const result = await service.findPublishedForApplicant(
+          {},
+          applicantUser,
+        );
+
+        expect(
+          applicationsMock.findBlockingAppliedListingIds,
+        ).not.toHaveBeenCalled();
+        expect(result.items).toEqual([]);
+      });
+
+      it('sets hasApplied per listing from the batch lookup result', async () => {
+        const secondListing = makeDiscoveryListing({ id: LISTING_ID_2 });
+        prismaMock.listing.findMany.mockResolvedValue([
+          discoveryListing,
+          secondListing,
+        ]);
+        applicationsMock.findBlockingAppliedListingIds.mockResolvedValue(
+          new Set([LISTING_ID_2]),
+        );
+
+        const result = await service.findPublishedForApplicant(
+          {},
+          applicantUser,
+        );
+
+        expect(
+          applicationsMock.findBlockingAppliedListingIds,
+        ).toHaveBeenCalledWith(applicantUser.id, [LISTING_ID, LISTING_ID_2]);
+        expect(result.items[0].hasApplied).toBe(false);
+        expect(result.items[1].hasApplied).toBe(true);
+      });
+
+      it('returns false for anonymous callers without querying applications', async () => {
+        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+
+        const result = await service.findPublishedForApplicant({}, null);
+
+        expect(
+          applicationsMock.findBlockingAppliedListingIds,
+        ).not.toHaveBeenCalled();
+        expect(result.items[0].hasApplied).toBe(false);
+      });
     });
   });
 

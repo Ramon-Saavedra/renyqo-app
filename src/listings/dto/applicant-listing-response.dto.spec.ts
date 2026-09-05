@@ -69,6 +69,7 @@ describe('ApplicantListingSummaryDto', () => {
       baseListing,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      false,
     );
     const result = serialized(dto);
 
@@ -85,6 +86,7 @@ describe('ApplicantListingSummaryDto', () => {
       },
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      false,
     );
     const result = serialized(dto);
 
@@ -110,6 +112,7 @@ describe('ApplicantListingSummaryDto', () => {
       },
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      false,
     );
     const result = serialized(dto);
 
@@ -123,6 +126,7 @@ describe('ApplicantListingSummaryDto', () => {
       baseListing,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      false,
     );
     const result = serialized(dto);
 
@@ -134,6 +138,7 @@ describe('ApplicantListingSummaryDto', () => {
       baseListing,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      false,
     );
     const result = serialized(dto);
 
@@ -146,6 +151,7 @@ describe('ApplicantListingSummaryDto', () => {
       baseListing,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      false,
     );
     const result = serialized(dto);
 
@@ -157,6 +163,24 @@ describe('ApplicantListingSummaryDto', () => {
     expect(result).not.toHaveProperty('showExactAddress');
   });
 
+  it('exposes hasApplied from the constructor argument', () => {
+    const applied = new ApplicantListingSummaryDto(
+      baseListing,
+      ProfileMatch.MATCH,
+      new Date('2025-01-01'),
+      true,
+    );
+    const notApplied = new ApplicantListingSummaryDto(
+      baseListing,
+      ProfileMatch.MATCH,
+      new Date('2025-01-01'),
+      false,
+    );
+
+    expect(applied.hasApplied).toBe(true);
+    expect(notApplied.hasApplied).toBe(false);
+  });
+
   describe('isNew', () => {
     it('returns true when publishedAt is 1 day ago', () => {
       const now = new Date('2025-06-10T12:00:00.000Z');
@@ -165,6 +189,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: oneDayAgo },
         ProfileMatch.UNKNOWN,
         now,
+        false,
       );
       expect(dto.isNew).toBe(true);
     });
@@ -176,6 +201,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: sevenDaysAgo },
         ProfileMatch.UNKNOWN,
         now,
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -187,6 +213,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: eightDaysAgo },
         ProfileMatch.UNKNOWN,
         now,
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -197,6 +224,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: null },
         ProfileMatch.UNKNOWN,
         now,
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -208,6 +236,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: future },
         ProfileMatch.UNKNOWN,
         now,
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -417,6 +446,7 @@ describe('ApplicantListingsPageDto', () => {
       },
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      false,
     );
     const page = new ApplicantListingsPageDto([summary], 'cursor-value', 0);
 

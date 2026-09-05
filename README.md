@@ -139,7 +139,9 @@ These public endpoints return only PUBLISHED listings with a publication date. R
 | `GET`  | `/api/v1/listings`     | Public (opt.) | Browse published listings with filters, sorting and cursor pagination |
 | `GET`  | `/api/v1/listings/:id` | Public (opt.) | Get public detail for a published listing                             |
 
-Authentication is optional. When a valid applicant session is present, each listing includes a `profileMatch` value calculated from the applicant profile and listing requirements. Anonymous requests and providers receive `profileMatch: "UNKNOWN"`.
+Authentication is optional. When a valid applicant session is present, listing responses include a `profileMatch` value calculated from the applicant profile and listing requirements. Anonymous requests and providers receive `profileMatch: "UNKNOWN"`.
+
+`hasApplied` is returned only on `GET /api/v1/listings` collection items (`ApplicantListingSummaryDto`), not on `GET /api/v1/listings/:id` (`ApplicantListingDetailDto`). For active applicants, it is `true` when the applicant already has a blocking application for that listing (`ACTIVE`, `WAITING`, `REJECTED`, or `ACCEPTED`) and `false` when there is no application or only a `WITHDRAWN` one.
 
 Supported query parameters for `GET /api/v1/listings`:
 
@@ -172,10 +174,11 @@ Collection response items include:
 - `district`, `publishedAt`, `isNew` (true within the first 7 days after `publishedAt`, computed server-side per-request)
 - `petsPolicy` at the item level
 - `profileMatch`: `MATCH`, `NO_MATCH`, `PROFILE_INCOMPLETE` or `UNKNOWN`
+- `hasApplied` (collection only): `true` when the authenticated applicant already has a blocking application for the listing; otherwise `false` (including anonymous callers)
 - narrow public summary with `coverImage` containing only `secureUrl`
 - never exposes `providerId`, `showExactAddress`, Cloudinary `publicId`, applicant profile values, eligibility reasons or warnings
 
-Detail response includes `district`, `isNew` and `profileMatch` at the top level. `requirements.petsPolicy` is preserved in the nested requirements object and is not duplicated at the top level.
+Detail response (`ApplicantListingDetailDto`) includes `district`, `isNew` and `profileMatch` at the top level. It does not include `hasApplied`. `requirements.petsPolicy` is preserved in the nested requirements object and is not duplicated at the top level.
 
 Personalized responses (any request carrying a valid applicant session) use `Vary: Cookie` and `Cache-Control: private, no-store, must-revalidate` to prevent shared-cache leakage of applicant-specific data.
 
