@@ -22,6 +22,7 @@ import {
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import { ApplicationsService } from '../applications/applications.service';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import type { SafeUser } from '../users/types/safe-user.type';
 import type { CreateListingDto } from './dto/create-listing.dto';
@@ -290,6 +291,7 @@ export class ListingsService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly config: ConfigService<EnvironmentVariables, true>,
     private readonly eligibilityService: EligibilityService,
+    private readonly applicationsService: ApplicationsService,
   ) {}
 
   async create(
@@ -566,6 +568,15 @@ export class ListingsService {
     const hasMore = listings.length > take;
     const items = hasMore ? listings.slice(0, take) : listings;
 
+    let appliedListingIds: ReadonlySet<string> = new Set();
+    if (isApplicant && items.length > 0) {
+      appliedListingIds =
+        await this.applicationsService.findBlockingAppliedListingIds(
+          applicantUser.id,
+          items.map((listing) => listing.id),
+        );
+    }
+
     const profileMatchForListing = (listing: {
       minimumHouseholdNetIncome: number | null;
       schufaRequired: boolean;
@@ -592,6 +603,7 @@ export class ListingsService {
           listing as ApplicantListingSummarySource,
           profileMatchForListing(listing),
           evaluationTimestamp,
+          appliedListingIds.has(listing.id),
         ),
     );
 

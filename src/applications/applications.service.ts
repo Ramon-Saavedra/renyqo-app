@@ -26,6 +26,7 @@ import {
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import { BLOCKING_APPLICATION_STATUSES } from './blocking-application-statuses';
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
 import type { EligibilityWarning } from '../eligibility/dto/eligibility-response.dto';
 import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
@@ -97,12 +98,7 @@ export class ApplicationsService {
           listingId,
           applicantId,
           status: {
-            in: [
-              ApplicationStatus.ACTIVE,
-              ApplicationStatus.WAITING,
-              ApplicationStatus.REJECTED,
-              ApplicationStatus.ACCEPTED,
-            ],
+            in: [...BLOCKING_APPLICATION_STATUSES],
           },
         },
       });
@@ -585,6 +581,26 @@ export class ApplicationsService {
     });
 
     return applications;
+  }
+
+  async findBlockingAppliedListingIds(
+    applicantId: string,
+    listingIds: readonly string[],
+  ): Promise<ReadonlySet<string>> {
+    if (listingIds.length === 0) {
+      return new Set();
+    }
+
+    const applications = await this.prisma.application.findMany({
+      where: {
+        applicantId,
+        listingId: { in: [...listingIds] },
+        status: { in: [...BLOCKING_APPLICATION_STATUSES] },
+      },
+      select: { listingId: true },
+    });
+
+    return new Set(applications.map((application) => application.listingId));
   }
 
   async findAllByProvider(providerId: string): Promise<Application[]> {

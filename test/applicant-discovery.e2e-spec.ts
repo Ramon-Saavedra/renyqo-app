@@ -556,6 +556,112 @@ describe('Applicant Discovery E2E', () => {
       const items = body.items as Record<string, unknown>[];
       expect(items[0].coverImage).toBeNull();
     });
+
+    describe('hasApplied', () => {
+      const openListingRequirements = {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: false,
+        incomeProofRequired: false,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      };
+
+      function applicationIdFromResponse(response: Response): string {
+        const id = responseBody(response).id;
+        if (typeof id !== 'string') {
+          throw new Error('Application response did not include an id.');
+        }
+        return id;
+      }
+
+      it('exposes hasApplied per listing for an authenticated applicant', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+
+        const appliedListing = await createPublishedListing(providerId, {
+          title: 'Applied Listing',
+          ...openListingRequirements,
+        });
+        const otherListing = await createPublishedListing(providerId, {
+          title: 'Other Listing',
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+
+        await applicantAgent
+          .post(`/api/v1/listings/${appliedListing.id}/apply`)
+          .expect(201);
+
+        const res = await applicantAgent.get('/api/v1/listings').expect(200);
+        const items = responseBody(res).items as Record<string, unknown>[];
+        const appliedItem = items.find((item) => item.id === appliedListing.id);
+        const otherItem = items.find((item) => item.id === otherListing.id);
+
+        if (!appliedItem || !otherItem) {
+          throw new Error('Expected both listings in discovery response.');
+        }
+
+        expect(appliedItem.hasApplied).toBe(true);
+        expect(otherItem.hasApplied).toBe(false);
+      });
+
+      it('returns hasApplied false after withdrawal', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+
+        const applicationResponse = await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        const applicationId = applicationIdFromResponse(applicationResponse);
+
+        await applicantAgent
+          .delete(`/api/v1/applicant/applications/${applicationId}`)
+          .expect(200);
+
+        const res = await applicantAgent.get('/api/v1/listings').expect(200);
+        const items = responseBody(res).items as Record<string, unknown>[];
+        expect(items[0].hasApplied).toBe(false);
+      });
+
+      it('returns hasApplied false for anonymous requests', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        await createPublishedListing(providerId);
+
+        const res = await request(getServer())
+          .get('/api/v1/listings')
+          .expect(200);
+        const items = responseBody(res).items as Record<string, unknown>[];
+        expect(items[0].hasApplied).toBe(false);
+      });
+    });
   });
 
   describe('GET /api/v1/listings/:id', () => {

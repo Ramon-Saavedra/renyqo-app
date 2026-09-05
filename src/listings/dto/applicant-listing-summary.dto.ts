@@ -46,11 +46,13 @@ export class ApplicantListingSummaryDto {
   readonly petsPolicy!: string | null;
   readonly coverImage!: { readonly secureUrl: string } | null;
   readonly profileMatch!: ProfileMatch;
+  readonly hasApplied!: boolean;
 
   constructor(
     listing: ApplicantListingSummarySource,
     profileMatch: ProfileMatch,
     evaluationTimestamp: Date,
+    hasApplied: boolean,
   ) {
     const coverImage = listing.images.find((image) => image.isCover);
 
@@ -74,6 +76,7 @@ export class ApplicantListingSummaryDto {
     this.petsPolicy = listing.petsPolicy;
     this.coverImage = coverImage ? { secureUrl: coverImage.secureUrl } : null;
     this.profileMatch = profileMatch;
+    this.hasApplied = hasApplied;
   }
 
   private computeIsNew(publishedAt: Date | null, now: Date): boolean {
