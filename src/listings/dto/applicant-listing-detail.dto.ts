@@ -1,4 +1,7 @@
 import type { Listing, ListingImage } from '../../generated/prisma/client';
+import type { ApplicationRejectionReason } from '../../generated/prisma/enums';
+import { ApplicationStatus } from '../../generated/prisma/enums';
+import type { ApplicantListingApplicationStateFields } from '../../applications/applicant-listing-application-state';
 import { ApplicantListingImageDto } from './applicant-listing-image.dto';
 import { ProfileMatch } from './applicant-listing-profile-match.enum';
 
@@ -53,6 +56,9 @@ export class ApplicantListingDetailDto {
   readonly isNew!: boolean;
   readonly images!: ApplicantListingImageDto[];
   readonly profileMatch!: ProfileMatch;
+  readonly hasApplied!: boolean;
+  readonly applicationStatus!: ApplicationStatus | null;
+  readonly publicReason!: ApplicationRejectionReason | null;
   readonly requirements!: {
     readonly minimumHouseholdNetIncome: number | null;
     readonly schufaRequired: boolean;
@@ -66,6 +72,7 @@ export class ApplicantListingDetailDto {
     listing: ApplicantListingDetailSource,
     profileMatch: ProfileMatch,
     evaluationTimestamp: Date,
+    applicationState: ApplicantListingApplicationStateFields,
   ) {
     this.id = listing.id;
     this.title = listing.title;
@@ -89,6 +96,9 @@ export class ApplicantListingDetailDto {
       (image) => new ApplicantListingImageDto(image),
     );
     this.profileMatch = profileMatch;
+    this.hasApplied = applicationState.hasApplied;
+    this.applicationStatus = applicationState.applicationStatus;
+    this.publicReason = applicationState.publicReason;
     this.requirements = {
       minimumHouseholdNetIncome: listing.minimumHouseholdNetIncome,
       schufaRequired: listing.schufaRequired,

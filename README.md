@@ -141,7 +141,11 @@ These public endpoints return only PUBLISHED listings with a publication date. R
 
 Authentication is optional. When a valid applicant session is present, listing responses include a `profileMatch` value calculated from the applicant profile and listing requirements. Anonymous requests and providers receive `profileMatch: "UNKNOWN"`.
 
-`hasApplied` is returned only on `GET /api/v1/listings` collection items (`ApplicantListingSummaryDto`), not on `GET /api/v1/listings/:id` (`ApplicantListingDetailDto`). For active applicants, it is `true` when the applicant already has a blocking application for that listing (`ACTIVE`, `WAITING`, `REJECTED`, or `ACCEPTED`) and `false` when there is no application or only a `WITHDRAWN` one.
+For active applicants, both collection and detail responses expose application state:
+
+- `hasApplied`: `true` when the applicant has a blocking application for the listing (`ACTIVE`, `WAITING`, `REJECTED`, or `ACCEPTED`); otherwise `false` (including no application or only `WITHDRAWN`)
+- `applicationStatus`: the blocking application status, or `null` when there is no blocking application
+- `publicReason`: authoritative rejection reason when `applicationStatus` is `REJECTED`; otherwise `null`
 
 Supported query parameters for `GET /api/v1/listings`:
 
@@ -174,11 +178,11 @@ Collection response items include:
 - `district`, `publishedAt`, `isNew` (true within the first 7 days after `publishedAt`, computed server-side per-request)
 - `petsPolicy` at the item level
 - `profileMatch`: `MATCH`, `NO_MATCH`, `PROFILE_INCOMPLETE` or `UNKNOWN`
-- `hasApplied` (collection only): `true` when the authenticated applicant already has a blocking application for the listing; otherwise `false` (including anonymous callers)
+- `hasApplied`, `applicationStatus`, `publicReason` (see application state above)
 - narrow public summary with `coverImage` containing only `secureUrl`
 - never exposes `providerId`, `showExactAddress`, Cloudinary `publicId`, applicant profile values, eligibility reasons or warnings
 
-Detail response (`ApplicantListingDetailDto`) includes `district`, `isNew` and `profileMatch` at the top level. It does not include `hasApplied`. `requirements.petsPolicy` is preserved in the nested requirements object and is not duplicated at the top level.
+Detail response (`ApplicantListingDetailDto`) includes `district`, `isNew`, `profileMatch`, `hasApplied`, `applicationStatus` and `publicReason` at the top level. `requirements.petsPolicy` is preserved in the nested requirements object and is not duplicated at the top level.
 
 Personalized responses (any request carrying a valid applicant session) use `Vary: Cookie` and `Cache-Control: private, no-store, must-revalidate` to prevent shared-cache leakage of applicant-specific data.
 

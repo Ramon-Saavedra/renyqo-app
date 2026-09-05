@@ -230,6 +230,11 @@ describe('ApplicantListingsController', () => {
         },
         ProfileMatch.UNKNOWN,
         new Date('2025-01-01'),
+        {
+          hasApplied: false,
+          applicationStatus: null,
+          publicReason: null,
+        },
       );
       listingsService.findPublishedDetailForApplicant.mockResolvedValue(detail);
 

@@ -8,6 +8,8 @@ import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
 import type { EnvironmentVariables } from '../src/config/env.validation';
 import {
+  ApplicationRejectionReason,
+  ApplicationStatus,
   ListingStatus,
   ObjectType,
   PetsPolicy,
@@ -240,6 +242,40 @@ async function createPublishedListing(
   };
 
   return getPrisma().listing.create({ data: base });
+}
+
+async function updateApplicantProfile(
+  agent: ReturnType<typeof request.agent>,
+  profile: {
+    adultsCount?: number;
+    childrenCount?: number;
+  },
+): Promise<void> {
+  await agent.patch('/api/v1/applicant/profile').send(profile).expect(200);
+}
+
+function expectEmptyApplicationState(body: Record<string, unknown>): void {
+  expect(body.hasApplied).toBe(false);
+  expect(body.applicationStatus).toBeNull();
+  expect(body.publicReason).toBeNull();
+}
+
+function expectApplicationState(
+  body: Record<string, unknown>,
+  status: string,
+  publicReason: string | null,
+): void {
+  expect(body.hasApplied).toBe(true);
+  expect(body.applicationStatus).toBe(status);
+  expect(body.publicReason).toBe(publicReason);
+}
+
+function applicationIdFromResponse(response: Response): string {
+  const id = responseBody(response).id;
+  if (typeof id !== 'string') {
+    throw new Error('Application response did not include an id.');
+  }
+  return id;
 }
 
 describe('Applicant Discovery E2E', () => {
@@ -557,7 +593,7 @@ describe('Applicant Discovery E2E', () => {
       expect(items[0].coverImage).toBeNull();
     });
 
-    describe('hasApplied', () => {
+    describe('application state', () => {
       const openListingRequirements = {
         minimumHouseholdNetIncome: null,
         schufaRequired: false,
@@ -567,15 +603,7 @@ describe('Applicant Discovery E2E', () => {
         smokingPolicy: null,
       };
 
-      function applicationIdFromResponse(response: Response): string {
-        const id = responseBody(response).id;
-        if (typeof id !== 'string') {
-          throw new Error('Application response did not include an id.');
-        }
-        return id;
-      }
-
-      it('exposes hasApplied per listing for an authenticated applicant', async () => {
+      it('exposes ACTIVE application state on collection for an authenticated applicant', async () => {
         const providerCookies = await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
@@ -612,10 +640,51 @@ describe('Applicant Discovery E2E', () => {
         }
 
         expect(appliedItem.hasApplied).toBe(true);
+        expect(appliedItem.applicationStatus).toBe('ACTIVE');
+        expect(appliedItem.publicReason).toBeNull();
         expect(otherItem.hasApplied).toBe(false);
+        expect(otherItem.applicationStatus).toBeNull();
+        expect(otherItem.publicReason).toBeNull();
       });
 
-      it('returns hasApplied false after withdrawal', async () => {
+      it('exposes REJECTED NOT_SELECTED application state on collection', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+
+        const applicationResponse = await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+
+        await request(getServer())
+          .patch(
+            `/api/v1/provider/applications/${applicationIdFromResponse(applicationResponse)}/reject`,
+          )
+          .set('Cookie', providerCookies)
+          .send()
+          .expect(200);
+
+        const res = await applicantAgent.get('/api/v1/listings').expect(200);
+        const items = responseBody(res).items as Record<string, unknown>[];
+
+        expect(items[0].hasApplied).toBe(true);
+        expect(items[0].applicationStatus).toBe('REJECTED');
+        expect(items[0].publicReason).toBe('NOT_SELECTED');
+      });
+
+      it('returns empty application state after withdrawal', async () => {
         const providerCookies = await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
@@ -644,9 +713,11 @@ describe('Applicant Discovery E2E', () => {
         const res = await applicantAgent.get('/api/v1/listings').expect(200);
         const items = responseBody(res).items as Record<string, unknown>[];
         expect(items[0].hasApplied).toBe(false);
+        expect(items[0].applicationStatus).toBeNull();
+        expect(items[0].publicReason).toBeNull();
       });
 
-      it('returns hasApplied false for anonymous requests', async () => {
+      it('returns empty application state for anonymous collection requests', async () => {
         const providerCookies = await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
@@ -660,6 +731,159 @@ describe('Applicant Discovery E2E', () => {
           .expect(200);
         const items = responseBody(res).items as Record<string, unknown>[];
         expect(items[0].hasApplied).toBe(false);
+        expect(items[0].applicationStatus).toBeNull();
+        expect(items[0].publicReason).toBeNull();
+      });
+
+      it('exposes WAITING application state on collection', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        for (let i = 0; i < 5; i += 1) {
+          const filler = request.agent(getServer());
+          await filler
+            .post('/api/v1/auth/register')
+            .send(applicantPayload())
+            .expect(201);
+          await filler.post(`/api/v1/listings/${listing.id}/apply`).expect(201);
+        }
+
+        const waitingApplicant = request.agent(getServer());
+        await waitingApplicant
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        const applyResponse = await waitingApplicant
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        expect(responseBody(applyResponse).status).toBe('WAITING');
+
+        const res = await waitingApplicant.get('/api/v1/listings').expect(200);
+        const item = (
+          responseBody(res).items as Record<string, unknown>[]
+        ).find((entry) => entry.id === listing.id);
+        if (!item) {
+          throw new Error('Expected listing in discovery response.');
+        }
+        expectApplicationState(item, 'WAITING', null);
+      });
+
+      it('exposes ACCEPTED application state on collection', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        const applicationResponse = await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        await getPrisma().application.update({
+          where: { id: applicationIdFromResponse(applicationResponse) },
+          data: { status: ApplicationStatus.ACCEPTED },
+        });
+
+        const res = await applicantAgent.get('/api/v1/listings').expect(200);
+        const item = (
+          responseBody(res).items as Record<string, unknown>[]
+        ).find((entry) => entry.id === listing.id);
+        if (!item) {
+          throw new Error('Expected listing in discovery response.');
+        }
+        expectApplicationState(item, 'ACCEPTED', null);
+      });
+
+      it('exposes REJECTED PROFILE_NO_LONGER_ELIGIBLE application state on collection', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+          suitableForPeopleCount: 1,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        await updateApplicantProfile(applicantAgent, {
+          adultsCount: 1,
+          childrenCount: 0,
+        });
+        await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        await updateApplicantProfile(applicantAgent, {
+          adultsCount: 2,
+          childrenCount: 0,
+        });
+
+        const res = await applicantAgent.get('/api/v1/listings').expect(200);
+        const item = (
+          responseBody(res).items as Record<string, unknown>[]
+        ).find((entry) => entry.id === listing.id);
+        if (!item) {
+          throw new Error('Expected listing in discovery response.');
+        }
+        expectApplicationState(item, 'REJECTED', 'PROFILE_NO_LONGER_ELIGIBLE');
+      });
+
+      it('exposes REJECTED LISTING_RENTED application state on collection', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        const applicationResponse = await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        await getPrisma().application.update({
+          where: { id: applicationIdFromResponse(applicationResponse) },
+          data: {
+            status: ApplicationStatus.REJECTED,
+            publicReason: ApplicationRejectionReason.LISTING_RENTED,
+            rejectedAt: new Date(),
+          },
+        });
+
+        const res = await applicantAgent.get('/api/v1/listings').expect(200);
+        const item = (
+          responseBody(res).items as Record<string, unknown>[]
+        ).find((entry) => entry.id === listing.id);
+        if (!item) {
+          throw new Error('Expected listing in discovery response.');
+        }
+        expectApplicationState(item, 'REJECTED', 'LISTING_RENTED');
       });
     });
   });
@@ -888,6 +1112,309 @@ describe('Applicant Discovery E2E', () => {
       const images = body.images as Record<string, unknown>[];
       expect(images[0].secureUrl).toBe('https://example.com/img.jpg');
       expect(images[0]).not.toHaveProperty('publicId');
+    });
+
+    describe('application state', () => {
+      const openListingRequirements = {
+        minimumHouseholdNetIncome: null,
+        schufaRequired: false,
+        incomeProofRequired: false,
+        suitableForPeopleCount: null,
+        petsPolicy: null,
+        smokingPolicy: null,
+      };
+
+      it('exposes ACTIVE application state on detail for an authenticated applicant', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+
+        await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+
+        const res = await applicantAgent
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(200);
+        const body = responseBody(res);
+
+        expect(body.hasApplied).toBe(true);
+        expect(body.applicationStatus).toBe('ACTIVE');
+        expect(body.publicReason).toBeNull();
+      });
+
+      it('exposes REJECTED NOT_SELECTED application state on detail', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+
+        const applicationResponse = await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+
+        await request(getServer())
+          .patch(
+            `/api/v1/provider/applications/${applicationIdFromResponse(applicationResponse)}/reject`,
+          )
+          .set('Cookie', providerCookies)
+          .send()
+          .expect(200);
+
+        const res = await applicantAgent
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(200);
+        const body = responseBody(res);
+
+        expect(body.hasApplied).toBe(true);
+        expect(body.applicationStatus).toBe('REJECTED');
+        expect(body.publicReason).toBe('NOT_SELECTED');
+      });
+
+      it('returns empty application state on detail after withdrawal', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+
+        const applicationResponse = await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+
+        await applicantAgent
+          .delete(
+            `/api/v1/applicant/applications/${applicationIdFromResponse(applicationResponse)}`,
+          )
+          .expect(200);
+
+        const res = await applicantAgent
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(200);
+        const body = responseBody(res);
+
+        expect(body.hasApplied).toBe(false);
+        expect(body.applicationStatus).toBeNull();
+        expect(body.publicReason).toBeNull();
+      });
+
+      it('returns empty application state for anonymous detail requests', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId);
+
+        const res = await request(getServer())
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(200);
+        const body = responseBody(res);
+
+        expect(body.hasApplied).toBe(false);
+        expect(body.applicationStatus).toBeNull();
+        expect(body.publicReason).toBeNull();
+      });
+
+      it('exposes WAITING application state on detail', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        for (let i = 0; i < 5; i += 1) {
+          const filler = request.agent(getServer());
+          await filler
+            .post('/api/v1/auth/register')
+            .send(applicantPayload())
+            .expect(201);
+          await filler.post(`/api/v1/listings/${listing.id}/apply`).expect(201);
+        }
+
+        const waitingApplicant = request.agent(getServer());
+        await waitingApplicant
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        const applyResponse = await waitingApplicant
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        expect(responseBody(applyResponse).status).toBe('WAITING');
+
+        const res = await waitingApplicant
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(200);
+        expectApplicationState(responseBody(res), 'WAITING', null);
+      });
+
+      it('exposes ACCEPTED application state on detail', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        const applicationResponse = await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        await getPrisma().application.update({
+          where: { id: applicationIdFromResponse(applicationResponse) },
+          data: { status: ApplicationStatus.ACCEPTED },
+        });
+
+        const res = await applicantAgent
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(200);
+        expectApplicationState(responseBody(res), 'ACCEPTED', null);
+      });
+
+      it('exposes REJECTED PROFILE_NO_LONGER_ELIGIBLE application state on detail', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+          suitableForPeopleCount: 1,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        await updateApplicantProfile(applicantAgent, {
+          adultsCount: 1,
+          childrenCount: 0,
+        });
+        await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        await updateApplicantProfile(applicantAgent, {
+          adultsCount: 2,
+          childrenCount: 0,
+        });
+
+        const res = await applicantAgent
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(200);
+        expectApplicationState(
+          responseBody(res),
+          'REJECTED',
+          'PROFILE_NO_LONGER_ELIGIBLE',
+        );
+      });
+
+      it('exposes REJECTED LISTING_RENTED application state on detail', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        const applicationResponse = await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+        await getPrisma().application.update({
+          where: { id: applicationIdFromResponse(applicationResponse) },
+          data: {
+            status: ApplicationStatus.REJECTED,
+            publicReason: ApplicationRejectionReason.LISTING_RENTED,
+            rejectedAt: new Date(),
+          },
+        });
+
+        const res = await applicantAgent
+          .get(`/api/v1/listings/${listing.id}`)
+          .expect(200);
+        expectApplicationState(responseBody(res), 'REJECTED', 'LISTING_RENTED');
+      });
+
+      it('does not expose applicant application state to provider detail requests', async () => {
+        const providerCookies = await registerAndGetCookies(providerPayload());
+        const meRes = await request(getServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', providerCookies)
+          .expect(200);
+        const providerId = responseBody(meRes).id as string;
+        const listing = await createPublishedListing(providerId, {
+          ...openListingRequirements,
+        });
+
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
+          .post('/api/v1/auth/register')
+          .send(applicantPayload())
+          .expect(201);
+        await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(201);
+
+        const res = await request(getServer())
+          .get(`/api/v1/listings/${listing.id}`)
+          .set('Cookie', providerCookies)
+          .expect(200);
+        expectEmptyApplicationState(responseBody(res));
+      });
     });
   });
 

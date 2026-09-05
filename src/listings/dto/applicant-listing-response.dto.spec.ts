@@ -1,9 +1,15 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  ApplicationRejectionReason,
+  ApplicationStatus,
   ObjectType,
   PetsPolicy,
   SmokingPolicy,
 } from '../../generated/prisma/enums';
+import {
+  toApplicantListingApplicationStateFields,
+  type BlockingApplicationState,
+} from '../../applications/applicant-listing-application-state';
 import { ApplicantListingDetailDto } from './applicant-listing-detail.dto';
 import { ProfileMatch } from './applicant-listing-profile-match.enum';
 import { ApplicantListingImageDto } from './applicant-listing-image.dto';
@@ -12,6 +18,14 @@ import { ApplicantListingsPageDto } from './applicant-listings-page.dto';
 
 function serialized<T>(value: T): Record<string, unknown> {
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function noApplicationState() {
+  return toApplicantListingApplicationStateFields(undefined);
+}
+
+function applicationState(blocking: BlockingApplicationState) {
+  return toApplicantListingApplicationStateFields(blocking);
 }
 
 describe('ApplicantListingImageDto', () => {
@@ -69,7 +83,7 @@ describe('ApplicantListingSummaryDto', () => {
       baseListing,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
-      false,
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -86,7 +100,7 @@ describe('ApplicantListingSummaryDto', () => {
       },
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
-      false,
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -112,7 +126,7 @@ describe('ApplicantListingSummaryDto', () => {
       },
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
-      false,
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -126,7 +140,7 @@ describe('ApplicantListingSummaryDto', () => {
       baseListing,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
-      false,
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -138,7 +152,7 @@ describe('ApplicantListingSummaryDto', () => {
       baseListing,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
-      false,
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -151,7 +165,7 @@ describe('ApplicantListingSummaryDto', () => {
       baseListing,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
-      false,
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -163,22 +177,78 @@ describe('ApplicantListingSummaryDto', () => {
     expect(result).not.toHaveProperty('showExactAddress');
   });
 
-  it('exposes hasApplied from the constructor argument', () => {
+  it('exposes application state from the constructor argument', () => {
     const applied = new ApplicantListingSummaryDto(
       baseListing,
       ProfileMatch.MATCH,
       new Date('2025-01-01'),
-      true,
+      applicationState({
+        status: ApplicationStatus.ACTIVE,
+        publicReason: null,
+      }),
     );
     const notApplied = new ApplicantListingSummaryDto(
       baseListing,
       ProfileMatch.MATCH,
       new Date('2025-01-01'),
-      false,
+      noApplicationState(),
     );
 
     expect(applied.hasApplied).toBe(true);
+    expect(applied.applicationStatus).toBe(ApplicationStatus.ACTIVE);
+    expect(applied.publicReason).toBeNull();
     expect(notApplied.hasApplied).toBe(false);
+    expect(notApplied.applicationStatus).toBeNull();
+    expect(notApplied.publicReason).toBeNull();
+  });
+
+  describe('application state', () => {
+    it.each([
+      ApplicationStatus.ACTIVE,
+      ApplicationStatus.WAITING,
+      ApplicationStatus.ACCEPTED,
+    ])('maps %s with null publicReason', (status) => {
+      const dto = new ApplicantListingSummaryDto(
+        baseListing,
+        ProfileMatch.MATCH,
+        new Date('2025-01-01'),
+        applicationState({ status, publicReason: null }),
+      );
+
+      expect(dto.hasApplied).toBe(true);
+      expect(dto.applicationStatus).toBe(status);
+      expect(dto.publicReason).toBeNull();
+    });
+
+    it('maps REJECTED with NOT_SELECTED publicReason', () => {
+      const dto = new ApplicantListingSummaryDto(
+        baseListing,
+        ProfileMatch.MATCH,
+        new Date('2025-01-01'),
+        applicationState({
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        }),
+      );
+
+      expect(dto.hasApplied).toBe(true);
+      expect(dto.applicationStatus).toBe(ApplicationStatus.REJECTED);
+      expect(dto.publicReason).toBe(ApplicationRejectionReason.NOT_SELECTED);
+    });
+
+    it('maps REJECTED with other publicReason values', () => {
+      const dto = new ApplicantListingSummaryDto(
+        baseListing,
+        ProfileMatch.MATCH,
+        new Date('2025-01-01'),
+        applicationState({
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.LISTING_RENTED,
+        }),
+      );
+
+      expect(dto.publicReason).toBe(ApplicationRejectionReason.LISTING_RENTED);
+    });
   });
 
   describe('isNew', () => {
@@ -189,7 +259,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: oneDayAgo },
         ProfileMatch.UNKNOWN,
         now,
-        false,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(true);
     });
@@ -201,7 +271,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: sevenDaysAgo },
         ProfileMatch.UNKNOWN,
         now,
-        false,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(false);
     });
@@ -213,7 +283,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: eightDaysAgo },
         ProfileMatch.UNKNOWN,
         now,
-        false,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(false);
     });
@@ -224,7 +294,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: null },
         ProfileMatch.UNKNOWN,
         now,
-        false,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(false);
     });
@@ -236,7 +306,7 @@ describe('ApplicantListingSummaryDto', () => {
         { ...baseListing, publishedAt: future },
         ProfileMatch.UNKNOWN,
         now,
-        false,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(false);
     });
@@ -283,6 +353,7 @@ describe('ApplicantListingDetailDto', () => {
       baseDetail,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -298,6 +369,7 @@ describe('ApplicantListingDetailDto', () => {
       },
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -309,6 +381,7 @@ describe('ApplicantListingDetailDto', () => {
       baseDetail,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      noApplicationState(),
     );
     const result = serialized(dto);
     const requirements = result.requirements as Record<string, unknown>;
@@ -326,6 +399,7 @@ describe('ApplicantListingDetailDto', () => {
       baseDetail,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -337,6 +411,7 @@ describe('ApplicantListingDetailDto', () => {
       baseDetail,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      noApplicationState(),
     );
     const result = serialized(dto);
 
@@ -348,12 +423,77 @@ describe('ApplicantListingDetailDto', () => {
       baseDetail,
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
+      noApplicationState(),
     );
     const result = serialized(dto);
     const images = result.images as Record<string, unknown>[];
 
     expect(images[0]).not.toHaveProperty('publicId');
     expect(images[0].secureUrl).toBe('https://example.com/cover.jpg');
+  });
+
+  describe('application state', () => {
+    it('defaults to no blocking application for anonymous callers', () => {
+      const dto = new ApplicantListingDetailDto(
+        baseDetail,
+        ProfileMatch.UNKNOWN,
+        new Date('2025-01-01'),
+        noApplicationState(),
+      );
+
+      expect(dto.hasApplied).toBe(false);
+      expect(dto.applicationStatus).toBeNull();
+      expect(dto.publicReason).toBeNull();
+    });
+
+    it.each([
+      ApplicationStatus.ACTIVE,
+      ApplicationStatus.WAITING,
+      ApplicationStatus.ACCEPTED,
+    ])('maps %s with null publicReason', (status) => {
+      const dto = new ApplicantListingDetailDto(
+        baseDetail,
+        ProfileMatch.MATCH,
+        new Date('2025-01-01'),
+        applicationState({ status, publicReason: null }),
+      );
+
+      expect(dto.hasApplied).toBe(true);
+      expect(dto.applicationStatus).toBe(status);
+      expect(dto.publicReason).toBeNull();
+    });
+
+    it('maps REJECTED with NOT_SELECTED publicReason', () => {
+      const dto = new ApplicantListingDetailDto(
+        baseDetail,
+        ProfileMatch.MATCH,
+        new Date('2025-01-01'),
+        applicationState({
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        }),
+      );
+
+      expect(dto.hasApplied).toBe(true);
+      expect(dto.applicationStatus).toBe(ApplicationStatus.REJECTED);
+      expect(dto.publicReason).toBe(ApplicationRejectionReason.NOT_SELECTED);
+    });
+
+    it('maps REJECTED with other publicReason values', () => {
+      const dto = new ApplicantListingDetailDto(
+        baseDetail,
+        ProfileMatch.MATCH,
+        new Date('2025-01-01'),
+        applicationState({
+          status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+        }),
+      );
+
+      expect(dto.publicReason).toBe(
+        ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+      );
+    });
   });
 
   describe('isNew', () => {
@@ -364,6 +504,7 @@ describe('ApplicantListingDetailDto', () => {
         { ...baseDetail, publishedAt: oneDayAgo },
         ProfileMatch.UNKNOWN,
         now,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(true);
     });
@@ -375,6 +516,7 @@ describe('ApplicantListingDetailDto', () => {
         { ...baseDetail, publishedAt: sevenDaysAgo },
         ProfileMatch.UNKNOWN,
         now,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(false);
     });
@@ -386,6 +528,7 @@ describe('ApplicantListingDetailDto', () => {
         { ...baseDetail, publishedAt: eightDaysAgo },
         ProfileMatch.UNKNOWN,
         now,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(false);
     });
@@ -396,6 +539,7 @@ describe('ApplicantListingDetailDto', () => {
         { ...baseDetail, publishedAt: null },
         ProfileMatch.UNKNOWN,
         now,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(false);
     });
@@ -407,6 +551,7 @@ describe('ApplicantListingDetailDto', () => {
         { ...baseDetail, publishedAt: future },
         ProfileMatch.UNKNOWN,
         now,
+        noApplicationState(),
       );
       expect(dto.isNew).toBe(false);
     });
@@ -446,7 +591,7 @@ describe('ApplicantListingsPageDto', () => {
       },
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
-      false,
+      noApplicationState(),
     );
     const page = new ApplicantListingsPageDto([summary], 'cursor-value', 0);
 
