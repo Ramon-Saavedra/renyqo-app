@@ -52,12 +52,14 @@ export class ApplicantListingSummaryDto {
   readonly hasApplied!: boolean;
   readonly applicationStatus!: ApplicationStatus | null;
   readonly publicReason!: ApplicationRejectionReason | null;
+  readonly isSaved!: boolean;
 
   constructor(
     listing: ApplicantListingSummarySource,
     profileMatch: ProfileMatch,
     evaluationTimestamp: Date,
     applicationState: ApplicantListingApplicationStateFields,
+    isSaved: boolean,
   ) {
     const coverImage = listing.images.find((image) => image.isCover);
 
@@ -84,6 +86,7 @@ export class ApplicantListingSummaryDto {
     this.hasApplied = applicationState.hasApplied;
     this.applicationStatus = applicationState.applicationStatus;
     this.publicReason = applicationState.publicReason;
+    this.isSaved = isSaved;
   }
 
   private computeIsNew(publishedAt: Date | null, now: Date): boolean {

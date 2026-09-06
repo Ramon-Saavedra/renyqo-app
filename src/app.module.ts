@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env.validation';
+import { ApplicantListingActionsModule } from './applicant-listing-actions/applicant-listing-actions.module';
 import { ApplicantProfileModule } from './applicant-profile/applicant-profile.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -27,6 +28,7 @@ import { ListingAssistanceModule } from './listing-assistance/listing-assistance
     ListingImagesModule,
     DashboardModule,
     ApplicationsModule,
+    ApplicantListingActionsModule,
     ApplicantProfileModule,
     EligibilityModule,
     HealthModule,

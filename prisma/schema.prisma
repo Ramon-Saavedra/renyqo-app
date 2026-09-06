@@ -72,6 +72,15 @@ enum ListingEventSource {
   APPLICANT @map("applicant")
 }
 
+enum ListingReportReason {
+  MISLEADING_INFO       @map("misleading_info")
+  SCAM_OR_FRAUD         @map("scam_or_fraud")
+  DISCRIMINATION        @map("discrimination")
+  INAPPROPRIATE_CONTENT @map("inappropriate_content")
+  DUPLICATE_OR_SPAM     @map("duplicate_or_spam")
+  OTHER                 @map("other")
+}
+
 enum ProviderType {
   PRIVATE @map("private")
   COMPANY @map("company")
@@ -97,6 +106,8 @@ model User {
   listingEvents ListingEvent[] @relation("ListingEventActor")
   profile      ApplicantProfile?
   passwordResetTokens PasswordResetToken[]
+  savedListings SavedListing[]
+  listingReports ListingReport[] @relation("ListingReportReporter")
 
   @@map("users")
 }
@@ -158,6 +169,8 @@ model Listing {
   applications Application[]
   images       ListingImage[]
   listingEvents ListingEvent[]
+  savedListings SavedListing[]
+  listingReports ListingReport[]
 
   @@index([status, publishedAt, id])
   @@index([status, coldRent, id])
@@ -241,6 +254,36 @@ model ApplicantProfile {
   applicant User @relation(fields: [applicantId], references: [id])
 
   @@map("applicant_profiles")
+}
+
+model SavedListing {
+  id          String   @id @default(uuid()) @db.Uuid
+  applicantId String   @map("applicant_id") @db.Uuid
+  listingId   String   @map("listing_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  applicant User    @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([applicantId, listingId])
+  @@index([applicantId, createdAt])
+  @@map("saved_listings")
+}
+
+model ListingReport {
+  id                  String               @id @default(uuid()) @db.Uuid
+  reporterApplicantId String?              @map("reporter_applicant_id") @db.Uuid
+  listingId           String               @map("listing_id") @db.Uuid
+  reason              ListingReportReason
+  detail              String?
+  createdAt           DateTime             @default(now()) @map("created_at")
+
+  reporter User?   @relation("ListingReportReporter", fields: [reporterApplicantId], references: [id], onDelete: SetNull)
+  listing  Listing @relation(fields: [listingId], references: [id], onDelete: Restrict)
+
+  @@unique([reporterApplicantId, listingId])
+  @@index([listingId, createdAt])
+  @@map("listing_reports")
 }
 
 model UserSession {
