@@ -7,9 +7,7 @@ import { toApplicantListingApplicationStateFields } from '../applications/applic
 import type { BlockingApplicationState } from '../applications/applicant-listing-application-state';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  ApplicantListingSummaryDto,
-} from '../listings/dto/applicant-listing-summary.dto';
+import { ApplicantListingSummaryDto } from '../listings/dto/applicant-listing-summary.dto';
 import type { ApplicantListingSummaryBuildSource } from './applicant-listing-summary-listing.select';
 import { ProfileMatch } from '../listings/dto/applicant-listing-profile-match.enum';
 import type { SafeUser } from '../users/types/safe-user.type';

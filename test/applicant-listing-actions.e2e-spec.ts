@@ -1124,7 +1124,9 @@ describe('Applicant Listing Actions E2E', () => {
         unknown
       >[];
 
-      const discoveryItem = discoveryItems.find((item) => item.id === listing.id);
+      const discoveryItem = discoveryItems.find(
+        (item) => item.id === listing.id,
+      );
       const savedItem = savedItems.find((item) => item.id === listing.id);
 
       if (!discoveryItem || !savedItem) {

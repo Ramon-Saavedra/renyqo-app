@@ -176,23 +176,33 @@ describe('ApplicantListingSummaryService', () => {
 
     expect(result[0].profileMatch).toBe(ProfileMatch.UNKNOWN);
     expect(result[0].hasApplied).toBe(false);
-    expect(applicationsMock.findBlockingApplicationsForListings).not.toHaveBeenCalled();
+    expect(
+      applicationsMock.findBlockingApplicationsForListings,
+    ).not.toHaveBeenCalled();
   });
 
   it('returns PROFILE_INCOMPLETE for applicants without a complete profile', async () => {
-    prismaMock.applicantProfile.findUnique.mockResolvedValue(makeApplicantProfile());
+    prismaMock.applicantProfile.findUnique.mockResolvedValue(
+      makeApplicantProfile(),
+    );
     eligibilityMock.isProfileComplete.mockReturnValue(false);
 
-    const result = await service.buildSummaries(applicantUser, [makeListing()], {
-      isSavedByListingId: new Set([LISTING_ID]),
-    });
+    const result = await service.buildSummaries(
+      applicantUser,
+      [makeListing()],
+      {
+        isSavedByListingId: new Set([LISTING_ID]),
+      },
+    );
 
     expect(result[0].profileMatch).toBe(ProfileMatch.PROFILE_INCOMPLETE);
     expect(result[0].isSaved).toBe(true);
   });
 
   it('returns MATCH when eligibility passes', async () => {
-    prismaMock.applicantProfile.findUnique.mockResolvedValue(makeApplicantProfile());
+    prismaMock.applicantProfile.findUnique.mockResolvedValue(
+      makeApplicantProfile(),
+    );
     eligibilityMock.isProfileComplete.mockReturnValue(true);
     eligibilityMock.evaluateCriteria.mockReturnValue({
       canApply: true,
@@ -201,15 +211,21 @@ describe('ApplicantListingSummaryService', () => {
       evaluatedAt: new Date(),
     });
 
-    const result = await service.buildSummaries(applicantUser, [makeListing()], {
-      isSavedByListingId: new Set(),
-    });
+    const result = await service.buildSummaries(
+      applicantUser,
+      [makeListing()],
+      {
+        isSavedByListingId: new Set(),
+      },
+    );
 
     expect(result[0].profileMatch).toBe(ProfileMatch.MATCH);
   });
 
   it('returns NO_MATCH when eligibility fails', async () => {
-    prismaMock.applicantProfile.findUnique.mockResolvedValue(makeApplicantProfile());
+    prismaMock.applicantProfile.findUnique.mockResolvedValue(
+      makeApplicantProfile(),
+    );
     eligibilityMock.isProfileComplete.mockReturnValue(true);
     eligibilityMock.evaluateCriteria.mockReturnValue({
       canApply: false,
@@ -218,15 +234,21 @@ describe('ApplicantListingSummaryService', () => {
       evaluatedAt: new Date(),
     });
 
-    const result = await service.buildSummaries(applicantUser, [makeListing()], {
-      isSavedByListingId: new Set(),
-    });
+    const result = await service.buildSummaries(
+      applicantUser,
+      [makeListing()],
+      {
+        isSavedByListingId: new Set(),
+      },
+    );
 
     expect(result[0].profileMatch).toBe(ProfileMatch.NO_MATCH);
   });
 
   it('exposes blocking application state in batch', async () => {
-    prismaMock.applicantProfile.findUnique.mockResolvedValue(makeApplicantProfile());
+    prismaMock.applicantProfile.findUnique.mockResolvedValue(
+      makeApplicantProfile(),
+    );
     applicationsMock.findBlockingApplicationsForListings.mockResolvedValue(
       new Map([
         [
@@ -239,9 +261,13 @@ describe('ApplicantListingSummaryService', () => {
       ]),
     );
 
-    const result = await service.buildSummaries(applicantUser, [makeListing()], {
-      isSavedByListingId: new Set([LISTING_ID]),
-    });
+    const result = await service.buildSummaries(
+      applicantUser,
+      [makeListing()],
+      {
+        isSavedByListingId: new Set([LISTING_ID]),
+      },
+    );
 
     expect(result[0].hasApplied).toBe(true);
     expect(result[0].applicationStatus).toBe(ApplicationStatus.ACTIVE);
