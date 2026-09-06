@@ -84,6 +84,7 @@ describe('ApplicantListingSummaryDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -101,6 +102,7 @@ describe('ApplicantListingSummaryDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -127,6 +129,7 @@ describe('ApplicantListingSummaryDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -141,6 +144,7 @@ describe('ApplicantListingSummaryDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -153,6 +157,7 @@ describe('ApplicantListingSummaryDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -166,6 +171,7 @@ describe('ApplicantListingSummaryDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -186,12 +192,14 @@ describe('ApplicantListingSummaryDto', () => {
         status: ApplicationStatus.ACTIVE,
         publicReason: null,
       }),
+      true,
     );
     const notApplied = new ApplicantListingSummaryDto(
       baseListing,
       ProfileMatch.MATCH,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
 
     expect(applied.hasApplied).toBe(true);
@@ -213,6 +221,7 @@ describe('ApplicantListingSummaryDto', () => {
         ProfileMatch.MATCH,
         new Date('2025-01-01'),
         applicationState({ status, publicReason: null }),
+        false,
       );
 
       expect(dto.hasApplied).toBe(true);
@@ -229,6 +238,7 @@ describe('ApplicantListingSummaryDto', () => {
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.NOT_SELECTED,
         }),
+        false,
       );
 
       expect(dto.hasApplied).toBe(true);
@@ -245,6 +255,7 @@ describe('ApplicantListingSummaryDto', () => {
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.LISTING_RENTED,
         }),
+        false,
       );
 
       expect(dto.publicReason).toBe(ApplicationRejectionReason.LISTING_RENTED);
@@ -260,6 +271,7 @@ describe('ApplicantListingSummaryDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(true);
     });
@@ -272,6 +284,7 @@ describe('ApplicantListingSummaryDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -284,6 +297,7 @@ describe('ApplicantListingSummaryDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -295,6 +309,7 @@ describe('ApplicantListingSummaryDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -307,6 +322,7 @@ describe('ApplicantListingSummaryDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -354,6 +370,7 @@ describe('ApplicantListingDetailDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -370,6 +387,7 @@ describe('ApplicantListingDetailDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -382,6 +400,7 @@ describe('ApplicantListingDetailDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
     const requirements = result.requirements as Record<string, unknown>;
@@ -400,6 +419,7 @@ describe('ApplicantListingDetailDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -412,6 +432,7 @@ describe('ApplicantListingDetailDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
 
@@ -424,6 +445,7 @@ describe('ApplicantListingDetailDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const result = serialized(dto);
     const images = result.images as Record<string, unknown>[];
@@ -439,6 +461,7 @@ describe('ApplicantListingDetailDto', () => {
         ProfileMatch.UNKNOWN,
         new Date('2025-01-01'),
         noApplicationState(),
+        false,
       );
 
       expect(dto.hasApplied).toBe(false);
@@ -456,6 +479,7 @@ describe('ApplicantListingDetailDto', () => {
         ProfileMatch.MATCH,
         new Date('2025-01-01'),
         applicationState({ status, publicReason: null }),
+        false,
       );
 
       expect(dto.hasApplied).toBe(true);
@@ -472,6 +496,7 @@ describe('ApplicantListingDetailDto', () => {
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.NOT_SELECTED,
         }),
+        false,
       );
 
       expect(dto.hasApplied).toBe(true);
@@ -488,6 +513,7 @@ describe('ApplicantListingDetailDto', () => {
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
         }),
+        false,
       );
 
       expect(dto.publicReason).toBe(
@@ -505,6 +531,7 @@ describe('ApplicantListingDetailDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(true);
     });
@@ -517,6 +544,7 @@ describe('ApplicantListingDetailDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -529,6 +557,7 @@ describe('ApplicantListingDetailDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -540,6 +569,7 @@ describe('ApplicantListingDetailDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -552,6 +582,7 @@ describe('ApplicantListingDetailDto', () => {
         ProfileMatch.UNKNOWN,
         now,
         noApplicationState(),
+        false,
       );
       expect(dto.isNew).toBe(false);
     });
@@ -592,6 +623,7 @@ describe('ApplicantListingsPageDto', () => {
       ProfileMatch.UNKNOWN,
       new Date('2025-01-01'),
       noApplicationState(),
+      false,
     );
     const page = new ApplicantListingsPageDto([summary], 'cursor-value', 0);
 
