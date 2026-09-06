@@ -245,6 +245,29 @@ describe('ApplicantListingSummaryService', () => {
     expect(result[0].profileMatch).toBe(ProfileMatch.NO_MATCH);
   });
 
+  it('uses a preloaded applicant profile without querying prisma', async () => {
+    const profile = makeApplicantProfile();
+    eligibilityMock.isProfileComplete.mockReturnValue(true);
+    eligibilityMock.evaluateCriteria.mockReturnValue({
+      canApply: true,
+      reasons: [],
+      warnings: [],
+      evaluatedAt: new Date(),
+    });
+
+    const result = await service.buildSummaries(
+      applicantUser,
+      [makeListing()],
+      {
+        isSavedByListingId: new Set(),
+        applicantProfile: profile,
+      },
+    );
+
+    expect(result[0].profileMatch).toBe(ProfileMatch.MATCH);
+    expect(prismaMock.applicantProfile.findUnique).not.toHaveBeenCalled();
+  });
+
   it('exposes blocking application state in batch', async () => {
     prismaMock.applicantProfile.findUnique.mockResolvedValue(
       makeApplicantProfile(),

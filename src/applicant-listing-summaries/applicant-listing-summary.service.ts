@@ -14,6 +14,7 @@ import type { SafeUser } from '../users/types/safe-user.type';
 
 export type BuildApplicantListingSummariesOptions = {
   readonly isSavedByListingId: ReadonlySet<string>;
+  readonly applicantProfile?: ApplicantProfile | null;
 };
 
 @Injectable()
@@ -46,9 +47,12 @@ export class ApplicantListingSummaryService {
     > = new Map();
 
     if (isApplicant) {
-      profile = await this.prisma.applicantProfile.findUnique({
-        where: { applicantId: applicantUser.id },
-      });
+      profile =
+        options.applicantProfile !== undefined
+          ? options.applicantProfile
+          : await this.prisma.applicantProfile.findUnique({
+              where: { applicantId: applicantUser.id },
+            });
 
       blockingApplicationsByListingId =
         await this.applicationsService.findBlockingApplicationsForListings(

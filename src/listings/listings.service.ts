@@ -585,7 +585,7 @@ export class ListingsService {
     const summaries = await this.applicantListingSummaryService.buildSummaries(
       applicantUser,
       items,
-      { isSavedByListingId },
+      { isSavedByListingId, applicantProfile: profile },
     );
 
     const nextCursor =

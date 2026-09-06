@@ -11,7 +11,7 @@ CREATE TABLE "saved_listings" (
   "id" UUID NOT NULL,
   "applicant_id" UUID NOT NULL,
   "listing_id" UUID NOT NULL,
-  "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
   CONSTRAINT "saved_listings_pkey" PRIMARY KEY ("id")
 );
@@ -22,7 +22,7 @@ CREATE TABLE "listing_reports" (
   "listing_id" UUID NOT NULL,
   "reason" "ListingReportReason" NOT NULL,
   "detail" TEXT,
-  "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
   CONSTRAINT "listing_reports_pkey" PRIMARY KEY ("id")
 );
