@@ -59,6 +59,7 @@ export class ApplicantListingDetailDto {
   readonly hasApplied!: boolean;
   readonly applicationStatus!: ApplicationStatus | null;
   readonly publicReason!: ApplicationRejectionReason | null;
+  readonly isSaved!: boolean;
   readonly requirements!: {
     readonly minimumHouseholdNetIncome: number | null;
     readonly schufaRequired: boolean;
@@ -73,6 +74,7 @@ export class ApplicantListingDetailDto {
     profileMatch: ProfileMatch,
     evaluationTimestamp: Date,
     applicationState: ApplicantListingApplicationStateFields,
+    isSaved: boolean,
   ) {
     this.id = listing.id;
     this.title = listing.title;
@@ -99,6 +101,7 @@ export class ApplicantListingDetailDto {
     this.hasApplied = applicationState.hasApplied;
     this.applicationStatus = applicationState.applicationStatus;
     this.publicReason = applicationState.publicReason;
+    this.isSaved = isSaved;
     this.requirements = {
       minimumHouseholdNetIncome: listing.minimumHouseholdNetIncome,
       schufaRequired: listing.schufaRequired,

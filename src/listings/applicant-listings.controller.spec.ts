@@ -235,6 +235,7 @@ describe('ApplicantListingsController', () => {
           applicationStatus: null,
           publicReason: null,
         },
+        false,
       );
       listingsService.findPublishedDetailForApplicant.mockResolvedValue(detail);
 

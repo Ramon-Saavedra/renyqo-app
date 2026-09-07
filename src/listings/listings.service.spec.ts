@@ -24,6 +24,9 @@ import {
   SmokingPolicy,
   UserStatus,
 } from '../generated/prisma/enums';
+import { ApplicantListingSummaryService } from '../applicant-listing-summaries/applicant-listing-summary.service';
+import { SavedListingsService } from '../saved-listings/saved-listings.service';
+import { PublishedListingsService } from '../published-listings/published-listings.service';
 import { ApplicationsService } from '../applications/applications.service';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -296,6 +299,18 @@ describe('ListingsService', () => {
       | 'findBlockingApplicationForListing'
     >
   >;
+  let savedListingsMock: jest.Mocked<
+    Pick<
+      SavedListingsService,
+      'findSavedListingIdsForListings' | 'isListingSaved'
+    >
+  >;
+  let publishedListingsMock: jest.Mocked<
+    Pick<
+      PublishedListingsService,
+      'getPublicAccessWhere' | 'getPublicAccessWhereFragments'
+    >
+  >;
 
   beforeEach(async () => {
     const transactionRunner: PrismaTransactionRunner = async (fn) =>
@@ -364,6 +379,39 @@ describe('ListingsService', () => {
         .mockResolvedValue(undefined),
     };
 
+    savedListingsMock = {
+      findSavedListingIdsForListings: jest
+        .fn<
+          (
+            applicantId: string,
+            listingIds: readonly string[],
+          ) => Promise<ReadonlySet<string>>
+        >()
+        .mockResolvedValue(new Set()),
+      isListingSaved: jest
+        .fn<(applicantId: string, listingId: string) => Promise<boolean>>()
+        .mockResolvedValue(false),
+    };
+
+    publishedListingsMock = {
+      getPublicAccessWhere: jest
+        .fn<
+          () => import('../generated/prisma/client').Prisma.ListingWhereInput
+        >()
+        .mockReturnValue({
+          status: ListingStatus.PUBLISHED,
+          publishedAt: { not: null },
+        }),
+      getPublicAccessWhereFragments: jest
+        .fn<
+          () => readonly import('../generated/prisma/client').Prisma.ListingWhereInput[]
+        >()
+        .mockReturnValue([
+          { status: ListingStatus.PUBLISHED },
+          { publishedAt: { not: null } },
+        ]),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ListingsService,
@@ -393,6 +441,15 @@ describe('ListingsService', () => {
           provide: ApplicationsService,
           useValue: applicationsMock,
         },
+        {
+          provide: SavedListingsService,
+          useValue: savedListingsMock,
+        },
+        {
+          provide: PublishedListingsService,
+          useValue: publishedListingsMock,
+        },
+        ApplicantListingSummaryService,
       ],
     }).compile();
 
@@ -1572,8 +1629,12 @@ describe('ListingsService', () => {
 
       expect(result.items[0].profileMatch).toBe(ProfileMatch.UNKNOWN);
       expect(result.items[0].hasApplied).toBe(false);
+      expect(result.items[0].isSaved).toBe(false);
       expect(
         applicationsMock.findBlockingApplicationsForListings,
+      ).not.toHaveBeenCalled();
+      expect(
+        savedListingsMock.findSavedListingIdsForListings,
       ).not.toHaveBeenCalled();
     });
 
@@ -1599,9 +1660,13 @@ describe('ListingsService', () => {
 
       expect(result.items[0].profileMatch).toBe(ProfileMatch.UNKNOWN);
       expect(result.items[0].hasApplied).toBe(false);
+      expect(result.items[0].isSaved).toBe(false);
       expect(prismaMock.applicantProfile.findUnique).not.toHaveBeenCalled();
       expect(
         applicationsMock.findBlockingApplicationsForListings,
+      ).not.toHaveBeenCalled();
+      expect(
+        savedListingsMock.findSavedListingIdsForListings,
       ).not.toHaveBeenCalled();
     });
 
@@ -1894,6 +1959,66 @@ describe('ListingsService', () => {
         expect(result.items[0].publicReason).toBeNull();
       });
     });
+
+    describe('isSaved', () => {
+      const applicantUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.APPLICANT,
+        providerType: null,
+        companyName: null,
+        emailVerified: false,
+        status: UserStatus.ACTIVE,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+
+      it('returns isSaved false for anonymous callers without querying saved listings', async () => {
+        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+
+        const result = await service.findPublishedForApplicant({}, null);
+
+        expect(
+          savedListingsMock.findSavedListingIdsForListings,
+        ).not.toHaveBeenCalled();
+        expect(result.items[0].isSaved).toBe(false);
+      });
+
+      it('sets isSaved per listing from the batch lookup result', async () => {
+        const secondListing = makeDiscoveryListing({ id: LISTING_ID_2 });
+        prismaMock.listing.findMany.mockResolvedValue([
+          discoveryListing,
+          secondListing,
+        ]);
+        savedListingsMock.findSavedListingIdsForListings.mockResolvedValue(
+          new Set([LISTING_ID_2]),
+        );
+
+        const result = await service.findPublishedForApplicant(
+          {},
+          applicantUser,
+        );
+
+        expect(
+          savedListingsMock.findSavedListingIdsForListings,
+        ).toHaveBeenCalledWith(applicantUser.id, [LISTING_ID, LISTING_ID_2]);
+        expect(result.items[0].isSaved).toBe(false);
+        expect(result.items[1].isSaved).toBe(true);
+      });
+
+      it('does not query saved listings when the page is empty', async () => {
+        prismaMock.listing.findMany.mockResolvedValue([]);
+
+        await service.findPublishedForApplicant({}, applicantUser);
+
+        expect(
+          savedListingsMock.findSavedListingIdsForListings,
+        ).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('findPublishedDetailForApplicant', () => {
@@ -2129,6 +2254,8 @@ describe('ListingsService', () => {
         expect(result.hasApplied).toBe(false);
         expect(result.applicationStatus).toBeNull();
         expect(result.publicReason).toBeNull();
+        expect(result.isSaved).toBe(false);
+        expect(savedListingsMock.isListingSaved).not.toHaveBeenCalled();
       });
 
       it('returns empty application state when there is no blocking application', async () => {
@@ -2205,6 +2332,39 @@ describe('ListingsService', () => {
         expect(result.publicReason).toBe(
           ApplicationRejectionReason.LISTING_RENTED,
         );
+      });
+    });
+
+    describe('isSaved', () => {
+      const applicantUser: SafeUser = {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Test',
+        email: 'test@test.com',
+        role: Role.APPLICANT,
+        providerType: null,
+        companyName: null,
+        emailVerified: false,
+        status: UserStatus.ACTIVE,
+        acceptedTermsAt: new Date('2024-01-01'),
+        acceptedPrivacyAt: new Date('2024-01-01'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+
+      it('returns isSaved from the single lookup for active applicants', async () => {
+        prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail);
+        savedListingsMock.isListingSaved.mockResolvedValue(true);
+
+        const result = await service.findPublishedDetailForApplicant(
+          LISTING_ID,
+          applicantUser,
+        );
+
+        expect(savedListingsMock.isListingSaved).toHaveBeenCalledWith(
+          applicantUser.id,
+          LISTING_ID,
+        );
+        expect(result.isSaved).toBe(true);
       });
     });
   });

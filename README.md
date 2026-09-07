@@ -146,6 +146,7 @@ For active applicants, both collection and detail responses expose application s
 - `hasApplied`: `true` when the applicant has a blocking application for the listing (`ACTIVE`, `WAITING`, `REJECTED`, or `ACCEPTED`); otherwise `false` (including no application or only `WITHDRAWN`)
 - `applicationStatus`: the blocking application status, or `null` when there is no blocking application
 - `publicReason`: authoritative rejection reason when `applicationStatus` is `REJECTED`; otherwise `null`
+- `isSaved`: `true` when the authenticated active applicant has saved the listing; otherwise `false`. Anonymous requests, providers and non-active applicants always receive `false` without querying saved listings.
 
 Supported query parameters for `GET /api/v1/listings`:
 
@@ -179,10 +180,11 @@ Collection response items include:
 - `petsPolicy` at the item level
 - `profileMatch`: `MATCH`, `NO_MATCH`, `PROFILE_INCOMPLETE` or `UNKNOWN`
 - `hasApplied`, `applicationStatus`, `publicReason` (see application state above)
+- `isSaved` (see application state above)
 - narrow public summary with `coverImage` containing only `secureUrl`
 - never exposes `providerId`, `showExactAddress`, Cloudinary `publicId`, applicant profile values, eligibility reasons or warnings
 
-Detail response (`ApplicantListingDetailDto`) includes `district`, `isNew`, `profileMatch`, `hasApplied`, `applicationStatus` and `publicReason` at the top level. `requirements.petsPolicy` is preserved in the nested requirements object and is not duplicated at the top level.
+Detail response (`ApplicantListingDetailDto`) includes `district`, `isNew`, `profileMatch`, `hasApplied`, `applicationStatus`, `publicReason` and `isSaved` at the top level. `requirements.petsPolicy` is preserved in the nested requirements object and is not duplicated at the top level.
 
 Personalized responses (any request carrying a valid applicant session) use `Vary: Cookie` and `Cache-Control: private, no-store, must-revalidate` to prevent shared-cache leakage of applicant-specific data.
 
@@ -380,6 +382,25 @@ RENTED listings disappear from applicant discovery and do not accept new applica
 Application terminal states are `REJECTED`, `WITHDRAWN`, `ACCEPTED` and listing `RENTED`. These states serve as the authoritative source for downstream features such as view restrictions and chat availability. `WITHDRAWN` is terminal for the row it marks, but it is the only terminal state that allows a new application row to be created afterwards; `REJECTED` and `ACCEPTED` block re-applying.
 
 `GET /api/v1/applicant/applications` returns every application row submitted by the current applicant, ordered by `createdAt` descending (newest first). Because re-applying after withdrawal creates a new row, the response may legitimately contain multiple rows with the same `listingId`. The frontend should treat the most recent row for a given listing as the current application state; if that row is `ACTIVE` or `WAITING` it is the live application, otherwise the listing has no live application. The response never exposes queue position, provider identity, private address, internal eligibility data or provider comments.
+
+### Applicant Listing Actions
+
+Authenticated active applicants can save listings and report published listings. These actions never modify listing status and do not expose reporter identity.
+
+| Method   | Path                                              | Auth      | Description                              |
+| -------- | ------------------------------------------------- | --------- | ---------------------------------------- |
+| `PUT`    | `/api/v1/applicant/listings/:listingId/saved`     | Applicant | Save a published listing (idempotent)    |
+| `DELETE` | `/api/v1/applicant/listings/:listingId/saved`     | Applicant | Remove a saved listing (idempotent)    |
+| `GET`    | `/api/v1/applicant/saved-listings`                | Applicant | List saved published listings            |
+| `POST`   | `/api/v1/applicant/listings/:listingId/report`    | Applicant | Report a published listing               |
+
+Saving requires a publicly available published listing. Unsaving is idempotent and does not require the listing to remain published. `PUT` and `DELETE` return `{ saved: boolean, savedAt: string | null }`.
+
+`GET /api/v1/applicant/saved-listings` returns the authenticated active applicant's saved listings as the same applicant-safe summary contract used by discovery (`items`, `nextCursor`, `total`). Results include only published listings; saved rows for paused, archived or rented listings remain persisted but are omitted from the response. Items are ordered by newest save first. Every returned item has `isSaved: true`. Cursor pagination uses `limit` (default `20`, max `50`) and optional `cursor`.
+
+`POST /api/v1/applicant/listings/:listingId/report` accepts `reason` (`MISLEADING_INFO`, `SCAM_OR_FRAUD`, `DISCRIMINATION`, `INAPPROPRIATE_CONTENT`, `DUPLICATE_OR_SPAM`, `OTHER`) and optional `detail` (max 500 characters, trimmed; empty becomes `null`). `OTHER` requires a non-empty `detail`. One report per applicant and listing; duplicates return `409`. The response exposes only `id`, `listingId`, `reason` and `createdAt`.
+
+Report rate limit: five reports per hour per authenticated applicant (`429`, `code: "LISTING_REPORT_RATE_LIMITED"`). The in-memory throttler storage applies per backend process.
 
 ### Applicant Profile
 
