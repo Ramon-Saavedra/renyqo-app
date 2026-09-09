@@ -8,7 +8,7 @@ Public registration only accepts `applicant` and `provider`. Responses from `POS
 
 The API uses session authentication with `express-session`, `connect-pg-simple`, `passport`, and `passport-local`. Passwords are hashed with `bcrypt` and are never stored in plain text.
 
-`SESSION_SECRET` is required and must be at least 32 characters. `FRONTEND_URL` is the allowed frontend origin for CORS.
+`SESSION_SECRET` is required and must be at least 32 characters. `FRONTEND_URL` is required in production. It is the allowed frontend origin for CORS and CSRF Origin/Referer validation. Production bootstrap fails if it is unset.
 
 A successful password reset updates the stored password hash and invalidates existing sessions. Reset-token storage, expiry, and the forgot-password response are documented in [API](api.md#auth).
 

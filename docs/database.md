@@ -6,26 +6,26 @@ The API uses PostgreSQL 16 and Prisma ORM v7 with `@prisma/adapter-pg`.
 
 Copy `.env.example` to `.env`. Names and local defaults are listed there.
 
-| Variable                     | Required           | Description                                      |
-| ---------------------------- | ------------------ | ------------------------------------------------ |
-| `NODE_ENV`                   | yes                | `development`, `production`, or `test`           |
-| `PORT`                       | yes                | HTTP port from `1` to `65535`                    |
-| `DATABASE_URL`               | yes                | PostgreSQL connection string                     |
-| `SESSION_SECRET`             | yes                | Session signing secret, minimum 32 characters    |
-| `FRONTEND_URL`               | no                 | Allowed frontend origin for CORS                 |
-| `AWS_REGION`                 | production/email   | AWS region used by Amazon SES                    |
-| `SES_FROM_EMAIL`             | production/email   | Verified SES sender email address                |
-| `CLOUDINARY_CLOUD_NAME`      | production/uploads | Cloudinary cloud name                            |
-| `CLOUDINARY_API_KEY`         | production/uploads | Cloudinary API key                               |
-| `CLOUDINARY_API_SECRET`      | production/uploads | Cloudinary API secret                            |
-| `CLOUDINARY_FOLDER`          | no                 | Root Cloudinary folder, defaults to `renyqo`     |
-| `OPENAI_API_KEY`             | yes                | OpenAI API key for listing assistance            |
-| `OPENAI_LISTING_MODEL`       | yes                | OpenAI model used for structured extraction      |
-| `OPENAI_TRANSCRIPTION_MODEL` | yes                | OpenAI model used for audio transcription        |
-| `AI_RATE_LIMIT_WINDOW_MS`    | yes                | Per-process AI rate-limit window in milliseconds |
-| `AI_TEXT_RATE_LIMIT`         | yes                | Provider text extractions allowed per window     |
-| `AI_PDF_RATE_LIMIT`          | yes                | Provider PDF extractions allowed per window      |
-| `AI_AUDIO_RATE_LIMIT`        | yes                | Provider audio extractions allowed per window    |
+| Variable                     | Required           | Description                                                         |
+| ---------------------------- | ------------------ | ------------------------------------------------------------------- |
+| `NODE_ENV`                   | yes                | `development`, `production`, or `test`                              |
+| `PORT`                       | yes                | HTTP port from `1` to `65535`                                       |
+| `DATABASE_URL`               | yes                | PostgreSQL connection string                                        |
+| `SESSION_SECRET`             | yes                | Session signing secret, minimum 32 characters                       |
+| `FRONTEND_URL`               | production         | Allowed frontend origin for CORS and CSRF Origin/Referer validation |
+| `AWS_REGION`                 | production/email   | AWS region used by Amazon SES                                       |
+| `SES_FROM_EMAIL`             | production/email   | Verified SES sender email address                                   |
+| `CLOUDINARY_CLOUD_NAME`      | production/uploads | Cloudinary cloud name                                               |
+| `CLOUDINARY_API_KEY`         | production/uploads | Cloudinary API key                                                  |
+| `CLOUDINARY_API_SECRET`      | production/uploads | Cloudinary API secret                                               |
+| `CLOUDINARY_FOLDER`          | no                 | Root Cloudinary folder, defaults to `renyqo`                        |
+| `OPENAI_API_KEY`             | yes                | OpenAI API key for listing assistance                               |
+| `OPENAI_LISTING_MODEL`       | yes                | OpenAI model used for structured extraction                         |
+| `OPENAI_TRANSCRIPTION_MODEL` | yes                | OpenAI model used for audio transcription                           |
+| `AI_RATE_LIMIT_WINDOW_MS`    | yes                | Per-process AI rate-limit window in milliseconds                    |
+| `AI_TEXT_RATE_LIMIT`         | yes                | Provider text extractions allowed per window                        |
+| `AI_PDF_RATE_LIMIT`          | yes                | Provider PDF extractions allowed per window                         |
+| `AI_AUDIO_RATE_LIMIT`        | yes                | Provider audio extractions allowed per window                       |
 
 `E2E_DATABASE_URL` and `E2E_DATABASE_ALLOW_RESET` are required for end-to-end tests. See [E2E Testing](#e2e-testing).
 

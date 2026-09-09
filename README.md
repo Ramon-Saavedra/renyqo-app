@@ -29,7 +29,7 @@ npm install
 cp .env.example .env
 ```
 
-Fill the required values in `.env`. `SESSION_SECRET` must be at least 32 characters. OpenAI variables are required for the API to start. Cloudinary credentials are required in production and for local listing image uploads.
+Fill the required values in `.env`. `SESSION_SECRET` must be at least 32 characters. OpenAI variables are required for the API to start. `FRONTEND_URL` is required in production. Cloudinary credentials are required in production and for local listing image uploads.
 
 Start PostgreSQL:
 
