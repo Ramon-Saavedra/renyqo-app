@@ -247,7 +247,7 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 | `PATCH`  | `/api/v1/provider/applications/:id/reject`          | Provider  | Reject one owned ACTIVE application                                 |
 | `PATCH`  | `/api/v1/provider/applications/:id/restore`         | Provider  | Restore one owned REJECTED + NOT_SELECTED application               |
 
-`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered internally by `createdAt` ascending. Each item contains only `id`, `listingId`, `status`, `activeAt`, and a nested `applicant` summary with `name` and nullable `peopleCount`. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, `queueOrder`, password hashes, or unrelated user fields.
+`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered internally by `createdAt` ascending. Each item contains only `id`, `listingId`, `status`, `activeAt`, and a nested `applicant` summary with `name`, nullable `peopleCount`, and the nullable Phase 1 `introduction`. The introduction is trimmed plain text with a maximum of 100 characters; legacy profiles may return `null` until the applicant updates their profile. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, `queueOrder`, password hashes, or unrelated user fields.
 
 `GET /api/v1/provider/listings/:id/exited-applications` returns a summary for an owned listing of applications that were `ACTIVE` at some point (`activeAt` is set) and have since become `REJECTED` or `WITHDRAWN`. Applications that withdrew or were re-applied while still `WAITING` never had `activeAt` set and are excluded. The response is `{ items: ProviderExitedApplicationResponseDto[], totalCount: number }`. `items` contains at most five exits ordered by `exitedAt` descending (newest first), where `exitedAt` is `withdrawnAt` for `WITHDRAWN` rows and `rejectedAt` for `REJECTED` rows. `totalCount` is the total number of matching exited applications for the listing. Each item contains `id`, `listingId`, `applicantName`, `status`, `publicReason`, and `exitedAt`. It never exposes applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, `queueOrder`, password hashes, or unrelated user fields.
 
@@ -287,7 +287,8 @@ Report rate limit: five reports per hour per authenticated applicant (`429`, `co
 
 - Omitted fields retain their existing value.
 - `null` explicitly clears a field.
-- Empty or whitespace-only strings normalize to `null`.
+- `introduction` is required when creating a profile and when updating a legacy profile whose introduction is `null`.
+- `introduction` must be trimmed, non-empty, plain text, and no longer than 100 characters. It cannot be cleared with `null`.
 - An empty body returns `400`.
 - `peopleCount` is read-only and derived by the backend; submitting it returns `400`.
 
@@ -302,10 +303,10 @@ Both `GET` and `PATCH` return only business fields:
 ```text
 householdNetIncome, incomeProofAvailable, schufaAvailable,
 peopleCount, adultsCount, childrenCount,
-hasPets, isSmoker
+hasPets, isSmoker, introduction
 ```
 
-Internal identifiers and timestamps are not exposed.
+During the Phase 1 migration, `introduction` may be `null` for legacy profiles. New profiles and updated legacy profiles always persist a real introduction. Internal identifiers and timestamps are not exposed.
 
 ## Dashboard
 

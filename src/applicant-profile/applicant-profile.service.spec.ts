@@ -16,6 +16,7 @@ const makeRawProfile = (
 ): ApplicantProfile => ({
   id: PROFILE_ID,
   applicantId: APPLICANT_ID,
+  introduction: 'Existing introduction',
   householdNetIncome: null,
   incomeProofAvailable: null,
   schufaAvailable: null,
@@ -103,11 +104,13 @@ describe('ApplicantProfileService', () => {
   describe('upsert', () => {
     it('creates the profile when it does not exist', async () => {
       const dto: UpdateApplicantProfileDto = {
+        introduction: 'New applicant introduction',
         householdNetIncome: 3000,
         hasPets: false,
         isSmoker: false,
       };
       const profile = makeRawProfile({
+        introduction: 'New applicant introduction',
         householdNetIncome: 3000,
         hasPets: false,
         isSmoker: false,
@@ -118,6 +121,49 @@ describe('ApplicantProfileService', () => {
       const result = await service.upsert(APPLICANT_ID, dto);
 
       expect(result.householdNetIncome).toBe(3000);
+      expect(result.introduction).toBe('New applicant introduction');
+    });
+
+    it('requires an introduction when creating a profile', async () => {
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.upsert(APPLICANT_ID, { householdNetIncome: 3000 }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('requires an introduction from a legacy profile on its next update', async () => {
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(
+        makeRawProfile({ introduction: null }),
+      );
+
+      await expect(
+        service.upsert(APPLICANT_ID, { householdNetIncome: 3000 }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('persists a trimmed introduction for a legacy profile', async () => {
+      const updated = makeRawProfile({ introduction: 'Hello from Berlin' });
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(
+        makeRawProfile({ introduction: null }),
+      );
+      prismaMock.applicantProfile.upsert.mockResolvedValue(updated);
+
+      const result = await service.upsert(APPLICANT_ID, {
+        introduction: '  Hello from Berlin  ',
+      });
+
+      expect(prismaMock.applicantProfile.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            introduction: 'Hello from Berlin',
+          }),
+          update: expect.objectContaining({
+            introduction: 'Hello from Berlin',
+          }),
+        }),
+      );
+      expect(result.introduction).toBe('Hello from Berlin');
     });
 
     it('updates the profile when it already exists', async () => {

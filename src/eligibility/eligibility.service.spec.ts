@@ -73,6 +73,7 @@ const makeProfile = (
 ): ApplicantProfile => ({
   id: '00000000-0000-4000-8000-000000000004',
   applicantId: APPLICANT_ID,
+  introduction: null,
   householdNetIncome: 4000,
   incomeProofAvailable: true,
   schufaAvailable: true,

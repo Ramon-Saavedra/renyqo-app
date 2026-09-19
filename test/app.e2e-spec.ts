@@ -556,7 +556,10 @@ describe('Backend API E2E', () => {
 
     await applicantAgent
       .patch('/api/v1/applicant/profile')
-      .send({ householdNetIncome: 2500 })
+      .send({
+        householdNetIncome: 2500,
+        introduction: 'A short applicant introduction.',
+      })
       .expect(200);
 
     await applicantAgent
@@ -1329,7 +1332,11 @@ describe('Backend API E2E', () => {
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ householdNetIncome: 3000, hasPets: false })
+        .send({
+          householdNetIncome: 3000,
+          hasPets: false,
+          introduction: 'A short applicant introduction.',
+        })
         .expect(200);
 
       const getResponse = await applicantAgent
@@ -1340,6 +1347,7 @@ describe('Backend API E2E', () => {
       expect(body).toMatchObject({
         householdNetIncome: 3000,
         hasPets: false,
+        introduction: 'A short applicant introduction.',
       });
     });
 
@@ -1352,7 +1360,10 @@ describe('Backend API E2E', () => {
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ householdNetIncome: 3000 })
+        .send({
+          householdNetIncome: 3000,
+          introduction: 'A short applicant introduction.',
+        })
         .expect(200);
 
       const response = await applicantAgent
@@ -1375,7 +1386,11 @@ describe('Backend API E2E', () => {
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ adultsCount: 2, childrenCount: 1 })
+        .send({
+          adultsCount: 2,
+          childrenCount: 1,
+          introduction: 'A short applicant introduction.',
+        })
         .expect(200);
 
       const response = await applicantAgent
@@ -1397,7 +1412,10 @@ describe('Backend API E2E', () => {
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ adultsCount: 2 })
+        .send({
+          adultsCount: 2,
+          introduction: 'A short applicant introduction.',
+        })
         .expect(400);
     });
 
@@ -1410,8 +1428,48 @@ describe('Backend API E2E', () => {
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ peopleCount: 5 })
+        .send({
+          peopleCount: 5,
+          introduction: 'A short applicant introduction.',
+        })
         .expect(400);
+    });
+
+    it('requires an introduction when a legacy profile is updated', async () => {
+      const applicantAgent = request.agent(getServer());
+      const payload = applicantPayload();
+      await applicantAgent
+        .post('/api/v1/auth/register')
+        .send(payload)
+        .expect(201);
+      const applicant = await getPrisma().user.findUniqueOrThrow({
+        where: { email: payload.email },
+      });
+
+      await getPrisma().applicantProfile.create({
+        data: {
+          applicantId: applicant.id,
+          introduction: null,
+        },
+      });
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ householdNetIncome: 3000 })
+        .expect(400);
+
+      await applicantAgent
+        .patch('/api/v1/applicant/profile')
+        .send({ introduction: 'A valid legacy introduction.' })
+        .expect(200);
+
+      const response = await applicantAgent
+        .get('/api/v1/applicant/profile')
+        .expect(200);
+
+      expect(responseBody(response)['introduction']).toBe(
+        'A valid legacy introduction.',
+      );
     });
 
     it('clears fields with explicit null', async () => {
@@ -1423,7 +1481,12 @@ describe('Backend API E2E', () => {
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ householdNetIncome: 3000, adultsCount: 2, childrenCount: 1 })
+        .send({
+          householdNetIncome: 3000,
+          adultsCount: 2,
+          childrenCount: 1,
+          introduction: 'A short applicant introduction.',
+        })
         .expect(200);
 
       await applicantAgent
@@ -1473,7 +1536,11 @@ describe('Backend API E2E', () => {
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ householdNetIncome: 3000, hasPets: true })
+        .send({
+          householdNetIncome: 3000,
+          hasPets: true,
+          introduction: 'A short applicant introduction.',
+        })
         .expect(200);
 
       await applicantAgent
@@ -1530,7 +1597,10 @@ describe('Backend API E2E', () => {
 
       await applicantAgent
         .patch('/api/v1/applicant/profile')
-        .send({ householdNetIncome: 2500 })
+        .send({
+          householdNetIncome: 2500,
+          introduction: 'A short applicant introduction.',
+        })
         .expect(200);
 
       const blocked = await applicantAgent

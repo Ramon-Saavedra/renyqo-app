@@ -251,6 +251,7 @@ async function updateApplicantProfile(
   profile: {
     adultsCount?: number;
     childrenCount?: number;
+    introduction?: string;
   },
 ): Promise<void> {
   await agent.patch('/api/v1/applicant/profile').send(profile).expect(200);
@@ -831,6 +832,7 @@ describe('Applicant Discovery E2E', () => {
         await updateApplicantProfile(applicantAgent, {
           adultsCount: 1,
           childrenCount: 0,
+          introduction: 'A short applicant introduction.',
         });
         await applicantAgent
           .post(`/api/v1/listings/${listing.id}/apply`)
@@ -1338,6 +1340,7 @@ describe('Applicant Discovery E2E', () => {
         await updateApplicantProfile(applicantAgent, {
           adultsCount: 1,
           childrenCount: 0,
+          introduction: 'A short applicant introduction.',
         });
         await applicantAgent
           .post(`/api/v1/listings/${listing.id}/apply`)

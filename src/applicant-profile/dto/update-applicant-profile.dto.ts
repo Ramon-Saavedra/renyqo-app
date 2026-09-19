@@ -1,4 +1,15 @@
-import { IsBoolean, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 import type { TransformFnParams } from 'class-transformer';
 
@@ -24,7 +35,18 @@ const toOptionalBoolean = ({ value }: TransformFnParams): unknown => {
   return value;
 };
 
+const trimOptionalString = ({ value }: TransformFnParams): unknown =>
+  typeof value === 'string' ? value.trim() : value;
+
 export class UpdateApplicantProfileDto {
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  @Matches(/^[^<>]*$/)
+  @Transform(trimOptionalString)
+  introduction?: string | null;
+
   @IsOptional()
   @IsNumber()
   @Min(0)

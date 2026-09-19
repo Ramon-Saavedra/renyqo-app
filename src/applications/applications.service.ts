@@ -709,6 +709,7 @@ export class ApplicationsService {
             profile: {
               select: {
                 peopleCount: true,
+                introduction: true,
                 hasPets: true,
                 isSmoker: true,
               },
@@ -726,7 +727,10 @@ export class ApplicationsService {
       applicant: {
         name: application.applicant.name,
         profile: application.applicant.profile
-          ? { peopleCount: application.applicant.profile.peopleCount }
+          ? {
+              peopleCount: application.applicant.profile.peopleCount,
+              introduction: application.applicant.profile.introduction,
+            }
           : null,
       },
       warnings: computeProviderActiveApplicantWarnings(
