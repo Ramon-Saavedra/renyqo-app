@@ -287,7 +287,6 @@ Report rate limit: five reports per hour per authenticated applicant (`429`, `co
 
 - Omitted fields retain their existing value.
 - `null` explicitly clears a field.
-- Empty or whitespace-only strings normalize to `null`.
 - `introduction` is required when creating a profile and when updating a legacy profile whose introduction is `null`.
 - `introduction` must be trimmed, non-empty, plain text, and no longer than 100 characters. It cannot be cleared with `null`.
 - An empty body returns `400`.
