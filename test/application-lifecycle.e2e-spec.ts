@@ -237,6 +237,7 @@ async function updateApplicantProfile(
   profile: {
     adultsCount?: number;
     childrenCount?: number;
+    introduction?: string;
     householdNetIncome?: number;
     incomeProofAvailable?: boolean;
     schufaAvailable?: boolean;
@@ -692,6 +693,7 @@ describe('Application Lifecycle E2E', () => {
       await updateApplicantProfile(applicantAgent, {
         adultsCount: 1,
         childrenCount: 0,
+        introduction: 'A short applicant introduction.',
       });
       const entry = await applyToListing(applicantAgent, listing.id);
       const entryId = entry['id'] as string;
@@ -1216,6 +1218,7 @@ describe('Application Lifecycle E2E', () => {
       await updateApplicantProfile(applicant, {
         adultsCount: 1,
         childrenCount: 0,
+        introduction: 'A short applicant introduction.',
       });
       const entry = await applyToListing(applicant, listing.id);
       expect(entry['status']).toBe(ApplicationStatus.ACTIVE);
@@ -1243,6 +1246,7 @@ describe('Application Lifecycle E2E', () => {
         await updateApplicantProfile(agent, {
           adultsCount: 1,
           childrenCount: 0,
+          introduction: 'A short applicant introduction.',
         });
         applicants.push(agent);
       }
@@ -1291,6 +1295,7 @@ describe('Application Lifecycle E2E', () => {
         await updateApplicantProfile(agent, {
           adultsCount: 1,
           childrenCount: 0,
+          introduction: 'A short applicant introduction.',
         });
         applicants.push(agent);
       }
@@ -1337,6 +1342,7 @@ describe('Application Lifecycle E2E', () => {
       await updateApplicantProfile(applicant, {
         adultsCount: 1,
         childrenCount: 0,
+        introduction: 'A short applicant introduction.',
       });
       const entry = await applyToListing(applicant, listing.id);
       expect(entry['status']).toBe(ApplicationStatus.ACTIVE);

@@ -1,6 +1,7 @@
 import type { ApplicantProfile } from '../../generated/prisma/client';
 
 export class ApplicantProfileResponseDto {
+  readonly introduction: string | null;
   readonly householdNetIncome: number | null;
   readonly incomeProofAvailable: boolean | null;
   readonly schufaAvailable: boolean | null;
@@ -11,6 +12,7 @@ export class ApplicantProfileResponseDto {
   readonly isSmoker: boolean | null;
 
   constructor(profile: ApplicantProfile) {
+    this.introduction = profile.introduction;
     this.householdNetIncome = profile.householdNetIncome;
     this.incomeProofAvailable = profile.incomeProofAvailable;
     this.schufaAvailable = profile.schufaAvailable;

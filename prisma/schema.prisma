@@ -240,6 +240,7 @@ model ListingEvent {
 model ApplicantProfile {
   id                   String         @id @default(uuid()) @db.Uuid
   applicantId          String         @unique @map("applicant_id") @db.Uuid
+  introduction         String?
   householdNetIncome   Float?         @map("household_net_income")
   incomeProofAvailable Boolean?       @map("income_proof_available")
   schufaAvailable      Boolean?       @map("schufa_available")

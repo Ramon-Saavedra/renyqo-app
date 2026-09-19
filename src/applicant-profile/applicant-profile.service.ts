@@ -31,6 +31,7 @@ export class ApplicantProfileService {
         });
 
         const merged = this.mergeProfile(existing, dto);
+        this.assertRequiredIntroduction(existing, merged.introduction);
         this.assertHouseholdConsistency(merged);
         const peopleCount = this.calculatePeopleCount(merged);
 
@@ -68,6 +69,10 @@ export class ApplicantProfileService {
     'id' | 'applicantId' | 'peopleCount' | 'createdAt' | 'updatedAt'
   > {
     return {
+      introduction:
+        dto.introduction !== undefined
+          ? (dto.introduction?.trim() ?? null)
+          : (existing?.introduction ?? null),
       householdNetIncome:
         dto.householdNetIncome !== undefined
           ? dto.householdNetIncome
@@ -95,6 +100,21 @@ export class ApplicantProfileService {
           ? dto.isSmoker
           : (existing?.isSmoker ?? null),
     };
+  }
+
+  private assertRequiredIntroduction(
+    existing: ApplicantProfile | null,
+    introduction: string | null,
+  ): void {
+    if (introduction === null || introduction.trim().length === 0) {
+      if (!existing || existing.introduction === null) {
+        throw new BadRequestException(
+          'A personal introduction is required for the applicant profile',
+        );
+      }
+
+      throw new BadRequestException('Introduction cannot be empty');
+    }
   }
 
   private assertHouseholdConsistency(data: {

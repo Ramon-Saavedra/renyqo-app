@@ -710,6 +710,7 @@ describe('ApplicationsService', () => {
     ): ApplicantProfile => ({
       id: '00000000-0000-4000-8000-000000000100',
       applicantId: APPLICANT_ID,
+      introduction: 'Existing introduction',
       householdNetIncome: null,
       incomeProofAvailable: null,
       schufaAvailable: null,
@@ -1027,6 +1028,7 @@ describe('ApplicationsService', () => {
             name: 'Anna Applicant',
             profile: {
               peopleCount: 2,
+              introduction: 'A short introduction.',
               hasPets: false,
               isSmoker: false,
             },
@@ -1043,6 +1045,7 @@ describe('ApplicationsService', () => {
             name: 'Anna Applicant',
             profile: {
               peopleCount: 2,
+              introduction: 'A short introduction.',
             },
           },
           warnings: [],
@@ -1077,6 +1080,7 @@ describe('ApplicationsService', () => {
               profile: {
                 select: {
                   peopleCount: true,
+                  introduction: true,
                   hasPets: true,
                   isSmoker: true,
                 },
@@ -1099,6 +1103,7 @@ describe('ApplicationsService', () => {
             name: 'Pet Owner Smoker',
             profile: {
               peopleCount: 2,
+              introduction: 'A short introduction.',
               hasPets: true,
               isSmoker: true,
             },
@@ -1130,6 +1135,7 @@ describe('ApplicationsService', () => {
             name: 'Pet Owner',
             profile: {
               peopleCount: 2,
+              introduction: 'A short introduction.',
               hasPets: true,
               isSmoker: false,
             },
@@ -1156,6 +1162,7 @@ describe('ApplicationsService', () => {
             name: 'Smoker',
             profile: {
               peopleCount: 1,
+              introduction: 'A short introduction.',
               hasPets: false,
               isSmoker: true,
             },
@@ -1182,6 +1189,7 @@ describe('ApplicationsService', () => {
             name: 'No Arrangement Needed',
             profile: {
               peopleCount: 1,
+              introduction: 'A short introduction.',
               hasPets: true,
               isSmoker: true,
             },
@@ -1415,6 +1423,7 @@ describe('ApplicationsService', () => {
     ): ApplicantProfile => ({
       id: '00000000-0000-4000-8000-000000000100',
       applicantId: APPLICANT_ID,
+      introduction: 'Existing introduction',
       householdNetIncome: null,
       incomeProofAvailable: null,
       schufaAvailable: null,

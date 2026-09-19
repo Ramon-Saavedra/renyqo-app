@@ -32,6 +32,7 @@ const makeApplicantUser = (): SafeUser => ({
 const makeProfile = (): ApplicantProfile => ({
   id: PROFILE_ID,
   applicantId: APPLICANT_ID,
+  introduction: 'I am a respectful tenant.',
   householdNetIncome: 3000,
   incomeProofAvailable: true,
   schufaAvailable: false,
@@ -80,6 +81,7 @@ describe('ApplicantProfileController', () => {
       expect(result.adultsCount).toBe(2);
       expect(result.childrenCount).toBe(0);
       expect(result.peopleCount).toBe(2);
+      expect(result.introduction).toBe('I am a respectful tenant.');
     });
 
     it('does not expose internal fields', async () => {

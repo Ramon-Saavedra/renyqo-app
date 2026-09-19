@@ -21,6 +21,7 @@ function makeRecord(
       name: 'Anna Applicant',
       profile: {
         peopleCount: 3,
+        introduction: 'We are a quiet household.',
       },
     },
     warnings: [],
@@ -40,6 +41,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
       applicant: {
         name: 'Anna Applicant',
         peopleCount: 3,
+        introduction: 'We are a quiet household.',
         warnings: [],
       },
     });
@@ -85,6 +87,25 @@ describe('ProviderActiveApplicationResponseDto', () => {
     expect(dto.applicant).toEqual({
       name: 'No Profile',
       peopleCount: null,
+      introduction: null,
+      warnings: [],
+    });
+  });
+
+  it('preserves a null introduction for a legacy profile', () => {
+    const dto = new ProviderActiveApplicationResponseDto(
+      makeRecord({
+        applicant: {
+          name: 'Legacy Applicant',
+          profile: { peopleCount: 2, introduction: null },
+        },
+      }),
+    );
+
+    expect(dto.applicant).toEqual({
+      name: 'Legacy Applicant',
+      peopleCount: 2,
+      introduction: null,
       warnings: [],
     });
   });

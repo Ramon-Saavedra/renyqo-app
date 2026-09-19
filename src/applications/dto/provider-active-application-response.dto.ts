@@ -10,7 +10,7 @@ export type ProviderActiveApplicationRecord = Pick<
   'id' | 'listingId' | 'status' | 'activeAt'
 > & {
   applicant: Pick<User, 'name'> & {
-    profile: Pick<ApplicantProfile, 'peopleCount'> | null;
+    profile: Pick<ApplicantProfile, 'peopleCount' | 'introduction'> | null;
   };
   warnings: EligibilityWarning[];
 };
@@ -18,15 +18,17 @@ export type ProviderActiveApplicationRecord = Pick<
 export class ProviderActiveApplicantSummaryDto {
   readonly name: string;
   readonly peopleCount: number | null;
+  readonly introduction: string | null;
   readonly warnings: EligibilityWarning[];
 
   constructor(
     applicant: Pick<User, 'name'>,
-    profile: Pick<ApplicantProfile, 'peopleCount'> | null,
+    profile: Pick<ApplicantProfile, 'peopleCount' | 'introduction'> | null,
     warnings: EligibilityWarning[],
   ) {
     this.name = applicant.name;
     this.peopleCount = profile?.peopleCount ?? null;
+    this.introduction = profile?.introduction ?? null;
     this.warnings = warnings;
   }
 }

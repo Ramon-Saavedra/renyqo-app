@@ -17,6 +17,32 @@ describe('UpdateApplicantProfileDto', () => {
     expect(errors).toHaveLength(0);
   });
 
+  it('accepts and trims a valid introduction', async () => {
+    const instance = plainToInstance(UpdateApplicantProfileDto, {
+      introduction: '  I am a quiet tenant.  ',
+    });
+
+    await expect(validate(instance)).resolves.toHaveLength(0);
+    expect(instance.introduction).toBe('I am a quiet tenant.');
+  });
+
+  it('accepts an introduction with exactly 100 characters', async () => {
+    const errors = await validateDto({ introduction: 'a'.repeat(100) });
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it.each([
+    { value: 'a'.repeat(101), label: 'overlong text' },
+    { value: '   ', label: 'whitespace-only text' },
+    { value: '<b>Tenant</b>', label: 'HTML markup' },
+    { value: null, label: 'null' },
+  ])('rejects $label introductions', async ({ value }) => {
+    const errors = await validateDto({ introduction: value });
+
+    expect(errors[0]?.property).toBe('introduction');
+  });
+
   it('accepts an empty object at DTO level', async () => {
     const errors = await validateDto({});
 

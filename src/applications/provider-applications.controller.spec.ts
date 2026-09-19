@@ -86,6 +86,7 @@ const makeActiveApplicationRecord = (): ProviderActiveApplicationRecord => ({
     name: 'Anna Applicant',
     profile: {
       peopleCount: 2,
+      introduction: 'A short introduction.',
     },
   },
   warnings: [],

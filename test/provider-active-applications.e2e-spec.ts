@@ -54,6 +54,7 @@ type ProviderActiveApplicationBody = {
   applicant: {
     name: string;
     peopleCount: number | null;
+    introduction: string | null;
     warnings: Array<'pets_by_arrangement' | 'smoking_by_arrangement'>;
   };
 };
@@ -215,12 +216,14 @@ function isProviderActiveApplicationBody(
     typeof value.applicant.name === 'string' &&
     (value.applicant.peopleCount === null ||
       typeof value.applicant.peopleCount === 'number') &&
+    (value.applicant.introduction === null ||
+      typeof value.applicant.introduction === 'string') &&
     Array.isArray(value.applicant.warnings) &&
     value.applicant.warnings.every((warning: string) =>
       ['pets_by_arrangement', 'smoking_by_arrangement'].includes(warning),
     ) &&
     Object.keys(value).length === 5 &&
-    Object.keys(value.applicant).length === 3
+    Object.keys(value.applicant).length === 4
   );
 }
 
@@ -268,6 +271,7 @@ async function registerApplicantWithProfile(options: {
       adultsCount: options.adultsCount,
       childrenCount: options.childrenCount,
       peopleCount: options.adultsCount + options.childrenCount,
+      introduction: `${options.name} introduction`,
       householdNetIncome: options.householdNetIncome,
       incomeProofAvailable: true,
       schufaAvailable: true,
@@ -553,12 +557,14 @@ describe('Provider ACTIVE applications summary E2E', () => {
       applicant: {
         name: 'First Applicant',
         peopleCount: 1,
+        introduction: 'First Applicant introduction',
       },
     });
     expect(bodies[1]).toMatchObject({
       applicant: {
         name: 'Second Applicant',
         peopleCount: 3,
+        introduction: 'Second Applicant introduction',
       },
     });
     expect(Object.keys(bodies[0]).sort()).toEqual([
@@ -572,6 +578,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       true,
     );
     expect(Object.keys(bodies[0].applicant).sort()).toEqual([
+      'introduction',
       'name',
       'peopleCount',
       'warnings',
@@ -681,7 +688,11 @@ describe('Provider ACTIVE applications summary E2E', () => {
     expect(bodies[0]).toMatchObject({
       listingId: listing.id,
       status: ApplicationStatus.ACTIVE,
-      applicant: { name: 'No Profile Applicant', peopleCount: null },
+      applicant: {
+        name: 'No Profile Applicant',
+        peopleCount: null,
+        introduction: null,
+      },
     });
     const activeAt = bodies[0].activeAt;
     expect(activeAt).not.toBeNull();
