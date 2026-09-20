@@ -16,7 +16,10 @@ const makeExitedRecord = (
   status: ApplicationStatus.WITHDRAWN,
   publicReason: null,
   exitedAt: new Date('2024-06-15'),
-  applicant: { name: 'Anna Applicant' },
+  applicant: {
+    name: 'Anna Applicant',
+    profile: { peopleCount: 3, introduction: 'A short introduction.' },
+  },
   ...overrides,
 });
 
@@ -32,6 +35,8 @@ describe('ProviderExitedApplicationResponseDto', () => {
     expect(dto.id).toBe(record.id);
     expect(dto.listingId).toBe(record.listingId);
     expect(dto.applicantName).toBe('Anna Applicant');
+    expect(dto.peopleCount).toBe(3);
+    expect(dto.introduction).toBe('A short introduction.');
     expect(dto.status).toBe(ApplicationStatus.WITHDRAWN);
     expect(dto.publicReason).toBeNull();
     expect(dto.exitedAt).toEqual(new Date('2024-06-15'));
@@ -87,6 +92,36 @@ describe('ProviderExitedApplicationResponseDto', () => {
     expect(dto).not.toHaveProperty('createdAt');
     expect(dto).not.toHaveProperty('updatedAt');
     expect(dto).not.toHaveProperty('activeAt');
+    expect(dto).not.toHaveProperty('householdNetIncome');
+    expect(dto).not.toHaveProperty('incomeProofAvailable');
+    expect(dto).not.toHaveProperty('schufaAvailable');
+    expect(dto).not.toHaveProperty('adultsCount');
+    expect(dto).not.toHaveProperty('childrenCount');
+    expect(dto).not.toHaveProperty('hasPets');
+    expect(dto).not.toHaveProperty('isSmoker');
+    expect(dto).not.toHaveProperty('eligibility');
+    expect(dto).not.toHaveProperty('score');
+  });
+
+  it('returns null preview fields for a missing or legacy profile', () => {
+    const withoutProfile = new ProviderExitedApplicationResponseDto(
+      makeExitedRecord({
+        applicant: { name: 'Anna Applicant', profile: null },
+      }),
+    );
+    const legacyProfile = new ProviderExitedApplicationResponseDto(
+      makeExitedRecord({
+        applicant: {
+          name: 'Anna Applicant',
+          profile: { peopleCount: null, introduction: null },
+        },
+      }),
+    );
+
+    expect(withoutProfile.peopleCount).toBeNull();
+    expect(withoutProfile.introduction).toBeNull();
+    expect(legacyProfile.peopleCount).toBeNull();
+    expect(legacyProfile.introduction).toBeNull();
   });
 });
 
@@ -102,6 +137,8 @@ describe('ProviderExitedApplicationsResponseDto', () => {
     expect(dto.items).toHaveLength(1);
     expect(dto.items[0]).toBeInstanceOf(ProviderExitedApplicationResponseDto);
     expect(dto.items[0].applicantName).toBe('Anna Applicant');
+    expect(dto.items[0].peopleCount).toBe(3);
+    expect(dto.items[0].introduction).toBe('A short introduction.');
     expect(dto.totalCount).toBe(7);
   });
 

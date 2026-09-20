@@ -1655,6 +1655,8 @@ describe('ApplicationsService', () => {
         rejectedAt: new Date('2024-06-01'),
         withdrawnAt: null,
         applicantName: 'Max Mover',
+        peopleCount: 3,
+        introduction: 'A short introduction.',
       };
       prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
       prismaMock.$queryRaw.mockResolvedValue([exitedApplication]);
@@ -1669,6 +1671,10 @@ describe('ApplicationsService', () => {
         ApplicationRejectionReason.NOT_SELECTED,
       );
       expect(result.items[0].applicant.name).toBe('Max Mover');
+      expect(result.items[0].applicant.profile).toEqual({
+        peopleCount: 3,
+        introduction: 'A short introduction.',
+      });
       expect(result.items[0].exitedAt).toEqual(new Date('2024-06-01'));
       expect(result.totalCount).toBe(1);
       expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
@@ -1678,6 +1684,11 @@ describe('ApplicationsService', () => {
       expect(prismaMock.$queryRaw).toHaveBeenCalled();
       const queryArgs = prismaMock.$queryRaw.mock.calls[0];
       expect(String(queryArgs?.[0])).toContain('LIMIT');
+      expect(String(queryArgs?.[0])).toContain('ap.people_count');
+      expect(String(queryArgs?.[0])).toContain('ap.introduction');
+      expect(String(queryArgs?.[0])).not.toContain('ap.household_net_income');
+      expect(String(queryArgs?.[0])).not.toContain('ap.schufa_available');
+      expect(String(queryArgs?.[0])).not.toContain('ap.income_proof_available');
       expect(queryArgs).toContain(LISTING_ID);
       expect(queryArgs).toContain(PROVIDER_ID);
       expect(queryArgs).toContain(5);
