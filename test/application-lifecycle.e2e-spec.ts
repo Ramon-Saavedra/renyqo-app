@@ -842,33 +842,37 @@ describe('Application Lifecycle E2E', () => {
         },
       });
 
-      const results = await Promise.allSettled([
+      const responses = await Promise.all([
         providerAgent
           .patch(`/api/v1/provider/applications/${targetId}/restore`)
-          .send(),
+          .send()
+          .ok((response) => response.status === 200 || response.status === 409),
         providerAgent
           .patch(`/api/v1/provider/applications/${targetId}/restore`)
-          .send(),
+          .send()
+          .ok((response) => response.status === 200 || response.status === 409),
       ]);
-      const statuses = results
-        .filter(
-          (r): r is PromiseFulfilledResult<Response> =>
-            r.status === 'fulfilled',
-        )
-        .map((r) => r.value.status);
-      const fulfilled = statuses.filter((s) => s === 200);
-      expect(fulfilled.length).toBeLessThanOrEqual(1);
-      expect(fulfilled.length).toBe(1);
+      expect(responses.map((response) => response.status).sort()).toEqual([
+        200, 409,
+      ]);
 
       const activeCount = await getPrisma().application.count({
         where: { listingId: listing.id, status: ApplicationStatus.ACTIVE },
       });
-      expect(activeCount).toBeLessThanOrEqual(5);
+      expect(activeCount).toBe(5);
 
       const restored = await getPrisma().application.findUnique({
         where: { id: targetId },
       });
-      expect(restored!.status).not.toBe(ApplicationStatus.REJECTED);
+      expect(restored!.status).toBe(ApplicationStatus.WAITING);
+
+      const restoreEvents = await getPrisma().listingEvent.findMany({
+        where: {
+          applicationId: targetId,
+          type: ListingEventType.RESTORED_BY_PROVIDER,
+        },
+      });
+      expect(restoreEvents).toHaveLength(1);
     });
 
     it('does not exceed the ACTIVE limit when two different restores race for the last slot', async () => {
