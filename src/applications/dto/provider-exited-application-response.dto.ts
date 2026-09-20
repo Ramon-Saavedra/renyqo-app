@@ -1,11 +1,17 @@
-import type { Application, User } from '../../generated/prisma/client';
+import type {
+  ApplicantProfile,
+  Application,
+  User,
+} from '../../generated/prisma/client';
 import type { ApplicationRejectionReason } from '../../generated/prisma/enums';
 
 export type ProviderExitedApplicationRecord = Pick<
   Application,
   'id' | 'listingId' | 'status' | 'publicReason'
 > & {
-  applicant: Pick<User, 'name'>;
+  applicant: Pick<User, 'name'> & {
+    profile?: Pick<ApplicantProfile, 'peopleCount' | 'introduction'> | null;
+  };
   exitedAt: Date;
 };
 
@@ -13,6 +19,8 @@ export class ProviderExitedApplicationResponseDto {
   readonly id: string;
   readonly listingId: string;
   readonly applicantName: string;
+  readonly peopleCount: number | null;
+  readonly introduction: string | null;
   readonly status: Application['status'];
   readonly publicReason: ApplicationRejectionReason | null;
   readonly exitedAt: Date;
@@ -21,6 +29,8 @@ export class ProviderExitedApplicationResponseDto {
     this.id = application.id;
     this.listingId = application.listingId;
     this.applicantName = application.applicant.name;
+    this.peopleCount = application.applicant.profile?.peopleCount ?? null;
+    this.introduction = application.applicant.profile?.introduction ?? null;
     this.status = application.status;
     this.publicReason = application.publicReason;
     this.exitedAt = application.exitedAt;

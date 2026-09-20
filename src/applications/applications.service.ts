@@ -761,6 +761,8 @@ export class ApplicationsService {
       rejectedAt: Date | null;
       withdrawnAt: Date | null;
       applicantName: string;
+      peopleCount: number | null;
+      introduction: string | null;
     };
 
     const EXITED_APPLICATIONS_LIMIT = 5;
@@ -774,9 +776,12 @@ export class ApplicationsService {
           a.public_reason AS "publicReason",
           a.rejected_at AS "rejectedAt",
           a.withdrawn_at AS "withdrawnAt",
-          u.name AS "applicantName"
+          u.name AS "applicantName",
+          ap.people_count AS "peopleCount",
+          ap.introduction AS "introduction"
         FROM "applications" AS a
         JOIN "users" AS u ON u.id = a.applicant_id
+        LEFT JOIN "applicant_profiles" AS ap ON ap.applicant_id = a.applicant_id
         JOIN "listings" AS l ON l.id = a.listing_id
         WHERE a.listing_id = ${listingId}::uuid
           AND l.provider_id = ${providerId}::uuid
@@ -844,7 +849,16 @@ export class ApplicationsService {
         status: mapStatus(row.status),
         publicReason: mapReason(row.publicReason),
         exitedAt,
-        applicant: { name: row.applicantName },
+        applicant: {
+          name: row.applicantName,
+          profile:
+            row.peopleCount === null && row.introduction === null
+              ? null
+              : {
+                  peopleCount: row.peopleCount,
+                  introduction: row.introduction,
+                },
+        },
       };
     });
 

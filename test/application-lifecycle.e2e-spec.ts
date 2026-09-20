@@ -1376,6 +1376,16 @@ describe('Application Lifecycle E2E', () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
       const applicant = await registerApplicant();
+      await updateApplicantProfile(applicant, {
+        adultsCount: 2,
+        childrenCount: 1,
+        introduction: 'A short applicant introduction.',
+        householdNetIncome: 5000,
+        incomeProofAvailable: true,
+        schufaAvailable: true,
+        hasPets: true,
+        isSmoker: false,
+      });
 
       const entry = await applyToListing(applicant, listing.id);
       expect(entry['status']).toBe(ApplicationStatus.ACTIVE);
@@ -1414,10 +1424,66 @@ describe('Application Lifecycle E2E', () => {
       expect(exitedRecord['id']).toBe(entry['id']);
       expect(exitedRecord['status']).toBe(ApplicationStatus.WITHDRAWN);
       expect(exitedRecord['applicantName']).toBeTruthy();
+      expect(exitedRecord['peopleCount']).toBe(3);
+      expect(exitedRecord['introduction']).toBe(
+        'A short applicant introduction.',
+      );
       expect(exitedRecord['publicReason']).toBeNull();
+      expect(exitedRecord).not.toHaveProperty('householdNetIncome');
+      expect(exitedRecord).not.toHaveProperty('incomeProofAvailable');
+      expect(exitedRecord).not.toHaveProperty('schufaAvailable');
+      expect(exitedRecord).not.toHaveProperty('adultsCount');
+      expect(exitedRecord).not.toHaveProperty('childrenCount');
+      expect(exitedRecord).not.toHaveProperty('hasPets');
+      expect(exitedRecord).not.toHaveProperty('isSmoker');
+      expect(exitedRecord).not.toHaveProperty('assets');
+      expect(exitedRecord).not.toHaveProperty('religion');
+      expect(exitedRecord).not.toHaveProperty('origin');
+      expect(exitedRecord).not.toHaveProperty('eligibility');
+      expect(exitedRecord).not.toHaveProperty('score');
       expect(new Date(exitedRecord['exitedAt'] as string).getTime()).toBe(
         withdrawnPersisted!.withdrawnAt!.getTime(),
       );
+    });
+
+    it('returns null preview fields for an exited applicant with a legacy-null profile', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicant = await registerApplicant();
+      const applicantUser = responseBody(
+        await applicant.get('/api/v1/auth/me').expect(200),
+      );
+
+      await getPrisma().applicantProfile.create({
+        data: { applicantId: applicantUser['id'] as string },
+      });
+
+      const entry = await applyToListing(applicant, listing.id);
+      expect(entry['status']).toBe(ApplicationStatus.ACTIVE);
+      await applicant
+        .delete(`/api/v1/applicant/applications/${entry['id'] as string}`)
+        .expect(200);
+
+      const exitedResponse = await providerAgent
+        .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)
+        .expect(200);
+      const exited = responseBody(exitedResponse);
+      expect(exited['totalCount']).toBe(1);
+      expect(Array.isArray(exited['items'])).toBe(true);
+      const exitedItems = exited['items'] as Array<Record<string, unknown>>;
+      expect(exitedItems).toHaveLength(1);
+      expect(exitedItems[0]).toEqual(
+        expect.objectContaining({
+          id: entry['id'],
+          listingId: listing.id,
+          applicantName: 'Renyqo Applicant',
+          peopleCount: null,
+          introduction: null,
+          status: ApplicationStatus.WITHDRAWN,
+          publicReason: null,
+        }),
+      );
+      expect(typeof exitedItems[0]?.['exitedAt']).toBe('string');
     });
 
     it('does not set withdrawnAt for a WAITING withdrawal and excludes it from exited', async () => {
