@@ -371,6 +371,11 @@ describe('Application Lifecycle E2E', () => {
       await app.close();
       app = undefined;
     }
+
+    if (sessionStore) {
+      await Promise.resolve(sessionStore.close());
+      sessionStore = undefined;
+    }
   });
 
   afterEach(async () => {

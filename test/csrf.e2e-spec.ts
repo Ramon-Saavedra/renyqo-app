@@ -1,4 +1,5 @@
 import session from 'express-session';
+import type { Server } from 'node:http';
 import {
   Body,
   CanActivate,
@@ -12,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
+import type { Application } from 'express';
 import { afterAll, beforeAll, describe, it, jest } from '@jest/globals';
 import request from 'supertest';
 import { AuthController } from '../src/auth/auth.controller';
@@ -79,6 +81,7 @@ class CsrfTestModule {}
 
 describe('CSRF HTTP contract', () => {
   let app: INestApplication;
+  let server: Server;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -94,11 +97,12 @@ describe('CSRF HTTP contract', () => {
         saveUninitialized: false,
       }),
     );
-    configureCsrfProtection(
-      app.getHttpAdapter().getInstance(),
-      'https://frontend.example',
-    );
+    const expressApplication = app
+      .getHttpAdapter()
+      .getInstance() as Application;
+    configureCsrfProtection(expressApplication, 'https://frontend.example');
     await app.init();
+    server = app.getHttpServer() as Server;
   });
 
   afterAll(async () => {
@@ -106,7 +110,7 @@ describe('CSRF HTTP contract', () => {
   });
 
   it('returns a session-bound token and accepts it for a mutation', async () => {
-    const agent = request.agent(app.getHttpServer());
+    const agent = request.agent(server);
     const tokenResponse = await agent
       .get('/api/v1/auth/csrf-token')
       .expect(200);
@@ -128,7 +132,7 @@ describe('CSRF HTTP contract', () => {
       .send({ value: 'accepted' })
       .expect(201, { value: 'accepted' });
 
-    await request(app.getHttpServer())
+    await request(server)
       .post('/api/v1/csrf-test/mutation')
       .set('Origin', 'https://frontend.example')
       .set('X-CSRF-Token', token)
@@ -137,7 +141,7 @@ describe('CSRF HTTP contract', () => {
   });
 
   it('rejects a mutation without a token or with a mismatched Origin', async () => {
-    const agent = request.agent(app.getHttpServer());
+    const agent = request.agent(server);
     await agent.get('/api/v1/auth/csrf-token').expect(200);
 
     await agent
@@ -174,7 +178,7 @@ describe('CSRF HTTP contract', () => {
   });
 
   it('supports a valid Referer and rejects invalid or conflicting origins', async () => {
-    const agent = request.agent(app.getHttpServer());
+    const agent = request.agent(server);
     const tokenResponse = await agent
       .get('/api/v1/auth/csrf-token')
       .expect(200);
@@ -212,14 +216,14 @@ describe('CSRF HTTP contract', () => {
   });
 
   it('leaves safe methods unprotected', async () => {
-    const agent = request.agent(app.getHttpServer());
+    const agent = request.agent(server);
     await agent.get('/api/v1/csrf-test/safe').expect(200, { ok: true });
     await agent.head('/api/v1/csrf-test/safe').expect(200);
     await agent.options('/api/v1/csrf-test/safe').expect(200);
   });
 
   it('preserves an authorization 403 after CSRF validation succeeds', async () => {
-    const agent = request.agent(app.getHttpServer());
+    const agent = request.agent(server);
     const tokenResponse = await agent
       .get('/api/v1/auth/csrf-token')
       .expect(200);

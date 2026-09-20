@@ -309,6 +309,12 @@ describe('Applicant Listing Actions E2E', () => {
   afterAll(async () => {
     if (app) {
       await app.close();
+      app = undefined;
+    }
+
+    if (sessionStore) {
+      await Promise.resolve(sessionStore.close());
+      sessionStore = undefined;
     }
   }, 15_000);
 

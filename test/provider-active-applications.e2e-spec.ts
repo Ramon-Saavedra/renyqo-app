@@ -400,6 +400,11 @@ describe('Provider ACTIVE applications summary E2E', () => {
       await app.close();
       app = undefined;
     }
+
+    if (sessionStore) {
+      await Promise.resolve(sessionStore.close());
+      sessionStore = undefined;
+    }
   });
 
   beforeEach(async () => {
