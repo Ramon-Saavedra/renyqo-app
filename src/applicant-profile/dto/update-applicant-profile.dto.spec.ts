@@ -26,14 +26,14 @@ describe('UpdateApplicantProfileDto', () => {
     expect(instance.introduction).toBe('I am a quiet tenant.');
   });
 
-  it('accepts an introduction with exactly 100 characters', async () => {
-    const errors = await validateDto({ introduction: 'a'.repeat(100) });
+  it('accepts an introduction with exactly 250 characters', async () => {
+    const errors = await validateDto({ introduction: 'a'.repeat(250) });
 
     expect(errors).toHaveLength(0);
   });
 
   it.each([
-    { value: 'a'.repeat(101), label: 'overlong text' },
+    { value: 'a'.repeat(251), label: 'overlong text' },
     { value: '   ', label: 'whitespace-only text' },
     { value: '<b>Tenant</b>', label: 'HTML markup' },
     { value: null, label: 'null' },

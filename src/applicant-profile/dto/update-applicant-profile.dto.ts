@@ -42,7 +42,7 @@ export class UpdateApplicantProfileDto {
   @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @IsNotEmpty()
-  @MaxLength(100)
+  @MaxLength(250)
   @Matches(/^[^<>]*$/)
   @Transform(trimOptionalString)
   introduction?: string | null;
