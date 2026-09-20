@@ -89,6 +89,51 @@ describe('runSerializableTransaction', () => {
     expect(operation).toHaveBeenCalledTimes(2);
   });
 
+  it('retries on a P2010 raw-query wrapper for PostgreSQL SQLSTATE 40001', async () => {
+    const conflictError = {
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: {
+            originalCode: '40001',
+            originalMessage:
+              'could not serialize access due to concurrent update',
+            kind: 'TransactionWriteConflict',
+          },
+        },
+      },
+    };
+    const operation = jest
+      .fn()
+      .mockRejectedValueOnce(conflictError)
+      .mockResolvedValueOnce('success');
+
+    const result = await runSerializableTransaction(
+      asPrismaWithTransaction(prisma),
+      operation,
+    );
+
+    expect(result).toBe('success');
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry unrelated P2010 raw-query errors', async () => {
+    const error = {
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: { originalCode: '23505' },
+        },
+      },
+    };
+    const operation = jest.fn().mockRejectedValue(error);
+
+    await expect(
+      runSerializableTransaction(asPrismaWithTransaction(prisma), operation),
+    ).rejects.toBe(error);
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
   it('retries on a nested cause with originalCode 40001', async () => {
     const conflictError = {
       code: 'P2034',

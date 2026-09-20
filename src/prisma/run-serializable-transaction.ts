@@ -28,6 +28,19 @@ function hasSerializationCode(value: unknown): boolean {
   return false;
 }
 
+function isPrismaRawQuerySerializationConflict(value: unknown): boolean {
+  if (!isRecord(value) || value.code !== 'P2010' || !isRecord(value.meta)) {
+    return false;
+  }
+
+  const driverAdapterError = value.meta.driverAdapterError;
+  if (!isRecord(driverAdapterError) || !isRecord(driverAdapterError.cause)) {
+    return false;
+  }
+
+  return driverAdapterError.cause.originalCode === '40001';
+}
+
 function isSerializationConflict(error: unknown): boolean {
   if (
     error instanceof PrismaClientKnownRequestError &&
@@ -36,7 +49,9 @@ function isSerializationConflict(error: unknown): boolean {
     return true;
   }
 
-  return hasSerializationCode(error);
+  return (
+    hasSerializationCode(error) || isPrismaRawQuerySerializationConflict(error)
+  );
 }
 
 export async function runSerializableTransaction<T>(
