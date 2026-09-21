@@ -758,6 +758,7 @@ export class ApplicationsService {
       listingId: string;
       status: string;
       publicReason: string | null;
+      activeAt: Date;
       rejectedAt: Date | null;
       withdrawnAt: Date | null;
       applicantName: string;
@@ -774,6 +775,7 @@ export class ApplicationsService {
           a.listing_id AS "listingId",
           a.status,
           a.public_reason AS "publicReason",
+          a.active_at AS "activeAt",
           a.rejected_at AS "rejectedAt",
           a.withdrawn_at AS "withdrawnAt",
           u.name AS "applicantName",
@@ -848,6 +850,7 @@ export class ApplicationsService {
         listingId: row.listingId,
         status: mapStatus(row.status),
         publicReason: mapReason(row.publicReason),
+        activeAt: row.activeAt,
         exitedAt,
         applicant: {
           name: row.applicantName,

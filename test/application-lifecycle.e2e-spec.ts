@@ -1432,6 +1432,9 @@ describe('Application Lifecycle E2E', () => {
       const exitedRecord = exitedItems[0];
       expect(exitedRecord['id']).toBe(entry['id']);
       expect(exitedRecord['status']).toBe(ApplicationStatus.WITHDRAWN);
+      expect(new Date(exitedRecord['activeAt'] as string).getTime()).toBe(
+        createdPersisted!.activeAt!.getTime(),
+      );
       expect(exitedRecord['applicantName']).toBeTruthy();
       expect(exitedRecord['peopleCount']).toBe(3);
       expect(exitedRecord['introduction']).toBe(
@@ -1590,6 +1593,9 @@ describe('Application Lifecycle E2E', () => {
       expect(exitedRecord!['status']).toBe(ApplicationStatus.REJECTED);
       expect(exitedRecord!['publicReason']).toBe(
         ApplicationRejectionReason.NOT_SELECTED,
+      );
+      expect(new Date(exitedRecord!['activeAt'] as string).getTime()).toBe(
+        rejectedPersisted!.activeAt!.getTime(),
       );
       expect(new Date(exitedRecord!['exitedAt'] as string).getTime()).toBe(
         rejectedPersisted!.rejectedAt!.getTime(),

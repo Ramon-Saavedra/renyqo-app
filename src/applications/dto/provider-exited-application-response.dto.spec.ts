@@ -15,6 +15,7 @@ const makeExitedRecord = (
   listingId: '00000000-0000-4000-8000-000000000002',
   status: ApplicationStatus.WITHDRAWN,
   publicReason: null,
+  activeAt: new Date('2024-06-01'),
   exitedAt: new Date('2024-06-15'),
   applicant: {
     name: 'Anna Applicant',
@@ -39,6 +40,7 @@ describe('ProviderExitedApplicationResponseDto', () => {
     expect(dto.introduction).toBe('A short introduction.');
     expect(dto.status).toBe(ApplicationStatus.WITHDRAWN);
     expect(dto.publicReason).toBeNull();
+    expect(dto.activeAt).toEqual(new Date('2024-06-01'));
     expect(dto.exitedAt).toEqual(new Date('2024-06-15'));
   });
 
@@ -91,7 +93,7 @@ describe('ProviderExitedApplicationResponseDto', () => {
     expect(dto).not.toHaveProperty('queueOrder');
     expect(dto).not.toHaveProperty('createdAt');
     expect(dto).not.toHaveProperty('updatedAt');
-    expect(dto).not.toHaveProperty('activeAt');
+    expect(dto).toHaveProperty('activeAt');
     expect(dto).not.toHaveProperty('householdNetIncome');
     expect(dto).not.toHaveProperty('incomeProofAvailable');
     expect(dto).not.toHaveProperty('schufaAvailable');

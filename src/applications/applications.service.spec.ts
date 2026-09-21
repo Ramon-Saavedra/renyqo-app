@@ -1652,6 +1652,7 @@ describe('ApplicationsService', () => {
         listingId: LISTING_ID,
         status: 'rejected',
         publicReason: 'not_selected',
+        activeAt: new Date('2024-05-01'),
         rejectedAt: new Date('2024-06-01'),
         withdrawnAt: null,
         applicantName: 'Max Mover',
@@ -1670,6 +1671,7 @@ describe('ApplicationsService', () => {
       expect(result.items[0].publicReason).toBe(
         ApplicationRejectionReason.NOT_SELECTED,
       );
+      expect(result.items[0].activeAt).toEqual(new Date('2024-05-01'));
       expect(result.items[0].applicant.name).toBe('Max Mover');
       expect(result.items[0].applicant.profile).toEqual({
         peopleCount: 3,
@@ -1686,6 +1688,7 @@ describe('ApplicationsService', () => {
       expect(String(queryArgs?.[0])).toContain('LIMIT');
       expect(String(queryArgs?.[0])).toContain('ap.people_count');
       expect(String(queryArgs?.[0])).toContain('ap.introduction');
+      expect(String(queryArgs?.[0])).toContain('a.active_at AS "activeAt"');
       expect(String(queryArgs?.[0])).not.toContain('ap.household_net_income');
       expect(String(queryArgs?.[0])).not.toContain('ap.schufa_available');
       expect(String(queryArgs?.[0])).not.toContain('ap.income_proof_available');
