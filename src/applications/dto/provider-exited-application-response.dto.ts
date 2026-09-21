@@ -9,6 +9,7 @@ export type ProviderExitedApplicationRecord = Pick<
   Application,
   'id' | 'listingId' | 'status' | 'publicReason'
 > & {
+  activeAt: Date;
   applicant: Pick<User, 'name'> & {
     profile?: Pick<ApplicantProfile, 'peopleCount' | 'introduction'> | null;
   };
@@ -23,6 +24,7 @@ export class ProviderExitedApplicationResponseDto {
   readonly introduction: string | null;
   readonly status: Application['status'];
   readonly publicReason: ApplicationRejectionReason | null;
+  readonly activeAt: Date;
   readonly exitedAt: Date;
 
   constructor(application: ProviderExitedApplicationRecord) {
@@ -33,6 +35,7 @@ export class ProviderExitedApplicationResponseDto {
     this.introduction = application.applicant.profile?.introduction ?? null;
     this.status = application.status;
     this.publicReason = application.publicReason;
+    this.activeAt = application.activeAt;
     this.exitedAt = application.exitedAt;
   }
 }

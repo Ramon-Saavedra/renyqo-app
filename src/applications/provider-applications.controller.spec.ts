@@ -217,6 +217,7 @@ describe('ProviderApplicationsController', () => {
         listingId: LISTING_ID,
         status: ApplicationStatus.REJECTED,
         publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        activeAt: new Date('2024-05-01'),
         exitedAt: new Date('2024-06-01'),
         applicant: { name: 'Anna Applicant' },
       };
