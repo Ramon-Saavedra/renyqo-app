@@ -130,6 +130,7 @@ model Listing {
   id         String        @id @default(uuid()) @db.Uuid
   providerId String        @map("provider_id") @db.Uuid
   status     ListingStatus @default(DRAFT)
+  displayOrder Int          @map("display_order")
 
   city             String?
   zip              String?
@@ -176,6 +177,8 @@ model Listing {
   @@index([status, coldRent, id])
   @@index([status, livingArea, id])
   @@index([status, availableFrom])
+  @@unique([providerId, displayOrder])
+  @@index([providerId, displayOrder, id])
   @@map("listings")
 }
 

@@ -3,7 +3,7 @@
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true,
-    "types": ["jest", "node", "express-session", "passport", "multer"]
+    "types": ["jest", "node", "express", "express-session", "passport", "multer"]
   },
   "include": [
     "src/**/*.spec.ts",

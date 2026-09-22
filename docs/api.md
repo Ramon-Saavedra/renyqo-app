@@ -102,20 +102,23 @@ DRAFT, PAUSED, ARCHIVED and RENTED listings are not accessible through these end
 
 Provider endpoints require an authenticated provider session and enforce listing ownership.
 
-| Method  | Path                                    | Auth     | Description                                             |
-| ------- | --------------------------------------- | -------- | ------------------------------------------------------- |
-| `POST`  | `/api/v1/provider/listings`             | Provider | Create a draft listing, optionally with its first image |
-| `GET`   | `/api/v1/provider/listings`             | Provider | Get all owned listings with `activeApplicationsCount`   |
-| `GET`   | `/api/v1/provider/listings/:id`         | Provider | Get one owned listing                                   |
-| `PATCH` | `/api/v1/provider/listings/:id`         | Provider | Update an owned listing                                 |
-| `PATCH` | `/api/v1/provider/listings/:id/publish` | Provider | Publish an owned listing                                |
-| `PATCH` | `/api/v1/provider/listings/:id/draft`   | Provider | Move a listing back to draft                            |
-| `PATCH` | `/api/v1/provider/listings/:id/archive` | Provider | Archive an owned listing                                |
-| `PATCH` | `/api/v1/provider/listings/:id/rent`    | Provider | Mark a listing as rented and finalize applications      |
+| Method  | Path                                     | Auth     | Description                                               |
+| ------- | ---------------------------------------- | -------- | --------------------------------------------------------- |
+| `POST`  | `/api/v1/provider/listings`              | Provider | Create a draft listing, optionally with its first image   |
+| `GET`   | `/api/v1/provider/listings`              | Provider | Get all owned listings with `activeApplicationsCount`     |
+| `GET`   | `/api/v1/provider/listings/:id`          | Provider | Get one owned listing                                     |
+| `PATCH` | `/api/v1/provider/listings/:id`          | Provider | Update an owned listing                                   |
+| `PATCH` | `/api/v1/provider/listings/:id/position` | Provider | Move an owned listing to a position in the provider order |
+| `PATCH` | `/api/v1/provider/listings/:id/publish`  | Provider | Publish an owned listing                                  |
+| `PATCH` | `/api/v1/provider/listings/:id/draft`    | Provider | Move a listing back to draft                              |
+| `PATCH` | `/api/v1/provider/listings/:id/archive`  | Provider | Archive an owned listing                                  |
+| `PATCH` | `/api/v1/provider/listings/:id/rent`     | Provider | Mark a listing as rented and finalize applications        |
 
 `GET /api/v1/provider/listings/:id/active-applications` is documented under [Applications](#applications).
 
-`GET /api/v1/provider/listings` returns every listing owned by the authenticated provider, ordered by `createdAt` descending. Each item includes `activeApplicationsCount`: the authoritative number of applications with status `ACTIVE` for that listing (expected domain `0`–`5`). WAITING and other non-ACTIVE statuses are not counted. The response does not expose applicant identities, profiles, or raw Prisma `_count` objects.
+`GET /api/v1/provider/listings` returns every listing owned by the authenticated provider, ordered by `displayOrder` ascending. Each item includes its contiguous 1-based `displayOrder` and `activeApplicationsCount`: the authoritative number of applications with status `ACTIVE` for that listing (expected domain `0`–`5`). WAITING and other non-ACTIVE statuses are not counted. The response does not expose applicant identities, profiles, or raw Prisma `_count` objects.
+
+`PATCH /api/v1/provider/listings/:id/position` accepts `{ "position": 1 }`. The position must be an integer from `1` through the provider's total listing count. Moving a listing shifts the affected listings within one serializable transaction, and the response returns the moved listing. New listings append at the end of the provider order.
 
 Required property fields to publish: `street`, `zip`, `city`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`. A final `title` is also required; the frontend sends either its Provider override or its deterministic auto-title.
 
@@ -247,7 +250,7 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 | `PATCH`  | `/api/v1/provider/applications/:id/reject`          | Provider  | Reject one owned ACTIVE application                                 |
 | `PATCH`  | `/api/v1/provider/applications/:id/restore`         | Provider  | Restore one owned REJECTED + NOT_SELECTED application               |
 
-`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered internally by `createdAt` ascending. Each item contains only `id`, `listingId`, `status`, `activeAt`, and a nested `applicant` summary with `name`, nullable `peopleCount`, and the nullable Phase 1 `introduction`. The introduction is trimmed plain text with a maximum of 250 characters; legacy profiles may return `null` until the applicant updates their profile. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, `queueOrder`, password hashes, or unrelated user fields.
+`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered internally by `activeAt` ascending with `id` ascending as the deterministic tie-breaker. Legacy `ACTIVE` applications with a missing `activeAt` are backfilled from `createdAt` by migration; non-`ACTIVE` applications are not backfilled. Each item contains only `id`, `listingId`, `status`, `activeAt`, and a nested `applicant` summary with `name`, nullable `peopleCount`, and the nullable Phase 1 `introduction`. The introduction is trimmed plain text with a maximum of 250 characters; legacy profiles may return `null` until the applicant updates their profile. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, `queueOrder`, password hashes, or unrelated user fields.
 
 `GET /api/v1/provider/listings/:id/exited-applications` returns a summary for an owned listing of applications that were `ACTIVE` at some point (`activeAt` is set) and have since become `REJECTED` or `WITHDRAWN`. Applications that withdrew or were re-applied while still `WAITING` never had `activeAt` set and are excluded. The response is `{ items: ProviderExitedApplicationResponseDto[], totalCount: number }`. `items` contains at most five exits ordered by `exitedAt` descending (newest first), where `exitedAt` is `withdrawnAt` for `WITHDRAWN` rows and `rejectedAt` for `REJECTED` rows. `totalCount` is the total number of matching exited applications for the listing. Each item contains `id`, `listingId`, `applicantName`, `status`, `publicReason`, `activeAt`, and `exitedAt`, plus nullable `peopleCount` and `introduction` for the limited Applicant preview. `activeAt` is the entry into the most recent `ACTIVE` period, with the same meaning as on `active-applications`. Legacy profiles with no profile data or no introduction return `null` for the respective field. `introduction` is trimmed plain text with a maximum of 250 characters. The endpoint never exposes applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, assets, religion or origin, ranking or scoring, eligibility internals, `queueOrder`, password hashes, or unrelated user/profile fields.
 

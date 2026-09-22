@@ -229,9 +229,15 @@ function listingImageBodies(response: Response): ListingImageItemBody[] {
 }
 
 async function createPublishedListing(providerId: string) {
+  const maxOrder = await getPrisma().listing.aggregate({
+    where: { providerId },
+    _max: { displayOrder: true },
+  });
+
   return getPrisma().listing.create({
     data: {
       providerId,
+      displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
       status: ListingStatus.PUBLISHED,
       city: 'Berlin',
       title: 'E2E Listing',
@@ -602,6 +608,7 @@ describe('Backend API E2E', () => {
     const listing = await getPrisma().listing.create({
       data: {
         providerId: provider.id,
+        displayOrder: 1,
         status: ListingStatus.PUBLISHED,
         city: 'Berlin',
         title: 'Eligibility E2E Listing',
@@ -693,6 +700,7 @@ describe('Backend API E2E', () => {
     const secondListing = await getPrisma().listing.create({
       data: {
         providerId: provider.id,
+        displayOrder: 2,
         status: ListingStatus.PUBLISHED,
         city: 'Berlin',
         title: 'Eligibility Recalculation Listing',
@@ -738,6 +746,7 @@ describe('Backend API E2E', () => {
     const listing = await getPrisma().listing.create({
       data: {
         providerId: provider.id,
+        displayOrder: 1,
         status: ListingStatus.PUBLISHED,
         city: 'Berlin',
         street: 'Private Street 1',
@@ -1588,6 +1597,7 @@ describe('Backend API E2E', () => {
       const listing = await getPrisma().listing.create({
         data: {
           providerId: provider.id,
+          displayOrder: 1,
           status: ListingStatus.PUBLISHED,
           city: 'Berlin',
           title: 'Eligibility E2E Listing',
@@ -1643,6 +1653,7 @@ describe('Backend API E2E', () => {
       const listing = await getPrisma().listing.create({
         data: {
           providerId: provider.id,
+          displayOrder: 1,
           status,
           city: 'Berlin',
           title: 'Unpublished Listing',
@@ -1736,6 +1747,156 @@ describe('Backend API E2E', () => {
     });
     expect(body[0]).not.toHaveProperty('_count');
     expect(body[0]).not.toHaveProperty('applicant');
+  });
+
+  it('persists provider listing positions and keeps other providers isolated', async () => {
+    const providerAgent = request.agent(getServer());
+    const provider = safeUserBody(
+      await providerAgent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+    const otherProvider = safeUserBody(
+      await request(getServer())
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+
+    const first = await createPublishedListing(provider.id);
+    const second = await getPrisma().listing.create({
+      data: {
+        providerId: provider.id,
+        displayOrder: 2,
+        status: ListingStatus.PUBLISHED,
+        city: 'Berlin',
+        title: 'Second Listing',
+      },
+    });
+    const third = await getPrisma().listing.create({
+      data: {
+        providerId: provider.id,
+        displayOrder: 3,
+        status: ListingStatus.PUBLISHED,
+        city: 'Berlin',
+        title: 'Third Listing',
+      },
+    });
+    const otherListing = await createPublishedListing(otherProvider.id);
+
+    const initial = await providerAgent
+      .get('/api/v1/provider/listings')
+      .expect(200);
+    expect(
+      (initial.body as Array<{ id: string }>).map((listing) => listing.id),
+    ).toEqual([first.id, second.id, third.id]);
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${third.id}/position`)
+      .send({ position: 1 })
+      .expect(200);
+
+    const refreshed = await providerAgent
+      .get('/api/v1/provider/listings')
+      .expect(200);
+    expect(
+      (refreshed.body as Array<{ id: string; displayOrder: number }>).map(
+        (listing) => [listing.id, listing.displayOrder],
+      ),
+    ).toEqual([
+      [third.id, 1],
+      [first.id, 2],
+      [second.id, 3],
+    ]);
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${third.id}/position`)
+      .send({ position: 0 })
+      .expect(400);
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${otherListing.id}/position`)
+      .send({ position: 1 })
+      .expect(404);
+  });
+
+  it('supports middle moves, moving the last listing to the first position, and appending', async () => {
+    const providerAgent = request.agent(getServer());
+    const provider = safeUserBody(
+      await providerAgent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+    const listings = [];
+
+    for (let position = 1; position <= 20; position += 1) {
+      listings.push(
+        await getPrisma().listing.create({
+          data: {
+            providerId: provider.id,
+            displayOrder: position,
+            status: ListingStatus.PUBLISHED,
+            city: 'Berlin',
+            title: `Listing ${position}`,
+          },
+        }),
+      );
+    }
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${listings[4].id}/position`)
+      .send({ position: 8 })
+      .expect(200);
+
+    const afterMiddleMove = await providerAgent
+      .get('/api/v1/provider/listings')
+      .expect(200);
+    expect(
+      (afterMiddleMove.body as Array<{ id: string }>).map(
+        (listing) => listing.id,
+      ),
+    ).toEqual([
+      listings[0].id,
+      listings[1].id,
+      listings[2].id,
+      listings[3].id,
+      listings[5].id,
+      listings[6].id,
+      listings[7].id,
+      listings[4].id,
+      ...listings.slice(8).map((listing) => listing.id),
+    ]);
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${listings[19].id}/position`)
+      .send({ position: 1 })
+      .expect(200);
+
+    await providerAgent
+      .post('/api/v1/provider/listings')
+      .send({ title: 'Appended draft' })
+      .expect(201);
+
+    const finalListings = await providerAgent
+      .get('/api/v1/provider/listings')
+      .expect(200);
+    const finalBody = finalListings.body as Array<{
+      id: string;
+      displayOrder: number;
+    }>;
+    expect(finalBody[0]).toMatchObject({
+      id: listings[19].id,
+      displayOrder: 1,
+    });
+    expect(finalBody.at(-1)).toMatchObject({
+      displayOrder: 21,
+      title: 'Appended draft',
+    });
+    expect(finalBody.map((listing) => listing.displayOrder)).toEqual(
+      Array.from({ length: 21 }, (_, index) => index + 1),
+    );
   });
 
   describe('re-applying after withdrawal', () => {

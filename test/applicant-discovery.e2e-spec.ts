@@ -215,8 +215,14 @@ async function createPublishedListing(
   providerId: string,
   overrides: Record<string, unknown> = {},
 ) {
+  const maxOrder = await getPrisma().listing.aggregate({
+    where: { providerId },
+    _max: { displayOrder: true },
+  });
+
   const base = {
     providerId,
+    displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
     status: ListingStatus.PUBLISHED,
     city: 'Berlin',
     zip: '10115',
@@ -415,6 +421,7 @@ describe('Applicant Discovery E2E', () => {
       await getPrisma().listing.create({
         data: {
           providerId,
+          displayOrder: 2,
           status: ListingStatus.DRAFT,
           city: 'Berlin',
           title: 'Draft Listing',
@@ -423,6 +430,7 @@ describe('Applicant Discovery E2E', () => {
       await getPrisma().listing.create({
         data: {
           providerId,
+          displayOrder: 3,
           status: ListingStatus.ARCHIVED,
           publishedAt: new Date(),
           city: 'Berlin',
@@ -432,6 +440,7 @@ describe('Applicant Discovery E2E', () => {
       await getPrisma().listing.create({
         data: {
           providerId,
+          displayOrder: 4,
           status: ListingStatus.PAUSED,
           publishedAt: new Date(),
           city: 'Berlin',
@@ -441,6 +450,7 @@ describe('Applicant Discovery E2E', () => {
       await getPrisma().listing.create({
         data: {
           providerId,
+          displayOrder: 5,
           status: ListingStatus.RENTED,
           publishedAt: new Date(),
           rentedAt: new Date(),
@@ -935,10 +945,11 @@ describe('Applicant Discovery E2E', () => {
         ListingStatus.RENTED,
       ];
 
-      for (const status of statuses) {
+      for (const [index, status] of statuses.entries()) {
         const listing = await getPrisma().listing.create({
           data: {
             providerId,
+            displayOrder: index + 1,
             status,
             title: `${status} Listing`,
             publishedAt: status === ListingStatus.DRAFT ? null : new Date(),
@@ -1630,6 +1641,7 @@ describe('Applicant Discovery E2E', () => {
       await getPrisma().listing.create({
         data: {
           providerId,
+          displayOrder: 2,
           status: ListingStatus.PUBLISHED,
           city: 'Berlin',
           title: 'NoPublishedAt',
@@ -1662,6 +1674,7 @@ describe('Applicant Discovery E2E', () => {
       const noPublishedAt = await getPrisma().listing.create({
         data: {
           providerId,
+          displayOrder: 2,
           status: ListingStatus.PUBLISHED,
           city: 'Berlin',
           title: 'NoPublishedAt',

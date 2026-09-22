@@ -204,9 +204,15 @@ async function registerProvider() {
 }
 
 async function publishListing(providerId: string) {
+  const maxOrder = await getPrisma().listing.aggregate({
+    where: { providerId },
+    _max: { displayOrder: true },
+  });
+
   const created = await getPrisma().listing.create({
     data: {
       providerId,
+      displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
       status: ListingStatus.PUBLISHED,
       publishedAt: new Date(),
       city: 'Berlin',
@@ -254,9 +260,15 @@ async function publishListingWithRequirements(
     suitableForPeopleCount?: number;
   },
 ) {
+  const maxOrder = await getPrisma().listing.aggregate({
+    where: { providerId },
+    _max: { displayOrder: true },
+  });
+
   return getPrisma().listing.create({
     data: {
       providerId,
+      displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
       status: ListingStatus.PUBLISHED,
       publishedAt: new Date(),
       city: 'Berlin',
@@ -1145,6 +1157,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await getPrisma().listing.create({
         data: {
           providerId: provider.id,
+          displayOrder: 1,
           status: ListingStatus.DRAFT,
           city: 'Berlin',
           title: 'Draft Listing',

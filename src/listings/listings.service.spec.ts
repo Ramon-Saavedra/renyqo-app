@@ -35,6 +35,7 @@ import { ProfileMatch } from './dto/applicant-listing-profile-match.enum';
 import { PublicProviderType } from '../auth/dto/register.dto';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ListingsService } from './listings.service';
+import { ListingOrderingService } from './listing-ordering.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
 
 function serialized<T>(value: T): Record<string, unknown> {
@@ -52,8 +53,12 @@ type ListingsTransactionMock = {
     create: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
     findMany: jest.MockedFunction<(args?: unknown) => Promise<unknown[]>>;
     findFirst: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
+    findUnique: jest.MockedFunction<
+      (args?: unknown) => Promise<Listing | null>
+    >;
     update: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
     count: jest.MockedFunction<(args?: unknown) => Promise<number>>;
+    aggregate: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
   };
   listingImage: {
     create: jest.MockedFunction<(args?: unknown) => Promise<ListingImage>>;
@@ -143,6 +148,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   suitableForPeopleCount: null,
   petsPolicy: null,
   smokingPolicy: null,
+  displayOrder: 1,
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
   publishedAt: null,
@@ -182,7 +188,9 @@ const makeApplicantProfile = (
   ...overrides,
 });
 
-const makeMulterFile = (): Express.Multer.File => ({
+type ListingUploadFile = NonNullable<Parameters<ListingsService['create']>[2]>;
+
+const makeMulterFile = (): ListingUploadFile => ({
   fieldname: 'file',
   originalname: 'photo.jpg',
   encoding: '7bit',
@@ -314,18 +322,22 @@ describe('ListingsService', () => {
   >;
 
   beforeEach(async () => {
-    const transactionRunner: PrismaTransactionRunner = async (fn) =>
-      fn(prismaMock);
+    const transactionRunner: PrismaTransactionRunner = (fn) =>
+      Promise.resolve(fn(prismaMock));
 
     prismaMock = {
       listing: {
         create: jest.fn<(args?: unknown) => Promise<Listing>>(),
         findMany: jest.fn<(args?: unknown) => Promise<unknown[]>>(),
         findFirst: jest.fn<(args?: unknown) => Promise<unknown>>(),
+        findUnique: jest.fn<(args?: unknown) => Promise<Listing | null>>(),
         update: jest.fn<(args?: unknown) => Promise<Listing>>(),
         count: jest
           .fn<(args?: unknown) => Promise<number>>()
           .mockResolvedValue(0),
+        aggregate: jest
+          .fn<(args?: unknown) => Promise<unknown>>()
+          .mockResolvedValue({ _max: { displayOrder: 0 } }),
       },
       listingImage: {
         create: jest.fn<(args?: unknown) => Promise<ListingImage>>(),
@@ -416,6 +428,13 @@ describe('ListingsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ListingsService,
+        {
+          provide: ListingOrderingService,
+          useValue: {
+            getNextDisplayOrder: jest.fn(() => Promise.resolve(1)),
+            move: jest.fn(),
+          },
+        },
         { provide: PrismaService, useValue: prismaMock },
         {
           provide: CloudinaryService,
@@ -481,7 +500,7 @@ describe('ListingsService', () => {
         }),
       );
       expect(cloudinaryMock.uploadBuffer).not.toHaveBeenCalled();
-      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+      expect(prismaMock.$transaction).toHaveBeenCalled();
       expect(result).toEqual(listing);
     });
 
@@ -608,6 +627,7 @@ describe('ListingsService', () => {
       expect(listingCreateArgs.data).toEqual({
         providerId: PROVIDER_ID,
         title: 'Draft title',
+        displayOrder: 1,
       });
     });
 
@@ -890,7 +910,7 @@ describe('ListingsService', () => {
   });
 
   describe('findAllByProvider', () => {
-    it('returns all listings for a provider ordered by createdAt desc with ACTIVE application counts', async () => {
+    it('returns all listings for a provider ordered by displayOrder with ACTIVE application counts', async () => {
       const listings = [
         { ...makeRawListing(), _count: { applications: 2 } },
         {
@@ -905,7 +925,7 @@ describe('ListingsService', () => {
       expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { providerId: PROVIDER_ID },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
           include: {
             _count: {
               select: {

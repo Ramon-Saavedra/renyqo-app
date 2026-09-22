@@ -40,6 +40,7 @@ function makeListing(
     suitableForPeopleCount: null,
     petsPolicy: null,
     smokingPolicy: null,
+    displayOrder: 1,
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-02'),
     publishedAt: new Date('2024-01-03'),
@@ -56,6 +57,7 @@ describe('ProviderListingOverviewResponseDto', () => {
     });
 
     expect(dto.activeApplicationsCount).toBe(3);
+    expect(dto.displayOrder).toBe(1);
     expect(dto.id).toBe(LISTING_ID);
     expect(dto.title).toBe('Kreuzberg Flat');
     expect(dto.street).toBe('Secret Street 1');

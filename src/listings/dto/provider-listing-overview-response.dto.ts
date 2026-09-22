@@ -8,6 +8,7 @@ export type ListingWithActiveApplicationsCount = Listing & {
 };
 
 export class ProviderListingOverviewResponseDto extends ListingResponseDto {
+  readonly displayOrder: number;
   readonly activeApplicationsCount: number;
 
   constructor(
@@ -16,6 +17,7 @@ export class ProviderListingOverviewResponseDto extends ListingResponseDto {
   ) {
     const { _count, ...listingFields } = listing;
     super(listingFields, options);
+    this.displayOrder = listing.displayOrder;
     this.activeApplicationsCount = _count.applications;
   }
 }

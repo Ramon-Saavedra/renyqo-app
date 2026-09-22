@@ -9,6 +9,7 @@ import { SavedListingsModule } from '../saved-listings/saved-listings.module';
 import { ApplicantListingsController } from './applicant-listings.controller';
 import { ListingsController } from './listings.controller';
 import { ListingsService } from './listings.service';
+import { ListingOrderingService } from './listing-ordering.service';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { ListingsService } from './listings.service';
     ApplicantListingSummariesModule,
   ],
   controllers: [ListingsController, ApplicantListingsController],
-  providers: [ListingsService],
+  providers: [ListingsService, ListingOrderingService],
   exports: [ListingsService],
 })
 export class ListingsModule {}
