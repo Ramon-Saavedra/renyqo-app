@@ -25,6 +25,7 @@ import { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
 import { ProviderListingOverviewResponseDto } from './dto/provider-listing-overview-response.dto';
 import { RentListingDto } from './dto/rent-listing.dto';
+import { UpdateListingPositionDto } from './dto/update-listing-position.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsService } from './listings.service';
 
@@ -125,6 +126,18 @@ export class ListingsController {
     @CurrentUser() user: SafeUser,
   ): Promise<ListingResponseDto> {
     const listing = await this.listingsService.rentListing(id, user.id, dto);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
+  }
+
+  @Patch(':id/position')
+  async updatePosition(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: UpdateListingPositionDto,
+    @CurrentUser() user: SafeUser,
+  ): Promise<ListingResponseDto> {
+    const listing = await this.listingsService.updatePosition(id, user.id, dto);
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });

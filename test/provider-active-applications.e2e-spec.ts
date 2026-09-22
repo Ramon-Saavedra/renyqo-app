@@ -284,9 +284,15 @@ async function registerApplicantWithProfile(options: {
 }
 
 async function publishListing(providerId: string) {
+  const maxOrder = await getPrisma().listing.aggregate({
+    where: { providerId },
+    _max: { displayOrder: true },
+  });
+
   return getPrisma().listing.create({
     data: {
       providerId,
+      displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
       status: ListingStatus.PUBLISHED,
       publishedAt: new Date(),
       city: 'Berlin',
@@ -431,6 +437,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
     const listing = await getPrisma().listing.create({
       data: {
         providerId: provider.id,
+        displayOrder: 1,
         status: ListingStatus.PUBLISHED,
         publishedAt: new Date(),
         city: 'Berlin',
@@ -522,7 +529,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
     ).toBe(true);
   });
 
-  it('returns minimal applicant summaries for 1–4 ACTIVE applications in createdAt ASC order', async () => {
+  it('returns minimal applicant summaries for 1–4 ACTIVE applications in activeAt ASC order', async () => {
     const { agent, provider } = await registerProvider();
     const listing = await publishListing(provider.id);
 
@@ -593,6 +600,109 @@ describe('Provider ACTIVE applications summary E2E', () => {
       .get(`/api/v1/provider/listings/${listing.id}/waiting-count`)
       .expect(200)
       .expect({ waitingCount: 0 });
+  });
+
+  it('orders ACTIVE applications by activeAt and id, excludes non-ACTIVE applications, and keeps the limit at five', async () => {
+    const { agent, provider } = await registerProvider();
+    const listing = await publishListing(provider.id);
+    const applicants: Array<
+      Awaited<ReturnType<typeof registerApplicantWithProfile>>
+    > = [];
+
+    for (let index = 0; index < 7; index += 1) {
+      applicants.push(
+        await registerApplicantWithProfile({
+          name: `Ordering Applicant ${index + 1}`,
+          adultsCount: 1,
+          childrenCount: 0,
+          householdNetIncome: 3200 + index,
+          hasPets: false,
+          isSmoker: false,
+        }),
+      );
+    }
+
+    for (const applicant of applicants) {
+      await applicant.agent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(201);
+    }
+
+    const applications = await getPrisma().application.findMany({
+      where: { listingId: listing.id },
+      select: { id: true, applicantId: true, status: true },
+    });
+    const applicationIdByApplicantId = new Map(
+      applications.map((application) => [
+        application.applicantId,
+        application.id,
+      ]),
+    );
+    const applicationIds = applicants.map((applicant) => {
+      const applicationId = applicationIdByApplicantId.get(
+        applicant.applicant.id,
+      );
+      if (!applicationId) {
+        throw new Error('Expected application was not created.');
+      }
+      return applicationId;
+    });
+
+    await getPrisma().application.update({
+      where: { id: applicationIds[0] },
+      data: {
+        activeAt: new Date('2026-01-03T00:00:00.000Z'),
+        createdAt: new Date('2020-01-01T00:00:00.000Z'),
+      },
+    });
+    await getPrisma().application.update({
+      where: { id: applicationIds[1] },
+      data: {
+        activeAt: new Date('2026-01-01T00:00:00.000Z'),
+        createdAt: new Date('2026-03-01T00:00:00.000Z'),
+      },
+    });
+    await getPrisma().application.updateMany({
+      where: { id: { in: [applicationIds[2], applicationIds[3]] } },
+      data: { activeAt: new Date('2026-01-02T00:00:00.000Z') },
+    });
+    await getPrisma().application.update({
+      where: { id: applicationIds[4] },
+      data: { activeAt: new Date('2026-01-04T00:00:00.000Z') },
+    });
+
+    const response = await agent
+      .get(`/api/v1/provider/listings/${listing.id}/active-applications`)
+      .expect(200);
+    const bodies = activeApplicationBodies(response);
+    const equalActiveAtIds = [applicationIds[2], applicationIds[3]].sort();
+
+    expect(bodies).toHaveLength(5);
+    expect(
+      bodies.every((item) => item.status === ApplicationStatus.ACTIVE),
+    ).toBe(true);
+    expect(bodies.map((item) => item.id)).toEqual([
+      applicationIds[1],
+      ...equalActiveAtIds,
+      applicationIds[0],
+      applicationIds[4],
+    ]);
+    expect(bodies.map((item) => item.applicant.name)).toEqual([
+      'Ordering Applicant 2',
+      ...equalActiveAtIds.map((id) =>
+        id === applicationIds[2]
+          ? 'Ordering Applicant 3'
+          : 'Ordering Applicant 4',
+      ),
+      'Ordering Applicant 1',
+      'Ordering Applicant 5',
+    ]);
+    expect(
+      bodies.some(
+        (item) =>
+          item.id === applicationIds[5] || item.id === applicationIds[6],
+      ),
+    ).toBe(false);
   });
 
   it('returns at most five ACTIVE summaries and never exposes WAITING applicant data', async () => {

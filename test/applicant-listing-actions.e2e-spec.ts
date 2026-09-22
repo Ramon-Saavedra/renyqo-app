@@ -209,8 +209,14 @@ async function createPublishedListing(
   providerId: string,
   overrides: Record<string, unknown> = {},
 ) {
+  const maxOrder = await getPrisma().listing.aggregate({
+    where: { providerId },
+    _max: { displayOrder: true },
+  });
+
   const base = {
     providerId,
+    displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
     status: ListingStatus.PUBLISHED,
     city: 'Berlin',
     zip: '10115',
@@ -244,6 +250,7 @@ async function createDraftListing(providerId: string) {
   return getPrisma().listing.create({
     data: {
       providerId,
+      displayOrder: 1,
       status: ListingStatus.DRAFT,
       city: 'Berlin',
       zip: '10115',

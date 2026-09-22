@@ -696,7 +696,7 @@ export class ApplicationsService {
         status: ApplicationStatus.ACTIVE,
         listing: { providerId },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ activeAt: 'asc' }, { id: 'asc' }],
       take: ACTIVE_APPLICATIONS_LIMIT,
       select: {
         id: true,

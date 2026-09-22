@@ -29,6 +29,7 @@ import { toApplicantListingApplicationStateFields } from '../applications/applic
 import { SavedListingsService } from '../saved-listings/saved-listings.service';
 import { PublishedListingsService } from '../published-listings/published-listings.service';
 import { EligibilityService } from '../eligibility/eligibility.service';
+import { ListingOrderingService } from './listing-ordering.service';
 import type { SafeUser } from '../users/types/safe-user.type';
 import type { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
@@ -46,6 +47,7 @@ import type {
 } from './dto/applicant-listings-query.dto';
 import { ProfileMatch } from './dto/applicant-listing-profile-match.enum';
 import type { RentListingDto } from './dto/rent-listing.dto';
+import type { UpdateListingPositionDto } from './dto/update-listing-position.dto';
 
 const PUBLISH_REQUIRED_FIELDS = [
   'title',
@@ -296,6 +298,7 @@ export class ListingsService {
     private readonly savedListingsService: SavedListingsService,
     private readonly publishedListingsService: PublishedListingsService,
     private readonly applicantListingSummaryService: ApplicantListingSummaryService,
+    private readonly listingOrderingService: ListingOrderingService,
   ) {}
 
   async create(
@@ -313,9 +316,17 @@ export class ListingsService {
       return this.createWithImage(providerId, dto, file);
     }
 
-    return this.prisma.listing.create({
-      data: this.buildCreateData(providerId, dto),
-    });
+    return runSerializableTransaction(this.prisma, async (tx) =>
+      tx.listing.create({
+        data: {
+          ...this.buildCreateData(providerId, dto),
+          displayOrder: await this.listingOrderingService.getNextDisplayOrder(
+            tx,
+            providerId,
+          ),
+        },
+      }),
+    );
   }
 
   async findAllByProvider(
@@ -323,7 +334,7 @@ export class ListingsService {
   ): Promise<ListingWithActiveApplicationsCount[]> {
     return this.prisma.listing.findMany({
       where: { providerId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
       include: {
         _count: {
           select: {
@@ -366,6 +377,14 @@ export class ListingsService {
       where: { id },
       data: this.buildUpdateData(dto, listing),
     });
+  }
+
+  async updatePosition(
+    id: string,
+    providerId: string,
+    dto: UpdateListingPositionDto,
+  ): Promise<Listing> {
+    return this.listingOrderingService.move(id, providerId, dto.position);
   }
 
   async publish(id: string, providerId: string): Promise<Listing> {
@@ -887,11 +906,15 @@ export class ListingsService {
     const uploaded = await this.uploadListingImage(listingId, file);
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      return await runSerializableTransaction(this.prisma, async (tx) => {
         const listing = await tx.listing.create({
           data: {
             id: listingId,
             ...this.buildCreateData(providerId, dto),
+            displayOrder: await this.listingOrderingService.getNextDisplayOrder(
+              tx,
+              providerId,
+            ),
             photos: [uploaded.secure_url],
           },
         });
@@ -938,7 +961,7 @@ export class ListingsService {
   private buildCreateData(
     providerId: string,
     dto: CreateListingDto,
-  ): Prisma.ListingUncheckedCreateInput {
+  ): Omit<Prisma.ListingUncheckedCreateInput, 'displayOrder'> {
     const draftData = this.stripEmptyValues({
       providerId,
       objectType: dto.objectType,

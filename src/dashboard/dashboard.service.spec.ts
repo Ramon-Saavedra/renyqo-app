@@ -37,6 +37,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   suitableForPeopleCount: null,
   petsPolicy: null,
   smokingPolicy: null,
+  displayOrder: 1,
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
   publishedAt: null,

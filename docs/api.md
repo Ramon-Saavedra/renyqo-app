@@ -108,6 +108,7 @@ Provider endpoints require an authenticated provider session and enforce listing
 | `GET`   | `/api/v1/provider/listings`             | Provider | Get all owned listings with `activeApplicationsCount`   |
 | `GET`   | `/api/v1/provider/listings/:id`         | Provider | Get one owned listing                                   |
 | `PATCH` | `/api/v1/provider/listings/:id`         | Provider | Update an owned listing                                 |
+| `PATCH` | `/api/v1/provider/listings/:id/position` | Provider | Move an owned listing to a position in the provider order |
 | `PATCH` | `/api/v1/provider/listings/:id/publish` | Provider | Publish an owned listing                                |
 | `PATCH` | `/api/v1/provider/listings/:id/draft`   | Provider | Move a listing back to draft                            |
 | `PATCH` | `/api/v1/provider/listings/:id/archive` | Provider | Archive an owned listing                                |
@@ -115,7 +116,9 @@ Provider endpoints require an authenticated provider session and enforce listing
 
 `GET /api/v1/provider/listings/:id/active-applications` is documented under [Applications](#applications).
 
-`GET /api/v1/provider/listings` returns every listing owned by the authenticated provider, ordered by `createdAt` descending. Each item includes `activeApplicationsCount`: the authoritative number of applications with status `ACTIVE` for that listing (expected domain `0`–`5`). WAITING and other non-ACTIVE statuses are not counted. The response does not expose applicant identities, profiles, or raw Prisma `_count` objects.
+`GET /api/v1/provider/listings` returns every listing owned by the authenticated provider, ordered by `displayOrder` ascending. Each item includes its contiguous 1-based `displayOrder` and `activeApplicationsCount`: the authoritative number of applications with status `ACTIVE` for that listing (expected domain `0`–`5`). WAITING and other non-ACTIVE statuses are not counted. The response does not expose applicant identities, profiles, or raw Prisma `_count` objects.
+
+`PATCH /api/v1/provider/listings/:id/position` accepts `{ "position": 1 }`. The position must be an integer from `1` through the provider's total listing count. Moving a listing shifts the affected listings within one serializable transaction, and the response returns the moved listing. New listings append at the end of the provider order.
 
 Required property fields to publish: `street`, `zip`, `city`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`. A final `title` is also required; the frontend sends either its Provider override or its deterministic auto-title.
 

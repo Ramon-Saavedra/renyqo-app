@@ -19,7 +19,7 @@
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["node", "express-session", "passport", "multer"]
+    "types": ["node", "express", "express-session", "passport", "multer"]
   },
   "exclude": [
     "node_modules",

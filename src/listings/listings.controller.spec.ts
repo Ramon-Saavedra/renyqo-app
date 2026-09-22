@@ -12,6 +12,7 @@ import { ListingResponseDto } from './dto/listing-response.dto';
 import { ProviderListingOverviewResponseDto } from './dto/provider-listing-overview-response.dto';
 import { RentListingDto } from './dto/rent-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
+import { UpdateListingPositionDto } from './dto/update-listing-position.dto';
 import { ListingsController } from './listings.controller';
 import { ListingsService } from './listings.service';
 
@@ -61,6 +62,7 @@ const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   suitableForPeopleCount: null,
   petsPolicy: null,
   smokingPolicy: null,
+  displayOrder: 1,
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
   publishedAt: null,
@@ -109,6 +111,7 @@ describe('ListingsController', () => {
             moveToDraft: jest.fn(),
             archive: jest.fn(),
             rentListing: jest.fn(),
+            updatePosition: jest.fn(),
             toListingResponse: jest.fn(
               (listing: Listing) =>
                 new ListingResponseDto(listing, { exposeExactAddress: true }),
@@ -241,6 +244,22 @@ describe('ListingsController', () => {
           isCover: true,
         },
       ]);
+    });
+  });
+
+  describe('updatePosition', () => {
+    it('delegates the position update to the listings service', async () => {
+      const listing = makeListing({ displayOrder: 3 });
+      const dto: UpdateListingPositionDto = { position: 1 };
+      listingsService.updatePosition.mockResolvedValue(listing);
+
+      await controller.updatePosition(LISTING_ID, dto, makeProviderUser());
+
+      expect(listingsService.updatePosition).toHaveBeenCalledWith(
+        LISTING_ID,
+        PROVIDER_ID,
+        dto,
+      );
     });
   });
 
