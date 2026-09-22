@@ -705,6 +705,107 @@ describe('Provider ACTIVE applications summary E2E', () => {
     ).toBe(false);
   });
 
+  it('backfills legacy ACTIVE activeAt values from createdAt without changing non-ACTIVE or existing activeAt values', async () => {
+    const { agent, provider } = await registerProvider();
+    const listing = await publishListing(provider.id);
+    const legacyApplicant = await registerApplicantWithProfile({
+      name: 'Legacy Active Applicant',
+      adultsCount: 1,
+      childrenCount: 0,
+      householdNetIncome: 3200,
+      hasPets: false,
+      isSmoker: false,
+    });
+    const currentApplicant = await registerApplicantWithProfile({
+      name: 'Current Active Applicant',
+      adultsCount: 1,
+      childrenCount: 0,
+      householdNetIncome: 3300,
+      hasPets: false,
+      isSmoker: false,
+    });
+    const waitingApplicant = await registerApplicantWithProfile({
+      name: 'Waiting Applicant',
+      adultsCount: 1,
+      childrenCount: 0,
+      householdNetIncome: 3400,
+      hasPets: false,
+      isSmoker: false,
+    });
+    const legacyCreatedAt = new Date('2026-01-01T00:00:00.000Z');
+    const currentActiveAt = new Date('2026-01-02T00:00:00.000Z');
+    const currentCreatedAt = new Date('2026-01-03T00:00:00.000Z');
+    const waitingCreatedAt = new Date('2026-01-04T00:00:00.000Z');
+
+    const legacyApplication = await getPrisma().application.create({
+      data: {
+        listingId: listing.id,
+        applicantId: legacyApplicant.applicant.id,
+        status: ApplicationStatus.ACTIVE,
+        activeAt: null,
+        createdAt: legacyCreatedAt,
+        updatedAt: legacyCreatedAt,
+      },
+    });
+    const currentApplication = await getPrisma().application.create({
+      data: {
+        listingId: listing.id,
+        applicantId: currentApplicant.applicant.id,
+        status: ApplicationStatus.ACTIVE,
+        activeAt: currentActiveAt,
+        createdAt: currentCreatedAt,
+        updatedAt: currentCreatedAt,
+      },
+    });
+    const waitingApplication = await getPrisma().application.create({
+      data: {
+        listingId: listing.id,
+        applicantId: waitingApplicant.applicant.id,
+        status: ApplicationStatus.WAITING,
+        activeAt: null,
+        createdAt: waitingCreatedAt,
+        updatedAt: waitingCreatedAt,
+      },
+    });
+
+    await getPrisma().$executeRaw`
+      UPDATE "applications"
+      SET "active_at" = "created_at"
+      WHERE "status" = 'active'
+        AND "active_at" IS NULL
+    `;
+
+    const persistedLegacy = await getPrisma().application.findUniqueOrThrow({
+      where: { id: legacyApplication.id },
+    });
+    const persistedCurrent = await getPrisma().application.findUniqueOrThrow({
+      where: { id: currentApplication.id },
+    });
+    const persistedWaiting = await getPrisma().application.findUniqueOrThrow({
+      where: { id: waitingApplication.id },
+    });
+
+    expect(persistedLegacy.activeAt).toEqual(legacyCreatedAt);
+    expect(persistedCurrent.activeAt).toEqual(currentActiveAt);
+    expect(persistedWaiting.activeAt).toBeNull();
+
+    const response = await agent
+      .get(`/api/v1/provider/listings/${listing.id}/active-applications`)
+      .expect(200);
+    const bodies = activeApplicationBodies(response);
+
+    expect(bodies.map((item) => item.id)).toEqual([
+      legacyApplication.id,
+      currentApplication.id,
+    ]);
+    expect(
+      bodies.every((item) => item.status === ApplicationStatus.ACTIVE),
+    ).toBe(true);
+    expect(bodies.some((item) => item.id === waitingApplication.id)).toBe(
+      false,
+    );
+  });
+
   it('returns at most five ACTIVE summaries and never exposes WAITING applicant data', async () => {
     const { agent, provider } = await registerProvider();
     const listing = await publishListing(provider.id);
