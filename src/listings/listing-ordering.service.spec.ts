@@ -17,6 +17,8 @@ type StoredListing = {
 
 type FindManyArgs = {
   where: { providerId: string };
+  orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }];
+  select: { id: true; displayOrder: true };
 };
 
 type FindUniqueArgs = {
