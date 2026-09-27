@@ -7,174 +7,416 @@ import { ListingOrderingService } from './listing-ordering.service';
 
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const OTHER_PROVIDER_ID = '00000000-0000-4000-8000-000000000002';
-const LISTING_ID = '00000000-0000-4000-8000-000000000003';
 
-type ListingClientMock = {
-  findFirst: jest.MockedFunction<
-    (args: unknown) => Promise<{ id: string; displayOrder: number } | null>
-  >;
-  findUnique: jest.MockedFunction<(args: unknown) => Promise<Listing | null>>;
-  count: jest.MockedFunction<(args: unknown) => Promise<number>>;
-  update: jest.MockedFunction<(args: unknown) => Promise<Listing>>;
-  updateMany: jest.MockedFunction<
-    (args: unknown) => Promise<{ count: number }>
-  >;
-  aggregate: jest.MockedFunction<(args: unknown) => Promise<unknown>>;
+type StoredListing = {
+  id: string;
+  providerId: string;
+  displayOrder: number;
+  title: string;
 };
 
-type TransactionMock = {
-  listing: ListingClientMock;
-  $queryRaw: jest.MockedFunction<(query: unknown) => Promise<unknown>>;
+type FindManyArgs = {
+  where: { providerId: string };
+  orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }];
+  select: { id: true; displayOrder: true };
 };
+
+type FindUniqueArgs = {
+  where: { id: string };
+};
+
+type UpdateArgs = {
+  where: { id: string };
+  data: { displayOrder: number };
+};
+
+const GAPPED_PROVIDER_LISTINGS: readonly StoredListing[] = [
+  {
+    id: '00000000-0000-4000-8000-000000000011',
+    providerId: PROVIDER_ID,
+    displayOrder: 1,
+    title: '2-Zimmer-Wohnung in Bawinkel',
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000012',
+    providerId: PROVIDER_ID,
+    displayOrder: 2,
+    title: '9-Zimmer-Haus in Bawinkel',
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000013',
+    providerId: PROVIDER_ID,
+    displayOrder: 3,
+    title: 'Zimmer in Nordhorn',
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000014',
+    providerId: PROVIDER_ID,
+    displayOrder: 4,
+    title: '3-Zimmer-Wohnung in Santiago',
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000015',
+    providerId: PROVIDER_ID,
+    displayOrder: 6,
+    title: '4,5-Zimmer-Haus in Maracaibo',
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000016',
+    providerId: PROVIDER_ID,
+    displayOrder: 7,
+    title: '9,5-Zimmer-Haus in Calaceite',
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000017',
+    providerId: PROVIDER_ID,
+    displayOrder: 13,
+    title: '5-Zimmer-Haus in Berlin',
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000018',
+    providerId: PROVIDER_ID,
+    displayOrder: 16,
+    title: '4,5-Zimmer-Haus in Cocoland',
+  },
+];
+
+const EXPECTED_VISIBLE_TITLES = [
+  '2-Zimmer-Wohnung in Bawinkel',
+  '9-Zimmer-Haus in Bawinkel',
+  'Zimmer in Nordhorn',
+  '3-Zimmer-Wohnung in Santiago',
+  '5-Zimmer-Haus in Berlin',
+  '4,5-Zimmer-Haus in Maracaibo',
+  '9,5-Zimmer-Haus in Calaceite',
+  '4,5-Zimmer-Haus in Cocoland',
+];
+
+function createHarness(seed: readonly StoredListing[]) {
+  const rows = seed.map((listing) => ({ ...listing }));
+
+  const listing = {
+    findMany: jest.fn((args: FindManyArgs) =>
+      rows
+        .filter((row) => row.providerId === args.where.providerId)
+        .sort(
+          (left, right) =>
+            left.displayOrder - right.displayOrder ||
+            left.id.localeCompare(right.id),
+        )
+        .map((row) => ({ id: row.id, displayOrder: row.displayOrder })),
+    ),
+    findUnique: jest.fn((args: FindUniqueArgs) => {
+      const row = rows.find((item) => item.id === args.where.id);
+      return row ? ({ ...row } as Listing) : null;
+    }),
+    update: jest.fn((args: UpdateArgs) => {
+      const row = rows.find((item) => item.id === args.where.id);
+      if (!row) {
+        throw new Error(`Listing ${args.where.id} was not found`);
+      }
+
+      const collision = rows.some(
+        (item) =>
+          item.id !== row.id &&
+          item.providerId === row.providerId &&
+          item.displayOrder === args.data.displayOrder,
+      );
+      if (collision) {
+        throw new Error(
+          `Unique constraint failed on (providerId, displayOrder) for ${args.data.displayOrder}`,
+        );
+      }
+
+      row.displayOrder = args.data.displayOrder;
+      return { ...row } as Listing;
+    }),
+  };
+
+  const tx = {
+    listing,
+    $queryRaw: jest.fn(() => []),
+  };
+
+  const prisma = {
+    $transaction: jest.fn(
+      (operation: (client: Prisma.TransactionClient) => Promise<Listing>) =>
+        operation(tx as unknown as Prisma.TransactionClient),
+    ),
+  };
+
+  return {
+    service: new ListingOrderingService(prisma as unknown as PrismaService),
+    rows,
+    tx,
+    prisma,
+  };
+}
+
+function visibleTitles(rows: readonly StoredListing[], providerId: string) {
+  return rows
+    .filter((row) => row.providerId === providerId)
+    .sort(
+      (left, right) =>
+        left.displayOrder - right.displayOrder ||
+        left.id.localeCompare(right.id),
+    )
+    .map((row) => row.title);
+}
+
+function displayOrders(rows: readonly StoredListing[], providerId: string) {
+  return rows
+    .filter((row) => row.providerId === providerId)
+    .sort(
+      (left, right) =>
+        left.displayOrder - right.displayOrder ||
+        left.id.localeCompare(right.id),
+    )
+    .map((row) => row.displayOrder);
+}
 
 describe('ListingOrderingService', () => {
-  let service: ListingOrderingService;
-  let tx: TransactionMock;
-  let prisma: Pick<PrismaService, '$transaction'>;
-  const listing = { id: LISTING_ID, displayOrder: 5 };
-  const updatedListing = { ...listing, providerId: PROVIDER_ID } as Listing;
+  describe('non-contiguous display orders', () => {
+    let harness: ReturnType<typeof createHarness>;
 
-  beforeEach(() => {
-    tx = {
-      $queryRaw: jest
-        .fn<(query: unknown) => Promise<unknown>>()
-        .mockResolvedValue([]),
-      listing: {
-        findFirst: jest
-          .fn<
-            (
-              args: unknown,
-            ) => Promise<{ id: string; displayOrder: number } | null>
-          >()
-          .mockResolvedValue(listing),
-        findUnique: jest
-          .fn<(args: unknown) => Promise<Listing | null>>()
-          .mockResolvedValue(updatedListing),
-        count: jest
-          .fn<(args: unknown) => Promise<number>>()
-          .mockResolvedValue(20),
-        update: jest
-          .fn<(args: unknown) => Promise<Listing>>()
-          .mockResolvedValue(updatedListing),
-        updateMany: jest
-          .fn<(args: unknown) => Promise<{ count: number }>>()
-          .mockResolvedValue({ count: 0 }),
-        aggregate: jest
-          .fn<(args: unknown) => Promise<unknown>>()
-          .mockResolvedValue({ _max: { displayOrder: 20 } }),
-      },
-    };
+    beforeEach(() => {
+      harness = createHarness([
+        ...GAPPED_PROVIDER_LISTINGS,
+        {
+          id: '00000000-0000-4000-8000-000000000021',
+          providerId: OTHER_PROVIDER_ID,
+          displayOrder: 4,
+          title: 'Other provider listing',
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000022',
+          providerId: OTHER_PROVIDER_ID,
+          displayOrder: 9,
+          title: 'Other provider second listing',
+        },
+      ]);
+    });
 
-    prisma = {
-      $transaction: jest.fn(
-        (operation: (client: Prisma.TransactionClient) => Promise<unknown>) =>
-          Promise.resolve(operation(tx as unknown as Prisma.TransactionClient)),
-      ),
-    } as unknown as Pick<PrismaService, '$transaction'>;
-    service = new ListingOrderingService(prisma as unknown as PrismaService);
+    it('moves visible position 7 to visible position 5 and compacts to 1..N', async () => {
+      const berlin = GAPPED_PROVIDER_LISTINGS[6];
+
+      await harness.service.move(berlin.id, PROVIDER_ID, 5);
+
+      expect(harness.tx.listing.findMany).toHaveBeenCalledWith({
+        where: { providerId: PROVIDER_ID },
+        orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
+        select: { id: true, displayOrder: true },
+      });
+      expect(visibleTitles(harness.rows, PROVIDER_ID)).toEqual(
+        EXPECTED_VISIBLE_TITLES,
+      );
+      expect(displayOrders(harness.rows, PROVIDER_ID)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8,
+      ]);
+      expect(new Set(displayOrders(harness.rows, PROVIDER_ID)).size).toBe(8);
+      expect(displayOrders(harness.rows, OTHER_PROVIDER_ID)).toEqual([4, 9]);
+    });
+
+    it('moves the first visible listing to the last position', async () => {
+      const first = GAPPED_PROVIDER_LISTINGS[0];
+
+      await harness.service.move(first.id, PROVIDER_ID, 8);
+
+      expect(visibleTitles(harness.rows, PROVIDER_ID)).toEqual([
+        '9-Zimmer-Haus in Bawinkel',
+        'Zimmer in Nordhorn',
+        '3-Zimmer-Wohnung in Santiago',
+        '4,5-Zimmer-Haus in Maracaibo',
+        '9,5-Zimmer-Haus in Calaceite',
+        '5-Zimmer-Haus in Berlin',
+        '4,5-Zimmer-Haus in Cocoland',
+        '2-Zimmer-Wohnung in Bawinkel',
+      ]);
+      expect(displayOrders(harness.rows, PROVIDER_ID)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8,
+      ]);
+    });
+
+    it('moves the last visible listing to the first position', async () => {
+      const last = GAPPED_PROVIDER_LISTINGS[7];
+
+      await harness.service.move(last.id, PROVIDER_ID, 1);
+
+      expect(visibleTitles(harness.rows, PROVIDER_ID)).toEqual([
+        '4,5-Zimmer-Haus in Cocoland',
+        '2-Zimmer-Wohnung in Bawinkel',
+        '9-Zimmer-Haus in Bawinkel',
+        'Zimmer in Nordhorn',
+        '3-Zimmer-Wohnung in Santiago',
+        '4,5-Zimmer-Haus in Maracaibo',
+        '9,5-Zimmer-Haus in Calaceite',
+        '5-Zimmer-Haus in Berlin',
+      ]);
+      expect(displayOrders(harness.rows, PROVIDER_ID)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8,
+      ]);
+    });
+
+    it('moves a middle listing to another middle visible position', async () => {
+      const santiago = GAPPED_PROVIDER_LISTINGS[3];
+
+      await harness.service.move(santiago.id, PROVIDER_ID, 6);
+
+      expect(visibleTitles(harness.rows, PROVIDER_ID)).toEqual([
+        '2-Zimmer-Wohnung in Bawinkel',
+        '9-Zimmer-Haus in Bawinkel',
+        'Zimmer in Nordhorn',
+        '4,5-Zimmer-Haus in Maracaibo',
+        '9,5-Zimmer-Haus in Calaceite',
+        '3-Zimmer-Wohnung in Santiago',
+        '5-Zimmer-Haus in Berlin',
+        '4,5-Zimmer-Haus in Cocoland',
+      ]);
+      expect(displayOrders(harness.rows, PROVIDER_ID)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8,
+      ]);
+    });
+
+    it('compacts gaps when the listing is already at the requested visible position', async () => {
+      const nordhorn = GAPPED_PROVIDER_LISTINGS[2];
+
+      await harness.service.move(nordhorn.id, PROVIDER_ID, 3);
+
+      expect(visibleTitles(harness.rows, PROVIDER_ID)).toEqual(
+        GAPPED_PROVIDER_LISTINGS.map((listing) => listing.title),
+      );
+      expect(displayOrders(harness.rows, PROVIDER_ID)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8,
+      ]);
+    });
+
+    it('rejects a position above the visible listing count', async () => {
+      const berlin = GAPPED_PROVIDER_LISTINGS[6];
+
+      await expect(
+        harness.service.move(berlin.id, PROVIDER_ID, 16),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(displayOrders(harness.rows, PROVIDER_ID)).toEqual([
+        1, 2, 3, 4, 6, 7, 13, 16,
+      ]);
+      expect(harness.tx.listing.update).not.toHaveBeenCalled();
+    });
+
+    it('appends a new listing after compacting gaps', async () => {
+      await expect(
+        harness.service.getNextDisplayOrder(
+          harness.tx as unknown as Prisma.TransactionClient,
+          PROVIDER_ID,
+        ),
+      ).resolves.toBe(9);
+
+      expect(displayOrders(harness.rows, PROVIDER_ID)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8,
+      ]);
+      expect(displayOrders(harness.rows, OTHER_PROVIDER_ID)).toEqual([4, 9]);
+    });
   });
 
-  it('shifts positions upward when moving 20 to 1', async () => {
-    tx.listing.findFirst.mockResolvedValue({
-      id: LISTING_ID,
-      displayOrder: 20,
-    });
-
-    await service.move(LISTING_ID, PROVIDER_ID, 1);
-
-    expect(tx.listing.updateMany).toHaveBeenNthCalledWith(1, {
-      where: {
+  it('leaves an already contiguous order unchanged when the visible position does not change', async () => {
+    const harness = createHarness([
+      {
+        id: '00000000-0000-4000-8000-000000000031',
         providerId: PROVIDER_ID,
-        displayOrder: { gte: 1, lt: 20 },
+        displayOrder: 1,
+        title: 'First',
       },
-      data: { displayOrder: { increment: 21 } },
-    });
-    expect(tx.listing.updateMany).toHaveBeenNthCalledWith(2, {
-      where: {
+      {
+        id: '00000000-0000-4000-8000-000000000032',
         providerId: PROVIDER_ID,
-        displayOrder: { gt: 21, lte: 40 },
+        displayOrder: 2,
+        title: 'Second',
       },
-      data: { displayOrder: { decrement: 20 } },
-    });
+      {
+        id: '00000000-0000-4000-8000-000000000033',
+        providerId: PROVIDER_ID,
+        displayOrder: 3,
+        title: 'Third',
+      },
+    ]);
+
+    await harness.service.move(
+      '00000000-0000-4000-8000-000000000032',
+      PROVIDER_ID,
+      2,
+    );
+
+    expect(displayOrders(harness.rows, PROVIDER_ID)).toEqual([1, 2, 3]);
+    expect(harness.tx.listing.update).not.toHaveBeenCalled();
   });
 
-  it('shifts positions downward when moving 1 to 20', async () => {
-    tx.listing.findFirst.mockResolvedValue({ id: LISTING_ID, displayOrder: 1 });
+  it('rejects a non-positive position before opening a transaction', async () => {
+    const harness = createHarness([]);
 
-    await service.move(LISTING_ID, PROVIDER_ID, 20);
-
-    expect(tx.listing.updateMany).toHaveBeenNthCalledWith(1, {
-      where: {
-        providerId: PROVIDER_ID,
-        displayOrder: { gt: 1, lte: 20 },
-      },
-      data: { displayOrder: { decrement: 21 } },
-    });
-    expect(tx.listing.updateMany).toHaveBeenNthCalledWith(2, {
-      where: {
-        providerId: PROVIDER_ID,
-        displayOrder: { gte: -19, lte: -1 },
-      },
-      data: { displayOrder: { increment: 20 } },
-    });
-  });
-
-  it('shifts the affected middle range when moving 5 to 8', async () => {
-    await service.move(LISTING_ID, PROVIDER_ID, 8);
-
-    expect(tx.listing.updateMany).toHaveBeenNthCalledWith(1, {
-      where: {
-        providerId: PROVIDER_ID,
-        displayOrder: { gt: 5, lte: 8 },
-      },
-      data: { displayOrder: { decrement: 21 } },
-    });
-    expect(tx.listing.updateMany).toHaveBeenNthCalledWith(2, {
-      where: {
-        providerId: PROVIDER_ID,
-        displayOrder: { gte: -15, lte: -13 },
-      },
-      data: { displayOrder: { increment: 20 } },
-    });
-  });
-
-  it('does nothing when moving to the current position', async () => {
-    await service.move(LISTING_ID, PROVIDER_ID, 5);
-
-    expect(tx.listing.update).not.toHaveBeenCalled();
-    expect(tx.listing.updateMany).not.toHaveBeenCalled();
-    expect(tx.listing.findUnique).toHaveBeenCalledWith({
-      where: { id: LISTING_ID },
-    });
-  });
-
-  it('rejects positions outside the provider listing range', async () => {
     await expect(
-      service.move(LISTING_ID, PROVIDER_ID, 21),
+      harness.service.move(
+        '00000000-0000-4000-8000-000000000031',
+        PROVIDER_ID,
+        0,
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    expect(tx.listing.update).not.toHaveBeenCalled();
+    expect(harness.prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('rejects a listing owned by another provider', async () => {
-    tx.listing.findFirst.mockResolvedValue(null);
+    const harness = createHarness([
+      {
+        id: '00000000-0000-4000-8000-000000000041',
+        providerId: OTHER_PROVIDER_ID,
+        displayOrder: 1,
+        title: 'Foreign listing',
+      },
+    ]);
 
     await expect(
-      service.move(LISTING_ID, OTHER_PROVIDER_ID, 1),
+      harness.service.move(
+        '00000000-0000-4000-8000-000000000041',
+        PROVIDER_ID,
+        1,
+      ),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('assigns the next appended display order', async () => {
+  it('returns 1 when the provider has no listings', async () => {
+    const harness = createHarness([]);
+
     await expect(
-      service.getNextDisplayOrder(
-        tx as unknown as Prisma.TransactionClient,
+      harness.service.getNextDisplayOrder(
+        harness.tx as unknown as Prisma.TransactionClient,
         PROVIDER_ID,
       ),
-    ).resolves.toBe(21);
+    ).resolves.toBe(1);
+  });
 
-    expect(tx.listing.aggregate).toHaveBeenCalledWith({
-      where: { providerId: PROVIDER_ID },
-      _max: { displayOrder: true },
-    });
+  it('returns the next contiguous rank without rewriting an already compact order', async () => {
+    const harness = createHarness([
+      {
+        id: '00000000-0000-4000-8000-000000000051',
+        providerId: PROVIDER_ID,
+        displayOrder: 1,
+        title: 'First',
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000052',
+        providerId: PROVIDER_ID,
+        displayOrder: 2,
+        title: 'Second',
+      },
+    ]);
+
+    await expect(
+      harness.service.getNextDisplayOrder(
+        harness.tx as unknown as Prisma.TransactionClient,
+        PROVIDER_ID,
+      ),
+    ).resolves.toBe(3);
+
+    expect(harness.tx.listing.update).not.toHaveBeenCalled();
   });
 });

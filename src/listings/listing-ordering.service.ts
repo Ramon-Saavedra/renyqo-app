@@ -9,6 +9,11 @@ import { runSerializableTransaction } from '../prisma/run-serializable-transacti
 
 type TransactionClient = Prisma.TransactionClient;
 
+type OrderedListing = {
+  id: string;
+  displayOrder: number;
+};
+
 @Injectable()
 export class ListingOrderingService {
   constructor(private readonly prisma: PrismaService) {}
@@ -19,12 +24,18 @@ export class ListingOrderingService {
   ): Promise<number> {
     await this.lockProvider(tx, providerId);
 
-    const result = await tx.listing.aggregate({
-      where: { providerId },
-      _max: { displayOrder: true },
-    });
+    const listings = await this.loadProviderListings(tx, providerId);
+    const orderedIds = listings.map((listing) => listing.id);
 
-    return (result._max.displayOrder ?? 0) + 1;
+    if (!this.matchesContiguousOrder(listings, orderedIds)) {
+      await this.persistVisibleOrder(
+        tx,
+        orderedIds,
+        listings.map((listing) => listing.displayOrder),
+      );
+    }
+
+    return listings.length + 1;
   }
 
   async move(
@@ -39,93 +50,95 @@ export class ListingOrderingService {
     return runSerializableTransaction(this.prisma, async (tx) => {
       await this.lockProvider(tx, providerId);
 
-      const listing = await tx.listing.findFirst({
-        where: { id: listingId, providerId },
-        select: { id: true, displayOrder: true },
-      });
+      const listings = await this.loadProviderListings(tx, providerId);
+      const currentIndex = listings.findIndex(
+        (listing) => listing.id === listingId,
+      );
 
-      if (!listing) {
+      if (currentIndex === -1) {
         throw new NotFoundException('Listing not found');
       }
 
-      const providerListingCount = await tx.listing.count({
-        where: { providerId },
-      });
-
-      if (requestedPosition > providerListingCount) {
+      if (requestedPosition > listings.length) {
         throw new BadRequestException(
-          `position must be between 1 and ${providerListingCount}`,
+          `position must be between 1 and ${listings.length}`,
         );
       }
 
-      if (requestedPosition === listing.displayOrder) {
-        const currentListing = await tx.listing.findUnique({
-          where: { id: listingId },
-        });
+      const reordered = [...listings];
+      const [moved] = reordered.splice(currentIndex, 1);
+      reordered.splice(requestedPosition - 1, 0, moved);
+      const orderedIds = reordered.map((listing) => listing.id);
 
-        if (!currentListing) {
-          throw new NotFoundException('Listing not found');
-        }
-
-        return currentListing;
+      if (!this.matchesContiguousOrder(listings, orderedIds)) {
+        await this.persistVisibleOrder(
+          tx,
+          orderedIds,
+          listings.map((listing) => listing.displayOrder),
+        );
       }
 
+      const movedListing = await tx.listing.findUnique({
+        where: { id: listingId },
+      });
+
+      if (!movedListing) {
+        throw new NotFoundException('Listing not found');
+      }
+
+      return movedListing;
+    });
+  }
+
+  private async loadProviderListings(
+    tx: TransactionClient,
+    providerId: string,
+  ): Promise<OrderedListing[]> {
+    return tx.listing.findMany({
+      where: { providerId },
+      orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
+      select: { id: true, displayOrder: true },
+    });
+  }
+
+  private matchesContiguousOrder(
+    listings: readonly OrderedListing[],
+    orderedIds: readonly string[],
+  ): boolean {
+    return (
+      listings.length === orderedIds.length &&
+      listings.every(
+        (listing, index) =>
+          listing.id === orderedIds[index] &&
+          listing.displayOrder === index + 1,
+      )
+    );
+  }
+
+  private async persistVisibleOrder(
+    tx: TransactionClient,
+    orderedIds: readonly string[],
+    currentDisplayOrders: readonly number[],
+  ): Promise<void> {
+    const highestDisplayOrder = currentDisplayOrders.reduce(
+      (highest, displayOrder) => Math.max(highest, displayOrder),
+      0,
+    );
+    const temporaryStart = highestDisplayOrder + orderedIds.length;
+
+    for (const [index, listingId] of orderedIds.entries()) {
       await tx.listing.update({
         where: { id: listingId },
-        data: { displayOrder: 0 },
+        data: { displayOrder: temporaryStart + index + 1 },
       });
+    }
 
-      const temporaryOffset = providerListingCount + 1;
-
-      if (requestedPosition < listing.displayOrder) {
-        await tx.listing.updateMany({
-          where: {
-            providerId,
-            displayOrder: {
-              gte: requestedPosition,
-              lt: listing.displayOrder,
-            },
-          },
-          data: { displayOrder: { increment: temporaryOffset } },
-        });
-        await tx.listing.updateMany({
-          where: {
-            providerId,
-            displayOrder: {
-              gt: temporaryOffset,
-              lte: temporaryOffset + listing.displayOrder - requestedPosition,
-            },
-          },
-          data: { displayOrder: { decrement: temporaryOffset - 1 } },
-        });
-      } else {
-        await tx.listing.updateMany({
-          where: {
-            providerId,
-            displayOrder: {
-              gt: listing.displayOrder,
-              lte: requestedPosition,
-            },
-          },
-          data: { displayOrder: { decrement: temporaryOffset } },
-        });
-        await tx.listing.updateMany({
-          where: {
-            providerId,
-            displayOrder: {
-              gte: listing.displayOrder + 1 - temporaryOffset,
-              lte: requestedPosition - temporaryOffset,
-            },
-          },
-          data: { displayOrder: { increment: temporaryOffset - 1 } },
-        });
-      }
-
-      return tx.listing.update({
+    for (const [index, listingId] of orderedIds.entries()) {
+      await tx.listing.update({
         where: { id: listingId },
-        data: { displayOrder: requestedPosition },
+        data: { displayOrder: index + 1 },
       });
-    });
+    }
   }
 
   private async lockProvider(
