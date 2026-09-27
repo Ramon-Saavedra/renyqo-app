@@ -228,6 +228,37 @@ function listingImageBodies(response: Response): ListingImageItemBody[] {
   return body;
 }
 
+type ProviderListingOrderItem = {
+  id: string;
+  title: string;
+  displayOrder: number;
+};
+
+function providerListingOrder(body: unknown): ProviderListingOrderItem[] {
+  if (!Array.isArray(body)) {
+    throw new Error('E2E provider listings response has an unexpected shape.');
+  }
+
+  return body.map((item: unknown) => {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== 'string' ||
+      typeof item.title !== 'string' ||
+      typeof item.displayOrder !== 'number'
+    ) {
+      throw new Error(
+        'E2E provider listings response has an unexpected shape.',
+      );
+    }
+
+    return {
+      id: item.id,
+      title: item.title,
+      displayOrder: item.displayOrder,
+    };
+  });
+}
+
 async function createPublishedListing(providerId: string) {
   const maxOrder = await getPrisma().listing.aggregate({
     where: { providerId },
@@ -1897,6 +1928,295 @@ describe('Backend API E2E', () => {
     expect(finalBody.map((listing) => listing.displayOrder)).toEqual(
       Array.from({ length: 21 }, (_, index) => index + 1),
     );
+  });
+
+  it('reorders a non-contiguous displayOrder sequence by visible position', async () => {
+    const providerAgent = request.agent(getServer());
+    const provider = safeUserBody(
+      await providerAgent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+    const otherProvider = safeUserBody(
+      await request(getServer())
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+
+    const gappedListings = [
+      { title: '4,5-Zimmer-Haus in Cocoland', displayOrder: 16 },
+      { title: '5-Zimmer-Haus in Berlin', displayOrder: 13 },
+      { title: '9,5-Zimmer-Haus in Calaceite', displayOrder: 7 },
+      { title: '4,5-Zimmer-Haus in Maracaibo', displayOrder: 6 },
+      { title: '3-Zimmer-Wohnung in Santiago', displayOrder: 4 },
+      { title: 'Zimmer in Nordhorn', displayOrder: 3 },
+      { title: '9-Zimmer-Haus in Bawinkel', displayOrder: 2 },
+      { title: '2-Zimmer-Wohnung in Bawinkel', displayOrder: 1 },
+    ];
+
+    for (const listing of gappedListings) {
+      await getPrisma().listing.create({
+        data: {
+          providerId: provider.id,
+          displayOrder: listing.displayOrder,
+          status: ListingStatus.PUBLISHED,
+          city: 'Berlin',
+          title: listing.title,
+        },
+      });
+    }
+
+    await getPrisma().listing.create({
+      data: {
+        providerId: otherProvider.id,
+        displayOrder: 13,
+        status: ListingStatus.PUBLISHED,
+        city: 'Berlin',
+        title: 'Other provider listing',
+      },
+    });
+
+    const berlin = await getPrisma().listing.findFirstOrThrow({
+      where: { providerId: provider.id, title: '5-Zimmer-Haus in Berlin' },
+    });
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${berlin.id}/position`)
+      .send({ position: 5 })
+      .expect(200);
+
+    const refreshed = await providerAgent
+      .get('/api/v1/provider/listings')
+      .expect(200);
+    const visibleOrder = providerListingOrder(refreshed.body);
+
+    expect(visibleOrder.map((listing) => listing.title)).toEqual([
+      '2-Zimmer-Wohnung in Bawinkel',
+      '9-Zimmer-Haus in Bawinkel',
+      'Zimmer in Nordhorn',
+      '3-Zimmer-Wohnung in Santiago',
+      '5-Zimmer-Haus in Berlin',
+      '4,5-Zimmer-Haus in Maracaibo',
+      '9,5-Zimmer-Haus in Calaceite',
+      '4,5-Zimmer-Haus in Cocoland',
+    ]);
+    expect(visibleOrder.map((listing) => listing.displayOrder)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8,
+    ]);
+
+    const persisted = await getPrisma().listing.findMany({
+      where: { providerId: provider.id },
+      orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
+      select: { id: true, title: true, displayOrder: true },
+    });
+    expect(persisted.map((listing) => listing.id)).toEqual(
+      visibleOrder.map((listing) => listing.id),
+    );
+    expect(persisted.map((listing) => listing.displayOrder)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8,
+    ]);
+    expect(new Set(persisted.map((listing) => listing.displayOrder)).size).toBe(
+      persisted.length,
+    );
+
+    const isolated = await getPrisma().listing.findMany({
+      where: { providerId: otherProvider.id },
+      select: { displayOrder: true },
+    });
+    expect(isolated.map((listing) => listing.displayOrder)).toEqual([13]);
+  });
+
+  it('compacts gaps for first, last, middle, and unchanged visible moves', async () => {
+    const providerAgent = request.agent(getServer());
+    const provider = safeUserBody(
+      await providerAgent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+
+    const seeded = [];
+    for (const listing of [
+      { title: 'First', displayOrder: 1 },
+      { title: 'Second', displayOrder: 4 },
+      { title: 'Third', displayOrder: 9 },
+      { title: 'Fourth', displayOrder: 15 },
+    ]) {
+      seeded.push(
+        await getPrisma().listing.create({
+          data: {
+            providerId: provider.id,
+            displayOrder: listing.displayOrder,
+            status: ListingStatus.PUBLISHED,
+            city: 'Berlin',
+            title: listing.title,
+          },
+        }),
+      );
+    }
+
+    const [first, second, , fourth] = seeded;
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${first.id}/position`)
+      .send({ position: 4 })
+      .expect(200);
+
+    const afterFirstToLast = providerListingOrder(
+      (await providerAgent.get('/api/v1/provider/listings').expect(200)).body,
+    );
+    expect(afterFirstToLast.map((listing) => listing.title)).toEqual([
+      'Second',
+      'Third',
+      'Fourth',
+      'First',
+    ]);
+    expect(afterFirstToLast.map((listing) => listing.displayOrder)).toEqual([
+      1, 2, 3, 4,
+    ]);
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${fourth.id}/position`)
+      .send({ position: 1 })
+      .expect(200);
+
+    const afterLastToFirst = providerListingOrder(
+      (await providerAgent.get('/api/v1/provider/listings').expect(200)).body,
+    );
+    expect(afterLastToFirst.map((listing) => listing.title)).toEqual([
+      'Fourth',
+      'Second',
+      'Third',
+      'First',
+    ]);
+    expect(afterLastToFirst.map((listing) => listing.displayOrder)).toEqual([
+      1, 2, 3, 4,
+    ]);
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${second.id}/position`)
+      .send({ position: 3 })
+      .expect(200);
+
+    const afterMiddleMove = providerListingOrder(
+      (await providerAgent.get('/api/v1/provider/listings').expect(200)).body,
+    );
+    expect(afterMiddleMove.map((listing) => listing.title)).toEqual([
+      'Fourth',
+      'Third',
+      'Second',
+      'First',
+    ]);
+    expect(afterMiddleMove.map((listing) => listing.displayOrder)).toEqual([
+      1, 2, 3, 4,
+    ]);
+
+    await getPrisma().listing.update({
+      where: { id: afterMiddleMove[1].id },
+      data: { displayOrder: 20 },
+    });
+    await getPrisma().listing.update({
+      where: { id: afterMiddleMove[2].id },
+      data: { displayOrder: 30 },
+    });
+    await getPrisma().listing.update({
+      where: { id: afterMiddleMove[3].id },
+      data: { displayOrder: 40 },
+    });
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${afterMiddleMove[1].id}/position`)
+      .send({ position: 2 })
+      .expect(200);
+
+    const compacted = providerListingOrder(
+      (await providerAgent.get('/api/v1/provider/listings').expect(200)).body,
+    );
+    expect(compacted.map((listing) => listing.id)).toEqual(
+      afterMiddleMove.map((listing) => listing.id),
+    );
+    expect(compacted.map((listing) => listing.displayOrder)).toEqual([
+      1, 2, 3, 4,
+    ]);
+
+    const persistedOrders = (
+      await getPrisma().listing.findMany({
+        where: { providerId: provider.id },
+        select: { displayOrder: true },
+      })
+    ).map((listing) => listing.displayOrder);
+    expect(new Set(persistedOrders).size).toBe(persistedOrders.length);
+    expect(persistedOrders.sort((left, right) => left - right)).toEqual([
+      1, 2, 3, 4,
+    ]);
+
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${first.id}/position`)
+      .send({ position: 0 })
+      .expect(400);
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${first.id}/position`)
+      .send({ position: 5 })
+      .expect(400);
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${first.id}/position`)
+      .send({ position: 40 })
+      .expect(400);
+
+    const unchanged = providerListingOrder(
+      (await providerAgent.get('/api/v1/provider/listings').expect(200)).body,
+    );
+    expect(
+      unchanged.map((listing) => [listing.id, listing.displayOrder]),
+    ).toEqual(compacted.map((listing) => [listing.id, listing.displayOrder]));
+  });
+
+  it('appends a new listing at the visible end after compacting gaps', async () => {
+    const providerAgent = request.agent(getServer());
+    const provider = safeUserBody(
+      await providerAgent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+
+    await getPrisma().listing.create({
+      data: {
+        providerId: provider.id,
+        displayOrder: 1,
+        status: ListingStatus.PUBLISHED,
+        city: 'Berlin',
+        title: 'Existing first',
+      },
+    });
+    await getPrisma().listing.create({
+      data: {
+        providerId: provider.id,
+        displayOrder: 6,
+        status: ListingStatus.PUBLISHED,
+        city: 'Berlin',
+        title: 'Existing second',
+      },
+    });
+
+    await providerAgent
+      .post('/api/v1/provider/listings')
+      .send({ title: 'Appended after gaps' })
+      .expect(201);
+
+    const visibleOrder = providerListingOrder(
+      (await providerAgent.get('/api/v1/provider/listings').expect(200)).body,
+    );
+    expect(visibleOrder.map((listing) => listing.title)).toEqual([
+      'Existing first',
+      'Existing second',
+      'Appended after gaps',
+    ]);
+    expect(visibleOrder.map((listing) => listing.displayOrder)).toEqual([
+      1, 2, 3,
+    ]);
   });
 
   describe('re-applying after withdrawal', () => {
