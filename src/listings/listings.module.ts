@@ -7,9 +7,13 @@ import { PublishedListingsModule } from '../published-listings/published-listing
 import { SavedListingsModule } from '../saved-listings/saved-listings.module';
 
 import { ApplicantListingsController } from './applicant-listings.controller';
+import { ApplicantListingsService } from './applicant-listings.service';
+import { ApplicantListingDiscoveryQuery } from './applicant-listing-discovery-query';
 import { ListingsController } from './listings.controller';
 import { ListingsService } from './listings.service';
 import { ListingOrderingService } from './listing-ordering.service';
+import { ListingInputRules } from './listing-input-rules';
+import { ListingResponseMapper } from './listing-response.mapper';
 
 @Module({
   imports: [
@@ -21,7 +25,14 @@ import { ListingOrderingService } from './listing-ordering.service';
     ApplicantListingSummariesModule,
   ],
   controllers: [ListingsController, ApplicantListingsController],
-  providers: [ListingsService, ListingOrderingService],
+  providers: [
+    ListingsService,
+    ApplicantListingsService,
+    ApplicantListingDiscoveryQuery,
+    ListingOrderingService,
+    ListingInputRules,
+    ListingResponseMapper,
+  ],
   exports: [ListingsService],
 })
 export class ListingsModule {}

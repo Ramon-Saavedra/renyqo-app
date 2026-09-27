@@ -15,11 +15,13 @@ import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantListingDetailDto } from './dto/applicant-listing-detail.dto';
 import { ApplicantListingsPageDto } from './dto/applicant-listings-page.dto';
 import { ApplicantListingsQueryDto } from './dto/applicant-listings-query.dto';
-import { ListingsService } from './listings.service';
+import { ApplicantListingsService } from './applicant-listings.service';
 
 @Controller('listings')
 export class ApplicantListingsController {
-  constructor(private readonly listingsService: ListingsService) {}
+  constructor(
+    private readonly applicantListingsService: ApplicantListingsService,
+  ) {}
 
   @Get()
   async findAll(
@@ -38,14 +40,20 @@ export class ApplicantListingsController {
         throw new ForbiddenException();
       }
 
-      if (!(await this.listingsService.isProfileCompleteForUser(user.id))) {
+      if (
+        !(await this.applicantListingsService.isProfileCompleteForUser(user.id))
+      ) {
         throw new BadRequestException(
           'A complete applicant profile is required for onlyMatching',
         );
       }
     }
 
-    return this.listingsService.findPublishedForApplicant(query, user, res);
+    return this.applicantListingsService.findPublishedForApplicant(
+      query,
+      user,
+      res,
+    );
   }
 
   @Get(':id')
@@ -54,6 +62,10 @@ export class ApplicantListingsController {
     @CurrentUserOptional() user: SafeUser | null,
     @Res({ passthrough: true }) res: Response,
   ): Promise<ApplicantListingDetailDto> {
-    return this.listingsService.findPublishedDetailForApplicant(id, user, res);
+    return this.applicantListingsService.findPublishedDetailForApplicant(
+      id,
+      user,
+      res,
+    );
   }
 }

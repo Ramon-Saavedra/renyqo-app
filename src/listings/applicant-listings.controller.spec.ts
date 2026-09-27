@@ -9,7 +9,7 @@ import { ApplicantListingDetailDto } from './dto/applicant-listing-detail.dto';
 import { ProfileMatch } from './dto/applicant-listing-profile-match.enum';
 import { ApplicantListingsPageDto } from './dto/applicant-listings-page.dto';
 import { ApplicantListingsController } from './applicant-listings.controller';
-import { ListingsService } from './listings.service';
+import { ApplicantListingsService } from './applicant-listings.service';
 
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
 
@@ -17,7 +17,7 @@ describe('ApplicantListingsController', () => {
   let controller: ApplicantListingsController;
   let listingsService: jest.Mocked<
     Pick<
-      ListingsService,
+      ApplicantListingsService,
       | 'findPublishedForApplicant'
       | 'findPublishedDetailForApplicant'
       | 'isProfileCompleteForUser'
@@ -35,7 +35,9 @@ describe('ApplicantListingsController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ApplicantListingsController],
-      providers: [{ provide: ListingsService, useValue: listingsService }],
+      providers: [
+        { provide: ApplicantListingsService, useValue: listingsService },
+      ],
     }).compile();
 
     controller = module.get<ApplicantListingsController>(
