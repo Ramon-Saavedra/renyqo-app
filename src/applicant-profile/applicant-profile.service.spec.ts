@@ -2,7 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { ApplicationsService } from '../applications/applications.service';
+import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import type { ApplicantProfile } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplicantProfileService } from './applicant-profile.service';
@@ -40,7 +40,7 @@ type TransactionMock = {
 describe('ApplicantProfileService', () => {
   let service: ApplicantProfileService;
   let applicationsServiceMock: jest.Mocked<
-    Pick<ApplicationsService, 'revalidateActiveAndWaitingApplications'>
+    Pick<ApplicationLifecycleService, 'revalidateActiveAndWaitingApplications'>
   >;
   let prismaMock: TransactionMock & {
     $transaction: jest.MockedFunction<
@@ -70,7 +70,7 @@ describe('ApplicantProfileService', () => {
         ApplicantProfileService,
         { provide: PrismaService, useValue: prismaMock },
         {
-          provide: ApplicationsService,
+          provide: ApplicationLifecycleService,
           useValue: applicationsServiceMock,
         },
       ],

@@ -3,10 +3,15 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { EligibilityModule } from '../eligibility/eligibility.module';
 import { ApplicationActionThrottlerStorage } from './application-action-throttler.storage';
+import { ApplicationLifecycleService } from './application-lifecycle.service';
+import { ApplicationProcessQueryService } from './application-process-query.service';
+import { ApplicationTransactionService } from './application-transaction.service';
+import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicantApplicationsController } from './applicant-applications.controller';
 import { ApplicantApplicationActionsController } from './applicant-application-actions.controller';
 import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
+import { ProviderApplicationCurationService } from './provider-application-curation.service';
 import { ProviderApplicationsController } from './provider-applications.controller';
 import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-application-action-throttler.guard';
 
@@ -19,10 +24,15 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
     ProviderApplicationsController,
   ],
   providers: [
+    ApplicationLifecycleService,
+    ApplicationProcessQueryService,
+    ApplicationTransactionService,
+    ApplicationWaitingPromotionService,
+    ProviderApplicationCurationService,
     ApplicationsService,
     ApplicantApplicationActionThrottlerGuard,
     ApplicationActionThrottlerStorage,
   ],
-  exports: [ApplicationsService],
+  exports: [ApplicationsService, ApplicationLifecycleService],
 })
 export class ApplicationsModule {}

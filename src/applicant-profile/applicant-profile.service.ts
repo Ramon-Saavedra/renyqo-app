@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 
-import { ApplicationsService } from '../applications/applications.service';
+import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import type { ApplicantProfile } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
@@ -10,7 +10,7 @@ import type { UpdateApplicantProfileDto } from './dto/update-applicant-profile.d
 export class ApplicantProfileService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly applicationsService: ApplicationsService,
+    private readonly applicationLifecycleService: ApplicationLifecycleService,
   ) {}
 
   async findByApplicant(applicantId: string): Promise<ApplicantProfile | null> {
@@ -41,7 +41,7 @@ export class ApplicantProfileService {
           update: { ...merged, peopleCount },
         });
 
-        await this.applicationsService.revalidateActiveAndWaitingApplications(
+        await this.applicationLifecycleService.revalidateActiveAndWaitingApplications(
           tx,
           applicantId,
           profile,
