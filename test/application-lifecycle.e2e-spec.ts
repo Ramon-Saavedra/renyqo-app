@@ -394,6 +394,48 @@ describe('Application Lifecycle E2E', () => {
     await clearDatabase();
   });
 
+  describe('Provider mutation authorization', () => {
+    it('rejects unauthenticated and applicant access to reject', async () => {
+      const { provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicantAgent = await registerApplicant();
+      const entry = await applyToListing(applicantAgent, listing.id);
+      const path = `/api/v1/provider/applications/${String(entry['id'])}/reject`;
+
+      await request(getServer()).patch(path).send().expect(401);
+      await applicantAgent.patch(path).send().expect(403);
+    });
+
+    it('rejects unauthenticated and applicant access to restore', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicantAgent = await registerApplicant();
+      const entry = await applyToListing(applicantAgent, listing.id);
+      const applicationId = String(entry['id']);
+
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${applicationId}/reject`)
+        .send()
+        .expect(200);
+
+      const path = `/api/v1/provider/applications/${applicationId}/restore`;
+      await request(getServer()).patch(path).send().expect(401);
+      await applicantAgent.patch(path).send().expect(403);
+    });
+
+    it('rejects unauthenticated and applicant access to rent', async () => {
+      const { provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicantAgent = await registerApplicant();
+      const entry = await applyToListing(applicantAgent, listing.id);
+      const path = `/api/v1/provider/listings/${listing.id}/rent`;
+      const body = { selectedApplicationId: String(entry['id']) };
+
+      await request(getServer()).patch(path).send(body).expect(401);
+      await applicantAgent.patch(path).send(body).expect(403);
+    });
+  });
+
   describe('Provider rejects an application', () => {
     it('rejects an ACTIVE candidate with NOT_SELECTED and sets rejectedAt', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
@@ -451,6 +493,28 @@ describe('Application Lifecycle E2E', () => {
       await providerAgent
         .patch(
           '/api/v1/provider/applications/00000000-0000-4000-8000-000000000099/reject',
+        )
+        .send()
+        .expect(404);
+    });
+
+    it('keeps WAITING applications anonymous to provider mutations', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicants = await Promise.all(
+        Array.from({ length: 6 }, () => registerApplicant()),
+      );
+      const entries = await Promise.all(
+        applicants.map((agent) => applyToListing(agent, listing.id)),
+      );
+      const waitingEntry = entries.find(
+        (entry) => entry['status'] === ApplicationStatus.WAITING,
+      );
+
+      expect(waitingEntry).toBeDefined();
+      await providerAgent
+        .patch(
+          `/api/v1/provider/applications/${String(waitingEntry?.['id'])}/reject`,
         )
         .send()
         .expect(404);

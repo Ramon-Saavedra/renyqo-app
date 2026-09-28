@@ -27,7 +27,13 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
 import { EligibilityService } from '../eligibility/eligibility.service';
+import { ApplicationLifecycleService } from './application-lifecycle.service';
+import { ApplicationProcessQueryService } from './application-process-query.service';
+import { ApplicationProcessStateResolver } from './application-process-state.resolver';
+import { ApplicationTransactionService } from './application-transaction.service';
+import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicationsService } from './applications.service';
+import { ProviderApplicationCurationService } from './provider-application-curation.service';
 const LISTING_ID = '00000000-0000-4000-8000-000000000001';
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000002';
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000003';
@@ -157,6 +163,12 @@ describe('ApplicationsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        ApplicationLifecycleService,
+        ApplicationProcessQueryService,
+        ApplicationProcessStateResolver,
+        ApplicationTransactionService,
+        ApplicationWaitingPromotionService,
+        ProviderApplicationCurationService,
         ApplicationsService,
         { provide: PrismaService, useValue: prismaMock },
         {
@@ -1066,7 +1078,6 @@ describe('ApplicationsService', () => {
         where: {
           listingId: LISTING_ID,
           status: ApplicationStatus.ACTIVE,
-          listing: { providerId: PROVIDER_ID },
         },
         orderBy: [{ activeAt: 'asc' }, { id: 'asc' }],
         take: 5,
@@ -1694,7 +1705,6 @@ describe('ApplicationsService', () => {
       expect(String(queryArgs?.[0])).not.toContain('ap.schufa_available');
       expect(String(queryArgs?.[0])).not.toContain('ap.income_proof_available');
       expect(queryArgs).toContain(LISTING_ID);
-      expect(queryArgs).toContain(PROVIDER_ID);
       expect(queryArgs).toContain(5);
       expect(prismaMock.application.count).toHaveBeenCalledWith(
         expect.objectContaining({
