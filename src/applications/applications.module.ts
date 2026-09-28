@@ -5,7 +5,6 @@ import { EligibilityModule } from '../eligibility/eligibility.module';
 import { ApplicationActionThrottlerStorage } from './application-action-throttler.storage';
 import { ApplicationLifecycleService } from './application-lifecycle.service';
 import { ApplicationProcessQueryService } from './application-process-query.service';
-import { ApplicationProcessStateResolver } from './application-process-state.resolver';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicantApplicationsController } from './applicant-applications.controller';
@@ -27,7 +26,6 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
   providers: [
     ApplicationLifecycleService,
     ApplicationProcessQueryService,
-    ApplicationProcessStateResolver,
     ApplicationTransactionService,
     ApplicationWaitingPromotionService,
     ProviderApplicationCurationService,

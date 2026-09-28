@@ -5,10 +5,6 @@ import {
   type ApplicationTransactionClient,
 } from './application-lifecycle.service';
 import { ApplicationProcessQueryService } from './application-process-query.service';
-import {
-  ApplicationProcessStateResolver,
-  type ApplicationProcessState,
-} from './application-process-state.resolver';
 import type { BlockingApplicationState } from './applicant-listing-application-state';
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
 import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
@@ -21,7 +17,6 @@ export class ApplicationsService {
     private readonly lifecycleService: ApplicationLifecycleService,
     private readonly curationService: ProviderApplicationCurationService,
     private readonly queryService: ApplicationProcessQueryService,
-    private readonly processStateResolver: ApplicationProcessStateResolver,
   ) {}
 
   apply(listingId: string, applicantId: string): Promise<Application> {
@@ -38,12 +33,6 @@ export class ApplicationsService {
 
   restore(applicationId: string, providerId: string): Promise<Application> {
     return this.curationService.restore(applicationId, providerId);
-  }
-
-  resolveProcessState(
-    application: Pick<Application, 'status'>,
-  ): ApplicationProcessState {
-    return this.processStateResolver.resolve(application);
   }
 
   promoteWaitingApplications(listingId: string): Promise<number> {

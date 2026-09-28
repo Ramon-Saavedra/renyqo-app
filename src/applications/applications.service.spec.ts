@@ -29,7 +29,6 @@ import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { ApplicationLifecycleService } from './application-lifecycle.service';
 import { ApplicationProcessQueryService } from './application-process-query.service';
-import { ApplicationProcessStateResolver } from './application-process-state.resolver';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicationsService } from './applications.service';
@@ -165,7 +164,6 @@ describe('ApplicationsService', () => {
       providers: [
         ApplicationLifecycleService,
         ApplicationProcessQueryService,
-        ApplicationProcessStateResolver,
         ApplicationTransactionService,
         ApplicationWaitingPromotionService,
         ProviderApplicationCurationService,
