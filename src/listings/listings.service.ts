@@ -249,8 +249,9 @@ export class ListingsService {
           },
         });
 
-        for (const application of nonSelectedApplications) {
-          await this.activityService.appendWithinTransaction(tx, {
+        await this.activityService.appendManyWithinTransaction(
+          tx,
+          nonSelectedApplications.map((application) => ({
             applicationId: application.id,
             type: ApplicationActivityType.APPLICATION_REJECTED,
             actorUserId: providerId,
@@ -264,8 +265,8 @@ export class ListingsService {
               toStatus: ApplicationStatus.REJECTED,
               reason: ApplicationRejectionReason.LISTING_RENTED,
             },
-          });
-        }
+          })),
+        );
       }
 
       await tx.application.update({

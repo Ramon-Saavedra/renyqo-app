@@ -52,6 +52,27 @@ export class ApplicationActivityService {
     return this.create(tx, input);
   }
 
+  appendManyWithinTransaction(
+    tx: Prisma.TransactionClient,
+    inputs: AppendApplicationActivityInput[],
+  ): Promise<Prisma.BatchPayload> {
+    if (inputs.length === 0) {
+      return Promise.resolve({ count: 0 });
+    }
+
+    return tx.applicationActivity.createMany({
+      data: inputs.map((input) => ({
+        applicationId: input.applicationId,
+        type: input.type,
+        actorUserId: input.actorUserId,
+        actorType: input.actorType,
+        visibility: input.visibility,
+        occurredAt: input.occurredAt,
+        payload: input.metadata,
+      })),
+    });
+  }
+
   findForAudience(
     applicationId: string,
     audience: PublicActivityAudience,
@@ -63,6 +84,7 @@ export class ApplicationActivityService {
         select: {
           applicantId: true,
           status: true,
+          activeAt: true,
           listing: { select: { providerId: true } },
         },
       })
@@ -70,7 +92,8 @@ export class ApplicationActivityService {
         const ownsApplication =
           audience === ApplicationActivityVisibility.PROVIDER
             ? application?.listing.providerId === userId &&
-              application.status !== ApplicationStatus.WAITING
+              (application.status === ApplicationStatus.ACTIVE ||
+                application.activeAt !== null)
             : application?.applicantId === userId;
 
         if (!ownsApplication) {

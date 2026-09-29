@@ -1158,7 +1158,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 3 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerApplicant()),
       );
       const entries = await Promise.all(
         agents.map((a) => applyToListing(a, listing.id)),
@@ -1212,12 +1212,73 @@ describe('Application Lifecycle E2E', () => {
             activity.type === ApplicationActivityType.APPLICATION_ACCEPTED,
         ),
       ).toHaveLength(1);
+      const rejectedActivities = activities.filter(
+        (activity) =>
+          activity.type === ApplicationActivityType.APPLICATION_REJECTED,
+      );
+      expect(rejectedActivities).toHaveLength(5);
       expect(
-        activities.filter(
+        rejectedActivities.filter(
           (activity) =>
-            activity.type === ApplicationActivityType.APPLICATION_REJECTED,
+            activity.visibility === ApplicationActivityVisibility.BOTH,
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(4);
+      expect(
+        rejectedActivities.filter(
+          (activity) =>
+            activity.visibility === ApplicationActivityVisibility.APPLICANT,
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('rolls back rent changes when bulk activity insertion fails', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicants = await Promise.all([
+        registerApplicant(),
+        registerApplicant(),
+      ]);
+      const entries = await Promise.all(
+        applicants.map((agent) => applyToListing(agent, listing.id)),
+      );
+      const activityService = app!.get(ApplicationActivityService);
+      const appendManySpy = jest
+        .spyOn(activityService, 'appendManyWithinTransaction')
+        .mockRejectedValueOnce(new Error('bulk activity append failed'));
+
+      await providerAgent
+        .patch(`/api/v1/provider/listings/${listing.id}/rent`)
+        .send({ selectedApplicationId: entries[0]['id'] })
+        .expect(500);
+
+      appendManySpy.mockRestore();
+      await expect(
+        getPrisma().listing.findUnique({ where: { id: listing.id } }),
+      ).resolves.toMatchObject({ status: ListingStatus.PUBLISHED });
+      await expect(
+        getPrisma().application.findMany({
+          where: { id: { in: entries.map((entry) => entry['id'] as string) } },
+        }),
+      ).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: ApplicationStatus.ACTIVE }),
+        ]),
+      );
+      await expect(
+        getPrisma().applicationActivity.findMany({
+          where: {
+            applicationId: {
+              in: entries.map((entry) => entry['id'] as string),
+            },
+            type: {
+              in: [
+                ApplicationActivityType.APPLICATION_ACCEPTED,
+                ApplicationActivityType.APPLICATION_REJECTED,
+              ],
+            },
+          },
+        }),
+      ).resolves.toHaveLength(0);
     });
 
     it('rents a PAUSED listing', async () => {

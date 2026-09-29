@@ -114,7 +114,10 @@ describe('ListingsService', () => {
     Pick<CloudinaryService, 'uploadBuffer' | 'deleteByPublicId'>
   >;
   let activityService: jest.Mocked<
-    Pick<ApplicationActivityService, 'appendWithinTransaction'>
+    Pick<
+      ApplicationActivityService,
+      'appendWithinTransaction' | 'appendManyWithinTransaction'
+    >
   >;
   beforeEach(async () => {
     const transactionRunner: PrismaTransactionRunner = (fn) =>
@@ -161,6 +164,7 @@ describe('ListingsService', () => {
     };
     activityService = {
       appendWithinTransaction: jest.fn(),
+      appendManyWithinTransaction: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -396,31 +400,35 @@ describe('ListingsService', () => {
           }),
         }),
       );
-      expect(activityService.appendWithinTransaction).toHaveBeenNthCalledWith(
-        1,
+      expect(activityService.appendManyWithinTransaction).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({
-          applicationId: 'other-1',
-          type: ApplicationActivityType.APPLICATION_REJECTED,
-          metadata: expect.objectContaining({
-            fromStatus: ApplicationStatus.ACTIVE,
-            toStatus: ApplicationStatus.REJECTED,
-            reason: ApplicationRejectionReason.LISTING_RENTED,
+        [
+          expect.objectContaining({
+            applicationId: 'other-1',
+            type: ApplicationActivityType.APPLICATION_REJECTED,
+            visibility: ApplicationActivityVisibility.BOTH,
+            metadata: expect.objectContaining({
+              fromStatus: ApplicationStatus.ACTIVE,
+              toStatus: ApplicationStatus.REJECTED,
+              reason: ApplicationRejectionReason.LISTING_RENTED,
+            }),
           }),
-        }),
+          expect.objectContaining({
+            applicationId: 'other-2',
+            type: ApplicationActivityType.APPLICATION_REJECTED,
+            visibility: ApplicationActivityVisibility.APPLICANT,
+            metadata: expect.objectContaining({
+              fromStatus: ApplicationStatus.WAITING,
+              toStatus: ApplicationStatus.REJECTED,
+              reason: ApplicationRejectionReason.LISTING_RENTED,
+            }),
+          }),
+        ],
       );
-      expect(activityService.appendWithinTransaction).toHaveBeenNthCalledWith(
-        2,
+      expect(activityService.appendWithinTransaction).not.toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
-          applicationId: 'other-2',
           type: ApplicationActivityType.APPLICATION_REJECTED,
-          visibility: ApplicationActivityVisibility.APPLICANT,
-          metadata: expect.objectContaining({
-            fromStatus: ApplicationStatus.WAITING,
-            toStatus: ApplicationStatus.REJECTED,
-            reason: ApplicationRejectionReason.LISTING_RENTED,
-          }),
         }),
       );
     });
