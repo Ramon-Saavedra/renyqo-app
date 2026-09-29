@@ -5,10 +5,15 @@ import connectPgSimple from 'connect-pg-simple';
 import session from 'express-session';
 import passport from 'passport';
 import request, { type Response } from 'supertest';
+import { jest } from '@jest/globals';
 import { AppModule } from '../src/app.module';
+import { ApplicationActivityService } from '../src/applications/application-activity.service';
 import type { EnvironmentVariables } from '../src/config/env.validation';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
+  ApplicationActivityActorType,
+  ApplicationActivityType,
+  ApplicationActivityVisibility,
   ApplicationRejectionReason,
   ApplicationStatus,
   ListingEventSource,
@@ -436,6 +441,104 @@ describe('Application Lifecycle E2E', () => {
     });
   });
 
+  describe('Application activity persistence', () => {
+    it('persists submitted and provider rejection activities with actor attribution', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const applicantAgent = await registerApplicant();
+      const listing = await publishListing(provider.id);
+      const application = await applyToListing(applicantAgent, listing.id);
+      const applicationId = application['id'] as string;
+
+      const submitted = await getPrisma().applicationActivity.findMany({
+        where: { applicationId },
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+      });
+      expect(submitted).toHaveLength(1);
+      expect(submitted[0]?.actorUserId).toEqual(expect.any(String));
+      expect(submitted[0]).toMatchObject({
+        type: ApplicationActivityType.APPLICATION_SUBMITTED,
+        actorType: ApplicationActivityActorType.APPLICANT,
+        visibility: ApplicationActivityVisibility.BOTH,
+        payload: { initialStatus: ApplicationStatus.ACTIVE },
+      });
+
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${applicationId}/reject`)
+        .send()
+        .expect(200);
+
+      const activities = await getPrisma().applicationActivity.findMany({
+        where: { applicationId },
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+      });
+      expect(activities.map((activity) => activity.type)).toEqual([
+        ApplicationActivityType.APPLICATION_SUBMITTED,
+        ApplicationActivityType.APPLICATION_REJECTED,
+      ]);
+      expect(activities[1]).toMatchObject({
+        actorType: ApplicationActivityActorType.PROVIDER,
+        visibility: ApplicationActivityVisibility.BOTH,
+        payload: {
+          fromStatus: ApplicationStatus.ACTIVE,
+          toStatus: ApplicationStatus.REJECTED,
+          reason: ApplicationRejectionReason.NOT_SELECTED,
+        },
+      });
+    });
+
+    it('does not leave an activity row after its transaction rolls back', async () => {
+      const { provider } = await registerProvider();
+      const applicantAgent = await registerApplicant();
+      const listing = await publishListing(provider.id);
+      const application = await applyToListing(applicantAgent, listing.id);
+      const applicationId = application['id'] as string;
+      const before = await getPrisma().applicationActivity.count({
+        where: { applicationId },
+      });
+
+      await expect(
+        getPrisma().$transaction(async (tx) => {
+          await tx.applicationActivity.create({
+            data: {
+              applicationId,
+              type: ApplicationActivityType.APPLICATION_ACCEPTED,
+              actorType: ApplicationActivityActorType.SYSTEM,
+              visibility: ApplicationActivityVisibility.INTERNAL,
+            },
+          });
+          throw new Error('force activity transaction rollback');
+        }),
+      ).rejects.toThrow('force activity transaction rollback');
+
+      await expect(
+        getPrisma().applicationActivity.count({ where: { applicationId } }),
+      ).resolves.toBe(before);
+    });
+
+    it('rolls back application creation when activity append fails', async () => {
+      const { provider } = await registerProvider();
+      const applicantAgent = await registerApplicant();
+      const listing = await publishListing(provider.id);
+      const activityService = app!.get(ApplicationActivityService);
+      const appendSpy = jest
+        .spyOn(activityService, 'appendWithinTransaction')
+        .mockRejectedValueOnce(new Error('activity append failed'));
+
+      await applicantAgent
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(500);
+
+      appendSpy.mockRestore();
+
+      await expect(
+        getPrisma().application.count({
+          where: { listingId: listing.id },
+        }),
+      ).resolves.toBe(0);
+      await expect(getPrisma().applicationActivity.count()).resolves.toBe(0);
+    });
+  });
+
   describe('Provider rejects an application', () => {
     it('rejects an ACTIVE candidate with NOT_SELECTED and sets rejectedAt', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
@@ -573,6 +676,22 @@ describe('Application Lifecycle E2E', () => {
         (e) => e.status === ApplicationStatus.ACTIVE,
       ).length;
       expect(newActiveCount).toBe(5);
+
+      const activity = await getPrisma().applicationActivity.findMany({
+        where: {
+          applicationId: { in: entries.map((entry) => entry['id'] as string) },
+          type: ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+        },
+      });
+      expect(activity).toHaveLength(1);
+      expect(activity[0]).toMatchObject({
+        actorType: ApplicationActivityActorType.SYSTEM,
+        visibility: ApplicationActivityVisibility.BOTH,
+        payload: {
+          fromStatus: ApplicationStatus.WAITING,
+          toStatus: ApplicationStatus.ACTIVE,
+        },
+      });
     });
   });
 
@@ -618,6 +737,22 @@ describe('Application Lifecycle E2E', () => {
       expect(events[0].type).toBe(ListingEventType.RESTORED_BY_PROVIDER);
       expect(events[0].source).toBe(ListingEventSource.PROVIDER);
       expect(events[0].actorUserId).toBe(provider.id);
+
+      const activities = await getPrisma().applicationActivity.findMany({
+        where: {
+          applicationId: entryId,
+          type: ApplicationActivityType.APPLICATION_RESTORED,
+        },
+      });
+      expect(activities).toHaveLength(1);
+      expect(activities[0]).toMatchObject({
+        actorUserId: provider.id,
+        actorType: ApplicationActivityActorType.PROVIDER,
+        payload: {
+          fromStatus: ApplicationStatus.REJECTED,
+          toStatus: ApplicationStatus.ACTIVE,
+        },
+      });
     });
 
     it('restores to WAITING with a fresh queue position when slots are full', async () => {
@@ -1063,6 +1198,26 @@ describe('Application Lifecycle E2E', () => {
         expect(r.publicReason).toBe(ApplicationRejectionReason.LISTING_RENTED);
         expect(r.rejectedAt).toBeInstanceOf(Date);
       }
+
+      const activities = await getPrisma().applicationActivity.findMany({
+        where: {
+          applicationId: {
+            in: entries.map((entry) => entry['id'] as string),
+          },
+        },
+      });
+      expect(
+        activities.filter(
+          (activity) =>
+            activity.type === ApplicationActivityType.APPLICATION_ACCEPTED,
+        ),
+      ).toHaveLength(1);
+      expect(
+        activities.filter(
+          (activity) =>
+            activity.type === ApplicationActivityType.APPLICATION_REJECTED,
+        ),
+      ).toHaveLength(2);
     });
 
     it('rents a PAUSED listing', async () => {
@@ -1363,6 +1518,31 @@ describe('Application Lifecycle E2E', () => {
         ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
       );
 
+      const rejectionActivity = await getPrisma().applicationActivity.findMany({
+        where: {
+          applicationId: entries[0]['id'] as string,
+          type: ApplicationActivityType.APPLICATION_REJECTED,
+        },
+      });
+      expect(rejectionActivity).toHaveLength(1);
+      expect(rejectionActivity[0]).toMatchObject({
+        actorType: ApplicationActivityActorType.SYSTEM,
+        visibility: ApplicationActivityVisibility.APPLICANT,
+        payload: {
+          fromStatus: ApplicationStatus.ACTIVE,
+          toStatus: ApplicationStatus.REJECTED,
+          reason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+        },
+      });
+
+      const promotionActivity = await getPrisma().applicationActivity.findMany({
+        where: {
+          applicationId: waitingEntry?.['id'] as string,
+          type: ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+        },
+      });
+      expect(promotionActivity).toHaveLength(1);
+
       const promotedApplication = await getPrisma().application.findUnique({
         where: { id: waitingEntry?.['id'] as string },
       });
@@ -1493,6 +1673,24 @@ describe('Application Lifecycle E2E', () => {
       });
       expect(withdrawnPersisted?.status).toBe(ApplicationStatus.WITHDRAWN);
       expect(withdrawnPersisted?.withdrawnAt).toBeInstanceOf(Date);
+
+      const withdrawalActivity = await getPrisma().applicationActivity.findMany(
+        {
+          where: {
+            applicationId: entry['id'] as string,
+            type: ApplicationActivityType.APPLICATION_WITHDRAWN,
+          },
+        },
+      );
+      expect(withdrawalActivity).toHaveLength(1);
+      expect(withdrawalActivity[0]).toMatchObject({
+        actorType: ApplicationActivityActorType.APPLICANT,
+        visibility: ApplicationActivityVisibility.BOTH,
+        payload: {
+          fromStatus: ApplicationStatus.ACTIVE,
+          toStatus: ApplicationStatus.WITHDRAWN,
+        },
+      });
 
       const exitedResponse = await providerAgent
         .get(`/api/v1/provider/listings/${listing.id}/exited-applications`)

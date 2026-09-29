@@ -15,6 +15,7 @@ import {
   ObjectType,
 } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
+import { ApplicationActivityService } from '../applications/application-activity.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListingsService } from './listings.service';
 import { ListingOrderingService } from './listing-ordering.service';
@@ -165,6 +166,10 @@ describe('ListingsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ListingsService,
+        {
+          provide: ApplicationActivityService,
+          useValue: { appendWithinTransaction: jest.fn() },
+        },
         {
           provide: ListingOrderingService,
           useValue: {

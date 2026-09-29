@@ -11,6 +11,9 @@ import {
   type Application,
 } from '../generated/prisma/client';
 import {
+  ApplicationActivityActorType,
+  ApplicationActivityType,
+  ApplicationActivityVisibility,
   ApplicationRejectionReason,
   ApplicationStatus,
   ListingStatus,
@@ -21,6 +24,7 @@ import { runSerializableTransaction } from '../prisma/run-serializable-transacti
 import { BLOCKING_APPLICATION_STATUSES } from './blocking-application-statuses';
 
 import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
+import { ApplicationActivityService } from './application-activity.service';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 
@@ -33,6 +37,7 @@ export class ApplicationLifecycleService {
     private readonly eligibilityService: EligibilityService,
     private readonly transactionService: ApplicationTransactionService,
     private readonly promotionService: ApplicationWaitingPromotionService,
+    private readonly activityService: ApplicationActivityService,
   ) {}
 
   async apply(listingId: string, applicantId: string): Promise<Application> {
@@ -85,7 +90,7 @@ export class ApplicationLifecycleService {
       const now = new Date();
 
       try {
-        return await tx.application.create({
+        const application = await tx.application.create({
           data: {
             listingId,
             applicantId,
@@ -94,6 +99,20 @@ export class ApplicationLifecycleService {
             activeAt: isActive ? now : undefined,
           },
         });
+
+        await this.activityService.appendWithinTransaction(tx, {
+          applicationId: application.id,
+          type: ApplicationActivityType.APPLICATION_SUBMITTED,
+          actorUserId: applicantId,
+          actorType: ApplicationActivityActorType.APPLICANT,
+          visibility: isActive
+            ? ApplicationActivityVisibility.BOTH
+            : ApplicationActivityVisibility.APPLICANT,
+          occurredAt: now,
+          metadata: { initialStatus: status },
+        });
+
+        return application;
       } catch (err) {
         if (
           err instanceof PrismaClientKnownRequestError &&
@@ -154,6 +173,21 @@ export class ApplicationLifecycleService {
           ...(application.status === ApplicationStatus.ACTIVE
             ? { withdrawnAt: new Date() }
             : {}),
+        },
+      });
+
+      await this.activityService.appendWithinTransaction(tx, {
+        applicationId,
+        type: ApplicationActivityType.APPLICATION_WITHDRAWN,
+        actorUserId: applicantId,
+        actorType: ApplicationActivityActorType.APPLICANT,
+        visibility:
+          application.status === ApplicationStatus.ACTIVE
+            ? ApplicationActivityVisibility.BOTH
+            : ApplicationActivityVisibility.APPLICANT,
+        metadata: {
+          fromStatus: application.status,
+          toStatus: ApplicationStatus.WITHDRAWN,
         },
       });
 
@@ -238,6 +272,18 @@ export class ApplicationLifecycleService {
             status: ApplicationStatus.REJECTED,
             rejectedAt: new Date(),
             publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+          },
+        });
+
+        await this.activityService.appendWithinTransaction(tx, {
+          applicationId: application.id,
+          type: ApplicationActivityType.APPLICATION_REJECTED,
+          actorType: ApplicationActivityActorType.SYSTEM,
+          visibility: ApplicationActivityVisibility.APPLICANT,
+          metadata: {
+            fromStatus: application.status,
+            toStatus: ApplicationStatus.REJECTED,
+            reason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
           },
         });
 

@@ -1,8 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma, Listing } from '../generated/prisma/client';
-import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
+import {
+  ApplicationActivityActorType,
+  ApplicationActivityType,
+  ApplicationActivityVisibility,
+  ApplicationStatus,
+  ListingStatus,
+} from '../generated/prisma/enums';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { ApplicationTransactionService } from './application-transaction.service';
+import { ApplicationActivityService } from './application-activity.service';
 import {
   ACTIVE_APPLICATIONS_LIMIT,
   MAX_PROMOTION_CANDIDATES,
@@ -14,6 +21,7 @@ export class ApplicationWaitingPromotionService {
   constructor(
     private readonly eligibilityService: EligibilityService,
     private readonly transactionService: ApplicationTransactionService,
+    private readonly activityService: ApplicationActivityService,
   ) {}
 
   async promoteWithinTransaction(
@@ -76,6 +84,16 @@ export class ApplicationWaitingPromotionService {
         await tx.application.update({
           where: { id: application.id },
           data: { status: ApplicationStatus.ACTIVE, activeAt: new Date() },
+        });
+        await this.activityService.appendWithinTransaction(tx, {
+          applicationId: application.id,
+          type: ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+          actorType: ApplicationActivityActorType.SYSTEM,
+          visibility: ApplicationActivityVisibility.BOTH,
+          metadata: {
+            fromStatus: ApplicationStatus.WAITING,
+            toStatus: ApplicationStatus.ACTIVE,
+          },
         });
         activeCount++;
         promotedCount++;

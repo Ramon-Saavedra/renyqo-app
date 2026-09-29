@@ -72,6 +72,28 @@ enum ListingEventSource {
   APPLICANT @map("applicant")
 }
 
+enum ApplicationActivityType {
+  APPLICATION_SUBMITTED          @map("application_submitted")
+  APPLICATION_PROMOTED_TO_ACTIVE @map("application_promoted_to_active")
+  APPLICATION_WITHDRAWN          @map("application_withdrawn")
+  APPLICATION_REJECTED           @map("application_rejected")
+  APPLICATION_RESTORED           @map("application_restored")
+  APPLICATION_ACCEPTED           @map("application_accepted")
+}
+
+enum ApplicationActivityActorType {
+  SYSTEM    @map("system")
+  APPLICANT @map("applicant")
+  PROVIDER  @map("provider")
+}
+
+enum ApplicationActivityVisibility {
+  PROVIDER  @map("provider")
+  APPLICANT @map("applicant")
+  BOTH      @map("both")
+  INTERNAL  @map("internal")
+}
+
 enum ListingReportReason {
   MISLEADING_INFO       @map("misleading_info")
   SCAM_OR_FRAUD         @map("scam_or_fraud")
@@ -104,6 +126,7 @@ model User {
   listings     Listing[]
   applications Application[]
   listingEvents ListingEvent[] @relation("ListingEventActor")
+  applicationActivities ApplicationActivity[] @relation("ApplicationActivityActor")
   profile      ApplicantProfile?
   passwordResetTokens PasswordResetToken[]
   savedListings SavedListing[]
@@ -214,6 +237,7 @@ model Application {
   listing   Listing @relation(fields: [listingId], references: [id])
   applicant User    @relation(fields: [applicantId], references: [id])
   listingEvents ListingEvent[]
+  activities ApplicationActivity[]
 
   @@index([listingId, status, queueOrder])
   @@index([applicantId])
@@ -238,6 +262,24 @@ model ListingEvent {
   @@index([listingId, occurredAt])
   @@index([applicationId, occurredAt])
   @@map("listing_events")
+}
+
+model ApplicationActivity {
+  id          String                         @id @default(uuid()) @db.Uuid
+  applicationId String                       @map("application_id") @db.Uuid
+  type        ApplicationActivityType
+  actorUserId String?                        @map("actor_user_id") @db.Uuid
+  actorType   ApplicationActivityActorType   @map("actor_type")
+  visibility  ApplicationActivityVisibility
+  occurredAt  DateTime                       @default(now()) @map("occurred_at")
+  payload     Json?
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  actor       User?        @relation("ApplicationActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, occurredAt, id])
+  @@index([applicationId, visibility, occurredAt, id])
+  @@map("application_activities")
 }
 
 model ApplicantProfile {
