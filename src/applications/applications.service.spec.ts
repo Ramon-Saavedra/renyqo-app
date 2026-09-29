@@ -15,6 +15,9 @@ import type {
   Prisma,
 } from '../generated/prisma/client';
 import {
+  ApplicationActivityActorType,
+  ApplicationActivityType,
+  ApplicationActivityVisibility,
   ApplicationRejectionReason,
   ApplicationStatus,
   ListingEventSource,
@@ -27,6 +30,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
 import { EligibilityService } from '../eligibility/eligibility.service';
+import { ApplicationActivityService } from './application-activity.service';
 import { ApplicationLifecycleService } from './application-lifecycle.service';
 import { ApplicationProcessQueryService } from './application-process-query.service';
 import { ApplicationTransactionService } from './application-transaction.service';
@@ -94,6 +98,9 @@ const makeRawApplication = (
 describe('ApplicationsService', () => {
   let service: ApplicationsService;
   let eligibilityService: jest.Mocked<EligibilityService>;
+  let activityService: jest.Mocked<
+    Pick<ApplicationActivityService, 'appendWithinTransaction'>
+  >;
   let prismaMock: {
     listing: {
       findUnique: jest.MockedFunction<
@@ -159,9 +166,16 @@ describe('ApplicationsService', () => {
     );
     prismaMock.$queryRaw.mockResolvedValue([]);
     prismaMock.application.findFirst.mockResolvedValue(null);
+    activityService = {
+      appendWithinTransaction: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: ApplicationActivityService,
+          useValue: activityService,
+        },
         ApplicationLifecycleService,
         ApplicationProcessQueryService,
         ApplicationTransactionService,
@@ -237,6 +251,20 @@ describe('ApplicationsService', () => {
         }),
       );
       expect(result.status).toBe(ApplicationStatus.ACTIVE);
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: application.id,
+          type: ApplicationActivityType.APPLICATION_SUBMITTED,
+          metadata: { initialStatus: ApplicationStatus.ACTIVE },
+        }),
+      );
+      expect(activityService.appendWithinTransaction).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          type: ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+        }),
+      );
     });
 
     it('retries serializable transaction conflicts', async () => {
@@ -303,6 +331,21 @@ describe('ApplicationsService', () => {
         }),
       );
       expect(result.status).toBe(ApplicationStatus.WAITING);
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: application.id,
+          type: ApplicationActivityType.APPLICATION_SUBMITTED,
+          visibility: ApplicationActivityVisibility.APPLICANT,
+          metadata: { initialStatus: ApplicationStatus.WAITING },
+        }),
+      );
+      expect(activityService.appendWithinTransaction).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          type: ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+        }),
+      );
     });
 
     it('throws NotFoundException when listing does not exist', async () => {
@@ -464,6 +507,17 @@ describe('ApplicationsService', () => {
       const result = await service.withdraw(APPLICATION_ID, APPLICANT_ID);
 
       expect(result.status).toBe(ApplicationStatus.WITHDRAWN);
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: APPLICATION_ID,
+          type: ApplicationActivityType.APPLICATION_WITHDRAWN,
+          metadata: {
+            fromStatus: ApplicationStatus.ACTIVE,
+            toStatus: ApplicationStatus.WITHDRAWN,
+          },
+        }),
+      );
       expect(prismaMock.application.update).toHaveBeenCalledWith({
         where: { id: APPLICATION_ID },
         data: {
@@ -497,6 +551,17 @@ describe('ApplicationsService', () => {
       await expect(
         service.withdraw(APPLICATION_ID, APPLICANT_ID),
       ).resolves.toEqual(withdrawn);
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: APPLICATION_ID,
+          type: ApplicationActivityType.APPLICATION_WITHDRAWN,
+          metadata: {
+            fromStatus: ApplicationStatus.WAITING,
+            toStatus: ApplicationStatus.WITHDRAWN,
+          },
+        }),
+      );
       expect(prismaMock.application.update).toHaveBeenCalledWith({
         where: { id: APPLICATION_ID },
         data: { status: ApplicationStatus.WITHDRAWN },
@@ -651,6 +716,19 @@ describe('ApplicationsService', () => {
 
       await service.reject(APPLICATION_ID, PROVIDER_ID);
 
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: APPLICATION_ID,
+          type: ApplicationActivityType.APPLICATION_REJECTED,
+          actorUserId: PROVIDER_ID,
+          metadata: {
+            fromStatus: ApplicationStatus.ACTIVE,
+            toStatus: ApplicationStatus.REJECTED,
+            reason: ApplicationRejectionReason.NOT_SELECTED,
+          },
+        }),
+      );
       expect(prismaMock.listingEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -756,6 +834,18 @@ describe('ApplicationsService', () => {
       const result = await service.restore(APPLICATION_ID, PROVIDER_ID);
 
       expect(result.status).toBe(ApplicationStatus.ACTIVE);
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: APPLICATION_ID,
+          type: ApplicationActivityType.APPLICATION_RESTORED,
+          actorUserId: PROVIDER_ID,
+          metadata: {
+            fromStatus: ApplicationStatus.REJECTED,
+            toStatus: ApplicationStatus.ACTIVE,
+          },
+        }),
+      );
       expect(prismaMock.application.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: APPLICATION_ID },
@@ -805,6 +895,19 @@ describe('ApplicationsService', () => {
       const result = await service.restore(APPLICATION_ID, PROVIDER_ID);
 
       expect(result.status).toBe(ApplicationStatus.WAITING);
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: APPLICATION_ID,
+          type: ApplicationActivityType.APPLICATION_RESTORED,
+          actorUserId: PROVIDER_ID,
+          visibility: ApplicationActivityVisibility.APPLICANT,
+          metadata: {
+            fromStatus: ApplicationStatus.REJECTED,
+            toStatus: ApplicationStatus.WAITING,
+          },
+        }),
+      );
       expect(prismaMock.application.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: APPLICATION_ID },
@@ -1295,6 +1398,17 @@ describe('ApplicationsService', () => {
           activeAt: expect.any(Date),
         },
       });
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: secondWaiting.id,
+          type: ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+          metadata: {
+            fromStatus: ApplicationStatus.WAITING,
+            toStatus: ApplicationStatus.ACTIVE,
+          },
+        }),
+      );
     });
 
     it('promotes in FIFO queue order and never ranks by applicant attributes', async () => {
@@ -1523,6 +1637,20 @@ describe('ApplicationsService', () => {
           publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
         },
       });
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: activeApplication.id,
+          type: ApplicationActivityType.APPLICATION_REJECTED,
+          actorType: ApplicationActivityActorType.SYSTEM,
+          visibility: ApplicationActivityVisibility.APPLICANT,
+          metadata: {
+            fromStatus: ApplicationStatus.ACTIVE,
+            toStatus: ApplicationStatus.REJECTED,
+            reason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+          },
+        }),
+      );
       expect(prismaMock.application.update).toHaveBeenNthCalledWith(2, {
         where: { id: waitingApplication.id },
         data: {

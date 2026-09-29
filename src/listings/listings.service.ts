@@ -12,10 +12,14 @@ import type { UploadApiResponse } from 'cloudinary';
 import type { EnvironmentVariables } from '../config/env.validation';
 import type { Listing } from '../generated/prisma/client';
 import {
+  ApplicationActivityActorType,
+  ApplicationActivityType,
+  ApplicationActivityVisibility,
   ApplicationRejectionReason,
   ApplicationStatus,
   ListingStatus,
 } from '../generated/prisma/enums';
+import { ApplicationActivityService } from '../applications/application-activity.service';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
@@ -58,6 +62,7 @@ export class ListingsService {
     private readonly listingOrderingService: ListingOrderingService,
     private readonly listingInputRules: ListingInputRules,
     private readonly listingResponseMapper: ListingResponseMapper,
+    private readonly activityService: ApplicationActivityService,
   ) {}
 
   async create(
@@ -219,33 +224,66 @@ export class ListingsService {
         );
       }
 
-      const nonSelectedIds = (
-        await tx.application.findMany({
+      const nonSelectedApplications = await tx.application.findMany({
+        where: {
+          listingId: id,
+          id: { not: dto.selectedApplicationId },
+          status: {
+            in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING],
+          },
+        },
+        select: { id: true, status: true },
+      });
+
+      if (nonSelectedApplications.length > 0) {
+        await tx.application.updateMany({
           where: {
-            listingId: id,
-            id: { not: dto.selectedApplicationId },
-            status: {
-              in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING],
+            id: {
+              in: nonSelectedApplications.map((application) => application.id),
             },
           },
-          select: { id: true },
-        })
-      ).map((a) => a.id);
-
-      if (nonSelectedIds.length > 0) {
-        await tx.application.updateMany({
-          where: { id: { in: nonSelectedIds } },
           data: {
             status: ApplicationStatus.REJECTED,
             rejectedAt: new Date(),
             publicReason: ApplicationRejectionReason.LISTING_RENTED,
           },
         });
+
+        await this.activityService.appendManyWithinTransaction(
+          tx,
+          nonSelectedApplications.map((application) => ({
+            applicationId: application.id,
+            type: ApplicationActivityType.APPLICATION_REJECTED,
+            actorUserId: providerId,
+            actorType: ApplicationActivityActorType.PROVIDER,
+            visibility:
+              application.status === ApplicationStatus.ACTIVE
+                ? ApplicationActivityVisibility.BOTH
+                : ApplicationActivityVisibility.APPLICANT,
+            metadata: {
+              fromStatus: application.status,
+              toStatus: ApplicationStatus.REJECTED,
+              reason: ApplicationRejectionReason.LISTING_RENTED,
+            },
+          })),
+        );
       }
 
       await tx.application.update({
         where: { id: dto.selectedApplicationId },
         data: { status: ApplicationStatus.ACCEPTED },
+      });
+
+      await this.activityService.appendWithinTransaction(tx, {
+        applicationId: dto.selectedApplicationId,
+        type: ApplicationActivityType.APPLICATION_ACCEPTED,
+        actorUserId: providerId,
+        actorType: ApplicationActivityActorType.PROVIDER,
+        visibility: ApplicationActivityVisibility.BOTH,
+        metadata: {
+          fromStatus: ApplicationStatus.ACTIVE,
+          toStatus: ApplicationStatus.ACCEPTED,
+        },
       });
 
       return tx.listing.update({

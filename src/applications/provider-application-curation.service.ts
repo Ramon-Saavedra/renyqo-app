@@ -8,6 +8,9 @@ import {
 } from '@nestjs/common';
 import type { Application } from '../generated/prisma/client';
 import {
+  ApplicationActivityActorType,
+  ApplicationActivityType,
+  ApplicationActivityVisibility,
   ApplicationRejectionReason,
   ApplicationStatus,
   ListingEventSource,
@@ -24,6 +27,7 @@ import {
 } from './application-lifecycle.constants';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
+import { ApplicationActivityService } from './application-activity.service';
 
 @Injectable()
 export class ProviderApplicationCurationService {
@@ -32,6 +36,7 @@ export class ProviderApplicationCurationService {
     private readonly eligibilityService: EligibilityService,
     private readonly transactionService: ApplicationTransactionService,
     private readonly promotionService: ApplicationWaitingPromotionService,
+    private readonly activityService: ApplicationActivityService,
   ) {}
 
   async reject(
@@ -73,6 +78,20 @@ export class ProviderApplicationCurationService {
           status: ApplicationStatus.REJECTED,
           rejectedAt: now,
           publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        },
+      });
+
+      await this.activityService.appendWithinTransaction(tx, {
+        applicationId,
+        type: ApplicationActivityType.APPLICATION_REJECTED,
+        actorUserId: providerId,
+        actorType: ApplicationActivityActorType.PROVIDER,
+        visibility: ApplicationActivityVisibility.BOTH,
+        occurredAt: now,
+        metadata: {
+          fromStatus: ApplicationStatus.ACTIVE,
+          toStatus: ApplicationStatus.REJECTED,
+          reason: ApplicationRejectionReason.NOT_SELECTED,
         },
       });
 
@@ -204,6 +223,23 @@ export class ProviderApplicationCurationService {
           },
         });
       }
+
+      await this.activityService.appendWithinTransaction(tx, {
+        applicationId,
+        type: ApplicationActivityType.APPLICATION_RESTORED,
+        actorUserId: providerId,
+        actorType: ApplicationActivityActorType.PROVIDER,
+        visibility: restoreToActive
+          ? ApplicationActivityVisibility.BOTH
+          : ApplicationActivityVisibility.APPLICANT,
+        occurredAt: now,
+        metadata: {
+          fromStatus: ApplicationStatus.REJECTED,
+          toStatus: restoreToActive
+            ? ApplicationStatus.ACTIVE
+            : ApplicationStatus.WAITING,
+        },
+      });
 
       await tx.listingEvent.create({
         data: {

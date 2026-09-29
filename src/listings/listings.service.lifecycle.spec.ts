@@ -14,12 +14,15 @@ import type {
   ListingImage,
 } from '../generated/prisma/client';
 import {
+  ApplicationActivityType,
+  ApplicationActivityVisibility,
   ApplicationRejectionReason,
   ApplicationStatus,
   ListingStatus,
   ObjectType,
 } from '../generated/prisma/enums';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
+import { ApplicationActivityService } from '../applications/application-activity.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListingsService } from './listings.service';
 import { ListingOrderingService } from './listing-ordering.service';
@@ -110,6 +113,12 @@ describe('ListingsService', () => {
   let cloudinaryMock: jest.Mocked<
     Pick<CloudinaryService, 'uploadBuffer' | 'deleteByPublicId'>
   >;
+  let activityService: jest.Mocked<
+    Pick<
+      ApplicationActivityService,
+      'appendWithinTransaction' | 'appendManyWithinTransaction'
+    >
+  >;
   beforeEach(async () => {
     const transactionRunner: PrismaTransactionRunner = (fn) =>
       Promise.resolve(fn(prismaMock));
@@ -153,10 +162,18 @@ describe('ListingsService', () => {
         >(),
       deleteByPublicId: jest.fn<(publicId: string) => Promise<void>>(),
     };
+    activityService = {
+      appendWithinTransaction: jest.fn(),
+      appendManyWithinTransaction: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ListingsService,
+        {
+          provide: ApplicationActivityService,
+          useValue: activityService,
+        },
         {
           provide: ListingOrderingService,
           useValue: {
@@ -293,6 +310,17 @@ describe('ListingsService', () => {
           data: { status: ApplicationStatus.ACCEPTED },
         }),
       );
+      expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          applicationId: APPLICATION_ID,
+          type: ApplicationActivityType.APPLICATION_ACCEPTED,
+          metadata: {
+            fromStatus: ApplicationStatus.ACTIVE,
+            toStatus: ApplicationStatus.ACCEPTED,
+          },
+        }),
+      );
       expect(prismaMock.listing.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: LISTING_ID },
@@ -342,7 +370,10 @@ describe('ListingsService', () => {
         status: ListingStatus.RENTED,
         rentedAt: new Date(),
       };
-      const otherApps = [{ id: 'other-1' }, { id: 'other-2' }];
+      const otherApps = [
+        { id: 'other-1', status: ApplicationStatus.ACTIVE },
+        { id: 'other-2', status: ApplicationStatus.WAITING },
+      ];
       prismaMock.$queryRaw.mockResolvedValue([]);
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.application.findUnique.mockResolvedValue({
@@ -367,6 +398,37 @@ describe('ListingsService', () => {
             publicReason: ApplicationRejectionReason.LISTING_RENTED,
             rejectedAt: expect.any(Date),
           }),
+        }),
+      );
+      expect(activityService.appendManyWithinTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        [
+          expect.objectContaining({
+            applicationId: 'other-1',
+            type: ApplicationActivityType.APPLICATION_REJECTED,
+            visibility: ApplicationActivityVisibility.BOTH,
+            metadata: expect.objectContaining({
+              fromStatus: ApplicationStatus.ACTIVE,
+              toStatus: ApplicationStatus.REJECTED,
+              reason: ApplicationRejectionReason.LISTING_RENTED,
+            }),
+          }),
+          expect.objectContaining({
+            applicationId: 'other-2',
+            type: ApplicationActivityType.APPLICATION_REJECTED,
+            visibility: ApplicationActivityVisibility.APPLICANT,
+            metadata: expect.objectContaining({
+              fromStatus: ApplicationStatus.WAITING,
+              toStatus: ApplicationStatus.REJECTED,
+              reason: ApplicationRejectionReason.LISTING_RENTED,
+            }),
+          }),
+        ],
+      );
+      expect(activityService.appendWithinTransaction).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          type: ApplicationActivityType.APPLICATION_REJECTED,
         }),
       );
     });

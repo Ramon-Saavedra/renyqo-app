@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { EligibilityModule } from '../eligibility/eligibility.module';
 import { ApplicationActionThrottlerStorage } from './application-action-throttler.storage';
+import { ApplicationActivityService } from './application-activity.service';
 import { ApplicationLifecycleService } from './application-lifecycle.service';
 import { ApplicationProcessQueryService } from './application-process-query.service';
 import { ApplicationTransactionService } from './application-transaction.service';
@@ -24,6 +25,7 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
     ProviderApplicationsController,
   ],
   providers: [
+    ApplicationActivityService,
     ApplicationLifecycleService,
     ApplicationProcessQueryService,
     ApplicationTransactionService,
@@ -33,6 +35,10 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
     ApplicantApplicationActionThrottlerGuard,
     ApplicationActionThrottlerStorage,
   ],
-  exports: [ApplicationsService, ApplicationLifecycleService],
+  exports: [
+    ApplicationsService,
+    ApplicationLifecycleService,
+    ApplicationActivityService,
+  ],
 })
 export class ApplicationsModule {}
