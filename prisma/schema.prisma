@@ -73,6 +73,17 @@ enum ListingEventSource {
 }
 
 enum ApplicationActivityType {
+  VIEWING_PROPOSED @map("viewing_proposed")
+  VIEWING_ACCEPTED @map("viewing_accepted")
+  VIEWING_DECLINED @map("viewing_declined")
+  VIEWING_CHANGE_REQUESTED @map("viewing_change_requested")
+  VIEWING_RESCHEDULED @map("viewing_rescheduled")
+  VIEWING_CANCELLED @map("viewing_cancelled")
+  VIEWING_COMPLETED @map("viewing_completed")
+  VIEWING_NO_SHOW @map("viewing_no_show")
+  VIEWING_OUTCOME_CORRECTED @map("viewing_outcome_corrected")
+  VIEWING_INTEREST_CONFIRMED @map("viewing_interest_confirmed")
+  VIEWING_INTEREST_DECLINED @map("viewing_interest_declined")
   APPLICATION_SUBMITTED          @map("application_submitted")
   APPLICATION_PROMOTED_TO_ACTIVE @map("application_promoted_to_active")
   APPLICATION_WITHDRAWN          @map("application_withdrawn")
@@ -264,10 +275,81 @@ model Application {
   activities ApplicationActivity[]
   conversation ApplicationConversation?
   documentRequests ApplicationDocumentRequest[]
+  viewings ApplicationViewing[]
 
   @@index([listingId, status, queueOrder])
   @@index([applicantId])
   @@map("applications")
+}
+
+enum ApplicationViewingStatus {
+  PROPOSED @map("proposed")
+  ACCEPTED @map("accepted")
+  DECLINED @map("declined")
+  CHANGE_REQUESTED @map("change_requested")
+  CANCELLED @map("cancelled")
+  COMPLETED @map("completed")
+  NO_SHOW @map("no_show")
+  SUPERSEDED @map("superseded")
+}
+
+enum ViewingOutcome {
+  COMPLETED @map("completed")
+  NO_SHOW @map("no_show")
+}
+
+enum ViewingInterest {
+  STILL_INTERESTED @map("still_interested")
+  NOT_INTERESTED @map("not_interested")
+}
+
+model ApplicationViewing {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  round Int
+  status ApplicationViewingStatus @default(PROPOSED)
+  startsAt DateTime @map("starts_at") @db.Timestamptz(3)
+  endsAt DateTime @map("ends_at") @db.Timestamptz(3)
+  timeZone String @map("time_zone") @db.VarChar(100)
+  providerNote String? @map("provider_note") @db.VarChar(500)
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz(3)
+  declinedAt DateTime? @map("declined_at") @db.Timestamptz(3)
+  changeRequestedAt DateTime? @map("change_requested_at") @db.Timestamptz(3)
+  changeRequestMessage String? @map("change_request_message") @db.VarChar(500)
+  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz(3)
+  requestKey String @map("request_key") @db.Uuid
+  requestHash String @map("request_hash") @db.Char(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  outcomes ApplicationViewingOutcome[]
+  interest ApplicationViewingInterest?
+  @@unique([applicationId, round])
+  @@unique([applicationId, requestKey])
+  @@index([applicationId, status, round])
+  @@map("application_viewings")
+}
+
+model ApplicationViewingOutcome {
+  id String @id @default(uuid()) @db.Uuid
+  viewingId String @map("viewing_id") @db.Uuid
+  revision Int
+  outcome ViewingOutcome
+  correctionReason String? @map("correction_reason") @db.VarChar(500)
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  viewing ApplicationViewing @relation(fields: [viewingId], references: [id], onDelete: Restrict)
+  @@unique([viewingId, revision])
+  @@map("application_viewing_outcomes")
+}
+
+model ApplicationViewingInterest {
+  id String @id @default(uuid()) @db.Uuid
+  viewingId String @unique @map("viewing_id") @db.Uuid
+  interest ViewingInterest
+  respondedAt DateTime @default(now()) @map("responded_at") @db.Timestamptz(3)
+  viewing ApplicationViewing @relation(fields: [viewingId], references: [id], onDelete: Restrict)
+  @@map("application_viewing_interests")
 }
 
 model ListingEvent {

@@ -1,5 +1,9 @@
 # Security
 
+## Viewing privacy
+
+Application viewings use role guards, ownership checks and the existing provider visibility policy: current WAITING and never-active hidden applications are not found. Authorization and lifecycle gates precede idempotent replay. Viewing identifiers are always scoped to their application. Safe DTOs exclude profile data and internal request hashes. Notes, change requests and correction reasons are length-limited plain text; clients must render them without HTML parsing. Activity metadata contains only safe identifiers, timestamps and revisions. See [Application Viewings](application-viewings.md).
+
 Security is a priority. We follow secure backend practices, validate all inputs, hash passwords, and never store or expose secrets.
 
 Public registration only accepts `applicant` and `provider`. Responses from `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, and `GET /api/v1/auth/me` never include `passwordHash`.

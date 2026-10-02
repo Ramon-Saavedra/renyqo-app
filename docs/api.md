@@ -1,5 +1,9 @@
 # API
 
+## Application viewings
+
+The complete application-scoped viewing API, DTO contracts, pagination, capabilities and derived next actions are documented in [Application Viewings](application-viewings.md#api). Provider and applicant routes are under `/api/v1/{provider|applicant}/applications/:applicationId/viewings`; there is no global viewing API.
+
 Global prefix: `/api/v1`
 
 State-changing requests (`POST`, `PUT`, `PATCH`, and `DELETE`) must send the session-bound token from `/api/v1/auth/csrf-token` in the `X-CSRF-Token` header. Session, CSRF, origin, and ownership rules are documented in [Security](security.md). Application status, queue, and rent rules are documented in [Application lifecycle](application-lifecycle.md).

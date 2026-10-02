@@ -69,6 +69,42 @@ describe('ApplicationActivityService', () => {
     );
   });
 
+  it('allowlists viewing identifiers, timestamps and revisions without notes or internal fields', async () => {
+    prismaMock.application.findUnique.mockResolvedValue({
+      applicantId: 'applicant',
+      status: ApplicationStatus.ACTIVE,
+      activeAt: new Date(),
+      listing: { providerId: 'provider' },
+    });
+    prismaMock.applicationActivity.findMany.mockResolvedValue([
+      makeActivity({
+        type: ApplicationActivityType.VIEWING_PROPOSED,
+        payload: {
+          viewingId: ACTOR_ID,
+          viewingRound: 1,
+          startsAt: '2027-01-01T11:00:00.000Z',
+          outcomeRevision: 2,
+          providerNote: 'private note',
+          requestHash: 'private hash',
+          householdNetIncome: 3000,
+          previousViewingId: 'invalid',
+          endsAt: 'invalid',
+        },
+      }),
+    ]);
+    const timeline = await service.findForAudience(
+      APPLICATION_ID,
+      ApplicationActivityVisibility.PROVIDER,
+      'provider',
+    );
+    expect(timeline[0].payload).toEqual({
+      viewingId: ACTOR_ID,
+      viewingRound: 1,
+      startsAt: '2027-01-01T11:00:00.000Z',
+      outcomeRevision: 2,
+    });
+  });
+
   it('appends a submitted activity with safe lifecycle metadata', async () => {
     const activity = makeActivity();
     prismaMock.applicationActivity.create.mockResolvedValue(activity);

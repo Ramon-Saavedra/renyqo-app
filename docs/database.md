@@ -1,5 +1,9 @@
 # Database
 
+## Viewing migration
+
+`20261003120000_add_application_viewings` adds proposal rounds, append-only outcome decisions, final interest responses and viewing activity types. No historical backfill is performed. Constraints enforce application/round and application/request-key uniqueness, one unresolved proposal per application, valid duration and outcome revisions. New timestamps use timestamptz(3), with IANA zones stored separately. History foreign keys use RESTRICT for physical deletion; terminal transitions never delete history. Viewing mutations share listing-before-application locks and Serializable retries with lifecycle operations. Apply the migration before running the new API. See [Application Viewings](application-viewings.md).
+
 The API uses PostgreSQL 16 and Prisma ORM v7 with `@prisma/adapter-pg`.
 
 ## Environment variables
@@ -82,6 +86,8 @@ Waiting-queue promotion, apply, withdraw, reject, restore, and rent run in Seria
 `DELETE` of a listing image removes the image record and compacts the remaining positions in one transaction, then deletes the Cloudinary asset. If the database transaction fails, the Cloudinary asset is kept untouched; if the Cloudinary deletion fails afterwards, the failure is logged and the image stays removed.
 
 ## E2E Testing
+
+Viewing integrity is enforced by status/timestamp checks, unique revision indexes, append-only decision triggers and deferred effective-outcome/interest constraint triggers. See [Application viewings](application-viewings.md) for the transition matrix and direct PostgreSQL tests. Viewing test teardown truncates its three related tables together in the guarded dedicated database.
 
 Conversation E2E tests use HTTPS and secure session cookies. OpenSSL must be available on PATH on Linux/macOS or through Git for Windows at `%ProgramFiles%/Git/usr/bin/openssl.exe`. The suite generates a one-day localhost certificate and private key in a temporary directory, trusts that certificate explicitly in its test clients, and removes the files on teardown. It does not disable TLS certificate verification or store private keys in the repository.
 
