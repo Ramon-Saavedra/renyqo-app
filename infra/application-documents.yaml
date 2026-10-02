@@ -1,0 +1,378 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private application documents and durable GuardDuty verdict delivery
+Parameters:
+  BucketName:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+  ApiRoleArn:
+    Type: String
+    AllowedPattern: 'arn:aws:iam::[0-9]{12}:role/.+'
+  WorkerRoleArn:
+    Type: String
+    AllowedPattern: 'arn:aws:iam::[0-9]{12}:role/.+'
+  AlarmTopicArn:
+    Type: String
+    AllowedPattern: 'arn:aws:sns:eu-central-1:[0-9]{12}:.+'
+Rules:
+  FrankfurtOnly:
+    Assertions:
+      - Assert: !Equals [!Ref 'AWS::Region', eu-central-1]
+        AssertDescription: Application documents must be deployed in Frankfurt
+Resources:
+  DocumentsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration: { Status: Enabled }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      NotificationConfiguration:
+        { EventBridgeConfiguration: { EventBridgeEnabled: true } }
+  GuardDutyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              { Service: malware-protection-plan.guardduty.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { 'aws:SourceAccount': !Ref 'AWS::AccountId' }
+      Policies:
+        - PolicyName: DocumentMalwareProtection
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  [
+                    events:PutRule,
+                    events:DeleteRule,
+                    events:PutTargets,
+                    events:RemoveTargets,
+                  ]
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/DO-NOT-DELETE-AmazonGuardDutyMalwareProtectionS3*'
+                Condition:
+                  StringEquals:
+                    {
+                      'events:ManagedBy': malware-protection-plan.guardduty.amazonaws.com,
+                    }
+              - Effect: Allow
+                Action: [events:DescribeRule, events:ListTargetsByRule]
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/DO-NOT-DELETE-AmazonGuardDutyMalwareProtectionS3*'
+              - Effect: Allow
+                Action:
+                  [
+                    s3:GetObject,
+                    s3:GetObjectVersion,
+                    s3:GetObjectTagging,
+                    s3:GetObjectVersionTagging,
+                    s3:PutObjectTagging,
+                    s3:PutObjectVersionTagging,
+                  ]
+                Resource: !Sub '${DocumentsBucket.Arn}/documents/*'
+              - Effect: Allow
+                Action:
+                  [
+                    s3:PutBucketNotification,
+                    s3:GetBucketNotification,
+                    s3:ListBucket,
+                  ]
+                Resource: !GetAtt DocumentsBucket.Arn
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${DocumentsBucket.Arn}/malware-protection-resource-validation-object'
+  DocumentsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DocumentsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RequireTLS
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              [!GetAtt DocumentsBucket.Arn, !Sub '${DocumentsBucket.Arn}/*']
+            Condition: { Bool: { 'aws:SecureTransport': false } }
+          - Sid: OnlyGuardDutyCanChangeTags
+            Effect: Deny
+            Principal: '*'
+            Action:
+              [
+                s3:PutObjectTagging,
+                s3:PutObjectVersionTagging,
+                s3:DeleteObjectTagging,
+                s3:DeleteObjectVersionTagging,
+              ]
+            Resource: !Sub '${DocumentsBucket.Arn}/*'
+            Condition:
+              ArnNotEquals: { 'aws:PrincipalArn': !GetAtt GuardDutyRole.Arn }
+          - Sid: PreventScanTagOnUpload
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${DocumentsBucket.Arn}/*'
+            Condition:
+              ForAnyValue:StringEquals:
+                { 's3:RequestObjectTagKeys': [GuardDutyMalwareScanStatus] }
+          - Sid: NoReadUnlessClean
+            Effect: Deny
+            Principal: '*'
+            Action: [s3:GetObject, s3:GetObjectVersion]
+            Resource: !Sub '${DocumentsBucket.Arn}/documents/*'
+            Condition:
+              StringNotEquals:
+                {
+                  's3:ExistingObjectTag/GuardDutyMalwareScanStatus': NO_THREATS_FOUND,
+                }
+              ArnNotEquals:
+                {
+                  'aws:PrincipalArn':
+                    [!GetAtt GuardDutyRole.Arn, !Ref WorkerRoleArn],
+                }
+          - Sid: ImmutableApiUploads
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${DocumentsBucket.Arn}/documents/*'
+            Condition:
+              ArnEquals: { 'aws:PrincipalArn': !Ref ApiRoleArn }
+              'Null': { 's3:if-none-match': true }
+  ProtectionPlan:
+    Type: AWS::GuardDuty::MalwareProtectionPlan
+    DependsOn: DocumentsBucketPolicy
+    Properties:
+      Role: !GetAtt GuardDutyRole.Arn
+      ProtectedResource:
+        S3Bucket:
+          { BucketName: !Ref DocumentsBucket, ObjectPrefixes: ['documents/'] }
+      Actions: { Tagging: { Status: ENABLED } }
+  DeliveryDLQ:
+    Type: AWS::SQS::Queue
+    Properties: { SqsManagedSseEnabled: true, MessageRetentionPeriod: 1209600 }
+  ConsumerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+      RedriveAllowPolicy:
+        redrivePermission: byQueue
+        sourceQueueArns:
+          [
+            !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-document-verdicts',
+          ]
+  ScanQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-document-verdicts'
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        { deadLetterTargetArn: !GetAtt ConsumerDLQ.Arn, maxReceiveCount: 8 }
+  ScanRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source: [aws.guardduty]
+        account: [!Ref 'AWS::AccountId']
+        region: [eu-central-1]
+        resources: [!GetAtt ProtectionPlan.Arn]
+        detail-type:
+          [
+            GuardDuty Malware Protection Object Scan Result,
+            GuardDuty Malware Protection Post Scan Action Failed,
+          ]
+        detail:
+          s3ObjectDetails: { bucketName: [!Ref DocumentsBucket] }
+      Targets:
+        - Id: DocumentVerdicts
+          Arn: !GetAtt ScanQueue.Arn
+          DeadLetterConfig: { Arn: !GetAtt DeliveryDLQ.Arn }
+          RetryPolicy:
+            { MaximumEventAgeInSeconds: 86400, MaximumRetryAttempts: 185 }
+  QueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref ScanQueue, !Ref DeliveryDLQ, !Ref ConsumerDLQ]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: sqs:*
+            Resource:
+              [
+                !GetAtt ScanQueue.Arn,
+                !GetAtt DeliveryDLQ.Arn,
+                !GetAtt ConsumerDLQ.Arn,
+              ]
+            Condition: { Bool: { 'aws:SecureTransport': false } }
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sqs:SendMessage
+            Resource: [!GetAtt ScanQueue.Arn, !GetAtt DeliveryDLQ.Arn]
+            Condition:
+              ArnEquals: { 'aws:SourceArn': !GetAtt ScanRule.Arn }
+              StringEquals: { 'aws:SourceAccount': !Ref 'AWS::AccountId' }
+          - Effect: Deny
+            Principal: '*'
+            Action: sqs:SendMessage
+            Resource:
+              [
+                !GetAtt ScanQueue.Arn,
+                !GetAtt DeliveryDLQ.Arn,
+                !GetAtt ConsumerDLQ.Arn,
+              ]
+            Condition:
+              ArnEquals:
+                { 'aws:PrincipalArn': [!Ref ApiRoleArn, !Ref WorkerRoleArn] }
+  ApiPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              [s3:PutObject, s3:GetObjectVersion, s3:GetObjectVersionTagging]
+            Resource: !Sub '${DocumentsBucket.Arn}/documents/*'
+  WorkerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: [s3:GetObjectVersion, s3:GetObjectVersionTagging]
+            Resource: !Sub '${DocumentsBucket.Arn}/documents/*'
+          - Effect: Allow
+            Action: [sqs:ReceiveMessage, sqs:DeleteMessage]
+            Resource: !GetAtt ScanQueue.Arn
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { RetentionInDays: 30 }
+  WorkerFailureFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref WorkerLogGroup
+      FilterPattern: '?PROCESSING_TIMEOUT ?TAGGING_FAILED ?SCAN_FAILED ?CONTRADICTORY_VERDICT ?RECOVERY_FAILED ?WORKER_LOOP_FAILED ?SCAN_DELIVERY_FAILED'
+      MetricTransformations:
+        - MetricNamespace: Renyqo/ApplicationDocuments
+          MetricName: !Sub '${AWS::StackName}-WorkerFailures'
+          MetricValue: '1'
+          DefaultValue: 0
+  WorkerFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: Renyqo/ApplicationDocuments
+      MetricName: !Sub '${AWS::StackName}-WorkerFailures'
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+  WorkerHeartbeatFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref WorkerLogGroup
+      FilterPattern: WORKER_HEARTBEAT
+      MetricTransformations:
+        - MetricNamespace: Renyqo/ApplicationDocuments
+          MetricName: !Sub '${AWS::StackName}-WorkerHeartbeat'
+          MetricValue: '1'
+  WorkerHeartbeatAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: Renyqo/ApplicationDocuments
+      MetricName: !Sub '${AWS::StackName}-WorkerHeartbeat'
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopicArn]
+  QueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions: [{ Name: QueueName, Value: !GetAtt ScanQueue.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 120
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+  DeliveryDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt DeliveryDLQ.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+  ConsumerDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt ConsumerDLQ.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+  ProtectionHealthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/GuardDuty/MalwareProtection
+      MetricName: FailedScanCount
+      Dimensions:
+        - {
+            Name: 'Malware Protection Plan Id',
+            Value: !GetAtt ProtectionPlan.MalwareProtectionPlanId,
+          }
+        - { Name: 'Resource Name', Value: !Ref DocumentsBucket }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+Outputs:
+  Bucket: { Value: !Ref DocumentsBucket }
+  ProtectionPlanArn: { Value: !GetAtt ProtectionPlan.Arn }
+  QueueUrl: { Value: !Ref ScanQueue }
+  ApiPolicyArn: { Value: !Ref ApiPolicy }
+  WorkerPolicyArn: { Value: !Ref WorkerPolicy }
+  WorkerLogGroup: { Value: !Ref WorkerLogGroup }
+  DeliveryDeadLetterQueue: { Value: !Ref DeliveryDLQ }
+  ConsumerDeadLetterQueue: { Value: !Ref ConsumerDLQ }

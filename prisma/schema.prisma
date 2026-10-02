@@ -81,6 +81,23 @@ enum ApplicationActivityType {
   APPLICATION_ACCEPTED           @map("application_accepted")
   CONVERSATION_OPENED            @map("conversation_opened")
   MESSAGE_SENT                   @map("message_sent")
+  DOCUMENT_REQUESTED             @map("document_requested")
+  DOCUMENT_UPLOADED              @map("document_uploaded")
+  DOCUMENT_REVIEWED              @map("document_reviewed")
+}
+
+enum ApplicationDocumentType {
+  SCHUFA              @map("schufa")
+  INCOME_PROOF        @map("income_proof")
+  IDENTITY_DOCUMENT   @map("identity_document")
+  LIABILITY_INSURANCE @map("liability_insurance")
+  OTHER               @map("other")
+}
+
+enum ApplicationDocumentState {
+  PROCESSING @map("processing")
+  AVAILABLE  @map("available")
+  FAILED     @map("failed")
 }
 
 enum ConversationSide {
@@ -246,6 +263,7 @@ model Application {
   listingEvents ListingEvent[]
   activities ApplicationActivity[]
   conversation ApplicationConversation?
+  documentRequests ApplicationDocumentRequest[]
 
   @@index([listingId, status, queueOrder])
   @@index([applicantId])
@@ -315,6 +333,51 @@ model ApplicationMessage {
   @@unique([conversationId, sequence])
   @@index([conversationId, senderType, readAt])
   @@map("application_messages")
+}
+
+model ApplicationDocumentRequest {
+  id            String                    @id @default(uuid()) @db.Uuid
+  applicationId String                    @map("application_id") @db.Uuid
+  type          ApplicationDocumentType
+  customLabel   String?                   @map("custom_label") @db.VarChar(100)
+  logicalKey    String                    @map("logical_key") @db.VarChar(120)
+  round         Int
+  requestedAt   DateTime                  @default(now()) @map("requested_at")
+  supersededAt  DateTime?                 @map("superseded_at")
+  currentFileId String?                   @unique @map("current_file_id") @db.Uuid
+  application   Application               @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  files         ApplicationDocumentFile[] @relation("DocumentAttempts")
+  currentFile   ApplicationDocumentFile?  @relation("CurrentDocument", fields: [currentFileId], references: [id], onDelete: SetNull)
+
+  @@unique([applicationId, logicalKey, round])
+  @@index([applicationId, requestedAt, id])
+  @@map("application_document_requests")
+}
+
+model ApplicationDocumentFile {
+  id            String                      @id @default(uuid()) @db.Uuid
+  requestId     String                      @map("request_id") @db.Uuid
+  storageKey    String                      @unique @map("storage_key")
+  bucket        String
+  versionId     String?                     @map("version_id")
+  etag          String?
+  checksum      String
+  mimeType      String                      @map("mime_type")
+  size          Int
+  state         ApplicationDocumentState    @default(PROCESSING)
+  createdAt     DateTime                    @default(now()) @map("created_at")
+  recoverAfter  DateTime                    @map("recover_after")
+  expiresAt     DateTime                    @map("expires_at")
+  availableAt   DateTime?                   @map("available_at")
+  reviewedAt    DateTime?                   @map("reviewed_at")
+  scanVerdict   String?                     @map("scan_verdict")
+  failureReason String?                     @map("failure_reason")
+  request       ApplicationDocumentRequest  @relation("DocumentAttempts", fields: [requestId], references: [id], onDelete: Restrict)
+  currentFor    ApplicationDocumentRequest? @relation("CurrentDocument")
+
+  @@index([state, recoverAfter, id])
+  @@index([requestId, createdAt, id])
+  @@map("application_document_files")
 }
 
 model ApplicantProfile {
