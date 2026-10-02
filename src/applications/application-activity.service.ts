@@ -6,10 +6,13 @@ import {
   ApplicationActivityVisibility,
   ApplicationRejectionReason,
   ApplicationStatus,
+  ApplicationDocumentType,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type ApplicationActivityMetadata = {
+  requestId?: string;
+  documentType?: ApplicationDocumentType;
   initialStatus?: ApplicationStatus;
   fromStatus?: ApplicationStatus;
   toStatus?: ApplicationStatus;
@@ -92,6 +95,7 @@ export class ApplicationActivityService {
         const ownsApplication =
           audience === ApplicationActivityVisibility.PROVIDER
             ? application?.listing.providerId === userId &&
+              application.status !== ApplicationStatus.WAITING &&
               (application.status === ApplicationStatus.ACTIVE ||
                 application.activeAt !== null)
             : application?.applicantId === userId;
@@ -151,6 +155,15 @@ export class ApplicationActivityService {
 
     const record = payload;
     const safePayload: Omit<ApplicationActivityMetadata, 'reason'> = {};
+
+    if (typeof record['requestId'] === 'string')
+      safePayload.requestId = record['requestId'];
+    if (typeof record['documentType'] === 'string') {
+      const type = Object.values(ApplicationDocumentType).find(
+        (value) => value === record['documentType'],
+      );
+      if (type) safePayload.documentType = type;
+    }
 
     if (typeof record['initialStatus'] === 'string') {
       safePayload.initialStatus = record['initialStatus'] as ApplicationStatus;

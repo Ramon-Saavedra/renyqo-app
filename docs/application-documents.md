@@ -1,0 +1,75 @@
+# Application documents
+
+## Domain and lifecycle
+
+The provider controls requests for one `applicationId`. Types are `SCHUFA`, `INCOME_PROOF`, `IDENTITY_DOCUMENT`, `LIABILITY_INSURANCE` and `OTHER`. `OTHER` requires a plain-text label of 1–100 characters. Labels are normalized with NFKC, trimmed, whitespace-collapsed and compared without case. The internal logical key uses a fixed-size SHA-256 digest of the normalized label so Unicode case expansion cannot overflow storage. Different labels support independent requests; duplicate predefined types or normalized labels return 409. A batch conflict rolls back the entire batch.
+
+A request has immutable rounds, `requestedAt`, `supersededAt`, and a current upload attempt. The provider creates a replacement round rather than overwriting a successful document. Replacement supersedes the previous request transactionally and preserves file and review history. A failed attempt that never became available may be retried against the same outstanding request with a new opaque storage key. A previously successful file requires a replacement round even if later revoked.
+
+Business state is derived: `UPLOAD_REQUIRED`, `RECEIVED`, `REVIEWED` or `SUPERSEDED`. `PROCESSING` is an additional technical state while storage/scanning finishes; a future UI should display a neutral “Wird verarbeitet”. File states are `PROCESSING`, `AVAILABLE`, `FAILED`. Responses include `canUpload`, `canRequestReplacement`, and per-file `canDownload`/`canReview`; authorization and scan evidence are checked again when the action occurs. A rejected previously successful file may require provider replacement even when its derived state is `UPLOAD_REQUIRED` and `canUpload` is false.
+
+At most one successful file exists per request, enforced by a partial unique index on `request_id` where `available_at` is non-null. Request rounds and the unsuperseded logical request key have unique indexes. Overdue attempts use `(state, recover_after, id)`; request/history queries use application/request timestamps and IDs. No historical backfill is performed. Document requests restrict application deletion; file deletion and object retention must be handled explicitly rather than cascading from activity.
+
+## Authorization and HTTP API
+
+All routes are prefixed by `/api/v1`. Session authentication, active-user role guards and existing CSRF protection apply. Every route is application-scoped. Provider access requires listing ownership and a visible application; `WAITING` always returns 404 to the provider, including restored applications with existing history. Applicant access requires ownership of the application. Internal actor IDs, profile fields, original filenames, storage keys, checksums, S3 versions and URLs are excluded from responses.
+
+| Audience           | Method | Application-relative route                  | Purpose                                                                                        |
+| ------------------ | ------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Provider           | GET    | `document-requests`                         | Requests, upload metadata/history, review and action state                                     |
+| Provider           | POST   | `document-requests`                         | `{ "requests": [{ "type": "SCHUFA" }, { "type": "OTHER", "customLabel": "Arbeitsvertrag" }] }` |
+| Provider           | POST   | `document-requests/:requestId/replacements` | New request round; empty body                                                                  |
+| Provider           | POST   | `documents/:documentId/review`              | `{ "status": "REVIEWED" }`; idempotent                                                         |
+| Provider/applicant | GET    | `documents/:documentId/content`             | Authorized attachment stream, `private, no-store`, `nosniff`                                   |
+| Applicant          | GET    | `document-requests`                         | Own requested types, history, upload/review/action state                                       |
+| Applicant          | POST   | `document-requests/:requestId/document`     | Multipart `file`, one PDF/JPEG/PNG up to 10 MiB, no extra fields                               |
+
+Audience bases are `provider/applications/:applicationId/` and `applicant/applications/:applicationId/`. Metadata is already included in the request list, so no redundant standalone metadata endpoint is needed. Lists load related files through Prisma in bounded query counts rather than querying storage or fetching each request separately. There is no global document API, provider upload route, chat attachment route or arbitrary applicant upload route.
+
+Upload ownership and an outstanding request are checked before multipart buffering, then checked again under listing/application locks when reserving an attempt. MIME declarations, magic-number detection, size, empty content and PDF/image boundaries are validated. Original filenames are discarded; downloads use a server-chosen extension and attachment disposition.
+
+Mutations require an `ACTIVE` application and a `PUBLISHED` or `PAUSED` listing. `REJECTED`, `WITHDRAWN`, `ACCEPTED`, `RENTED`, archived/draft listings and `WAITING` disable requests, uploads, replacements and reviews. Existing clean documents remain readable by authorized users in terminal states. Restoring to `ACTIVE` resumes outstanding requests; `WAITING` keeps provider history hidden and uploads disabled. Re-application uses a new application ID with independent requests.
+
+## Scan verdict delivery and finalization
+
+GuardDuty Malware Protection for S3 performs scanning. The worker performs no antivirus scanning and exposes no HTTP endpoint. Normal path:
+
+```text
+API upload → private versioned S3 → GuardDuty
+GuardDuty verdict/tagging failure → EventBridge → encrypted Standard SQS
+separate NestJS worker → shared document finalizer → Prisma transaction
+```
+
+The API reserves an immutable attempt before writing the object. It writes SHA-256 checksum and attempt metadata, uses conditional `If-None-Match: *`, then records S3 `VersionId` and ETag. Unversioned responses fail closed. A verdict received before version persistence is retried; an interrupted upload cannot become available from an uncorrelated object.
+
+The event parser validates source, account, region, protection-plan ARN, schema, bucket, key, exact version, ETag and verdict fields. Finalization validates attempt metadata, checksum metadata, MIME, byte length, ETag and the exact-version `GuardDutyMalwareScanStatus` tag. Only `COMPLETED/NO_THREATS_FOUND` plus clean storage evidence can publish a still-current, non-superseded, non-expired attempt for an active application.
+
+Availability and `DOCUMENT_UPLOADED` activity commit together under the same listing/application lock order as lifecycle operations. No message is acknowledged before successful finalization. Serialization conflicts retry. Concurrent/duplicate deliveries cannot create duplicate activity. Missing tags and transient storage/database failures retain the queue delivery for retry. Unsafe, skipped, failed, tagging-failure, timeout and conflicting verdicts cannot publish. A contradictory verdict revokes access to a previously available file; late clean deliveries cannot revive it. Events for old versions or before the attempt are ignored. Events for superseded rounds never publish or change the current round.
+
+Downloads require application ownership/visibility, `AVAILABLE` state and a protected clean S3 tag for the exact version. State/authorization are checked again after preparing the stream. The bucket also denies normal reads of objects lacking the clean tag. Normal API and worker identities cannot write/delete result tags or send verdict queue messages. The worker role is privileged for exact-version metadata inspection because S3 authorizes HEAD with object-read permissions; it has no upload, tagging, deletion or verdict-send permissions. Grant it only to the independent worker runtime.
+
+Recovery runs separately from the SQS receive loop once per minute and inspects at most 25 overdue `PROCESSING` attempts per pass. The first recovery check is due after five minutes, never the normal path. It verifies exact-version metadata and GuardDuty tags and reuses the same transactional finalizer. The protected `NO_THREATS_FOUND` tag is GuardDuty's completed clean result. Missing evidence backs off; attempts have a hard 30-minute deadline. If AWS remains unreachable, they stay `PROCESSING` and inaccessible until recovery can record failure; the heartbeat/failure alarms cover worker/recovery health. A terminal, superseded or expired attempt is never revived.
+
+## Deployment and operations
+
+The additive Prisma migration and `infra/application-documents.yaml` must be deployed before enabling document uploads in production. The template deploys only in `eu-central-1`: a dedicated private S3 bucket with public access blocked, ownership enforced, SSE-S3 encryption, versioning, a GuardDuty plan, encrypted Standard SQS, separate EventBridge delivery and consumer DLQs, scoped runtime policies, retained bucket and monitoring. It does not provision an additional API, Lambda, antivirus engine or worker compute platform.
+
+Supply a globally unique private bucket name, separate same-account API/worker IAM role ARNs, and the existing operations SNS topic ARN. Attach the template's exported API and worker managed policies to their corresponding roles. Runtime roles must be distinct and must not have broad administrator privileges, cross-role assumption, bucket-policy management or event-rule management. Role trust and compute deployment remain in the existing hosting setup. The GuardDuty role uses the documented service principal and bucket-scoped permissions. The API does not receive queue-consumer permissions. The worker role does not receive upload permissions. Bucket and queue policies enforce TLS and protect verdict integrity even if runtime tagging/send permissions were accidentally broadened.
+
+Set API/worker `DOCUMENTS_S3_BUCKET`, `DOCUMENTS_AWS_ACCOUNT_ID`, `DOCUMENTS_GUARDDUTY_PLAN_ARN`; set worker `DOCUMENTS_SCAN_QUEUE_URL`, `DATABASE_URL`. The document region is fixed to Frankfurt. AWS SDK credentials use the standard provider chain and separate runtime roles; do not place credentials in source. Worker configuration is validated before Prisma starts. API routes report 503 for incomplete storage configuration; unrelated API behavior remains available without document credentials.
+
+Build the same application image and launch a separate supervised process/container with `npm run start:document-worker` or `node dist/application-documents/worker/main`. It has no port, session secret, OpenAI or Cloudinary requirement. Deploy at least one worker; each receives at most four messages concurrently and uses a 180-second visibility timeout. SIGTERM/SIGINT stop receiving, drain in-flight work, and close Prisma. Scale workers with queue age while budgeting database connections. Recovery is bounded per worker and transactions make multiple workers safe.
+
+Route worker stdout to the template's exported log group. Configure the hosting log driver with narrowly scoped `logs:CreateLogStream`/`logs:PutLogEvents` permission on that group; the runtime document policy deliberately does not manage hosting/logging permissions. Alerts cover queue age, both DLQs, worker heartbeat loss, scan/tagging/recovery/transaction failures, timeouts and contradictory verdicts. GuardDuty's failed-scan metric also has an alarm. Monitoring requires connecting log forwarding and the existing operations topic during deployment; it is not enabled merely by merging source.
+
+EventBridge retries delivery for up to 24 hours/185 attempts before its delivery DLQ. Consumer failures retry via SQS visibility and move to the consumer DLQ after eight receives. All queues retain messages for 14 days. Inspect operational signals without logging document contents, filenames, storage keys or full event payloads. Diagnose delivery failures separately from worker/domain failures. Repair configuration/IAM/database availability first; use an operations identity to replay or redrive DLQs, preserving original event identity/version/time. Do not grant runtime identities permission to manufacture queue messages. Redriven stale/unsafe events still fail closed. A timed-out attempt needs a new applicant attempt or provider replacement rather than manual state promotion.
+
+Before production activation, confirm GuardDuty plan health, bucket policy/versioning/encryption, API/worker IAM separation, queue and DLQ policies, log forwarding and alarm delivery. Perform a real harmless upload and an approved malware-test fixture in a nonproduction AWS bucket; verify clean finalization and unsafe denial. Local tests mock AWS transport, not scanning or domain/database transactions. No live AWS deployment or scanning test is performed by the local suite.
+
+## Audit, retention and validation
+
+`DOCUMENT_REQUESTED`, `DOCUMENT_UPLOADED`, `DOCUMENT_REVIEWED` activities are transactionally appended with request ID and document type only. File bytes, filenames, labels, keys and actor IDs are excluded from public activity payloads. Activity is audit-only; request/file models own authoritative state. Provider timelines explicitly deny `WAITING` access.
+
+Retention/deletion is a required separate follow-up, particularly for identity documents and SCHUFA. Establish legal/product retention periods, removal of current and historical S3 versions, cleanup of failed/orphaned upload objects, and minimal metadata/audit retention. File retention must remain independent of immutable `ApplicationActivity` retention. The current PR preserves history and deliberately introduces no blanket S3 lifecycle expiration or large retention system.
+
+Validation commands: `npm run format`, `npm run format:check`, `npm run lint`, `npm run typecheck`, `npx prisma validate`, `npm test -- --runInBand application-documents`, focused and full `npm run test:e2e`, `npm test -- --runInBand`, `npm run build`, `git diff --check`, and CloudFormation `cfn-lint infra/application-documents.yaml --regions eu-central-1`. Apply test migrations only to the isolated guarded E2E database. Architecture, security and tests reviews are required before completion.

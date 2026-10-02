@@ -82,6 +82,8 @@ Copy `.env.example` to `.env` and set the values for this machine. Names, requir
 
 Application conversations are scoped to a single application and opened by the provider's first text message. The backend enforces alternating turns, ownership, WAITING privacy and terminal-state restrictions. See [Conversation API](docs/api.md#application-conversations) and [Lifecycle rules](docs/application-lifecycle.md#application-conversations).
 
+Application documents are requested by the provider for one application. Applicants upload only requested PDF/JPEG/PNG files into a dedicated private, versioned S3 bucket in Frankfurt. GuardDuty scans them; EventBridge and encrypted Standard SQS deliver verdicts to a separate NestJS worker. Documents become downloadable only after clean finalization. See [Application documents](docs/application-documents.md) for API contracts, infrastructure, worker deployment, recovery and retention follow-up.
+
 Unit tests:
 
 ```bash
