@@ -79,6 +79,13 @@ enum ApplicationActivityType {
   APPLICATION_REJECTED           @map("application_rejected")
   APPLICATION_RESTORED           @map("application_restored")
   APPLICATION_ACCEPTED           @map("application_accepted")
+  CONVERSATION_OPENED            @map("conversation_opened")
+  MESSAGE_SENT                   @map("message_sent")
+}
+
+enum ConversationSide {
+  PROVIDER  @map("provider")
+  APPLICANT @map("applicant")
 }
 
 enum ApplicationActivityActorType {
@@ -238,6 +245,7 @@ model Application {
   applicant User    @relation(fields: [applicantId], references: [id])
   listingEvents ListingEvent[]
   activities ApplicationActivity[]
+  conversation ApplicationConversation?
 
   @@index([listingId, status, queueOrder])
   @@index([applicantId])
@@ -280,6 +288,33 @@ model ApplicationActivity {
   @@index([applicationId, occurredAt, id])
   @@index([applicationId, visibility, occurredAt, id])
   @@map("application_activities")
+}
+
+model ApplicationConversation {
+  id            String   @id @default(uuid()) @db.Uuid
+  applicationId String   @unique @map("application_id") @db.Uuid
+  openedAt      DateTime @default(now()) @map("opened_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  messages ApplicationMessage[]
+
+  @@map("application_conversations")
+}
+
+model ApplicationMessage {
+  id             String           @id @default(uuid()) @db.Uuid
+  conversationId String           @map("conversation_id") @db.Uuid
+  sequence       Int
+  senderType     ConversationSide @map("sender_type")
+  body           String           @db.VarChar(4000)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  readAt         DateTime?        @map("read_at")
+
+  conversation ApplicationConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, sequence])
+  @@index([conversationId, senderType, readAt])
+  @@map("application_messages")
 }
 
 model ApplicantProfile {

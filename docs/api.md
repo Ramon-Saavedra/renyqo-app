@@ -316,3 +316,27 @@ During the Phase 1 migration, `introduction` may be `null` for legacy profiles. 
 | Method | Path                                 | Auth     | Description                      |
 | ------ | ------------------------------------ | -------- | -------------------------------- |
 | `GET`  | `/api/v1/provider/dashboard/summary` | Provider | Summary of the provider listings |
+## Application conversations
+
+All routes below use the `/api/v1` prefix, session authentication, the corresponding role guard and application ownership checks. Replace `{audience}` with `provider` or `applicant`. There is no global conversation list or standalone conversation creation endpoint.
+
+| Method | Route | Input | Response |
+| --- | --- | --- | --- |
+| GET | `/{audience}/applications/:applicationId/conversation/summary` | UUID v4 application ID | Conversation summary |
+| GET | `/{audience}/applications/:applicationId/conversation` | `afterSequence` (default 0), `limit` (default 50, maximum 100) | Summary plus ordered message page |
+| POST | `/{audience}/applications/:applicationId/conversation/messages` | `{ "body": "Plain text" }` | Created message, HTTP 201 |
+| PATCH | `/{audience}/applications/:applicationId/conversation/read` | `{ "throughSequence": 3 }` | `{ "markedCount": 1 }` |
+
+Summary fields are `applicationId`, nullable `conversationId` and `openedAt`, `isOpen`, `canCurrentUserSend`, nullable `expectedResponder` (`PROVIDER` or `APPLICANT`), `unreadCount`, and nullable `lastMessage`. `isOpen` means a first message exists; it does not mean sending is currently allowed. Before opening, only the provider can send. When sending is disabled by application/listing state, `expectedResponder` is null.
+
+Detail adds `messages`, `hasMore`, and nullable `nextAfterSequence`. Messages are ordered by per-conversation `sequence`, independent of timestamp ties. Use `nextAfterSequence` as `afterSequence` for the next page. Reading a page does not mark messages as read.
+
+Messages expose only `id`, `sequence`, `senderType`, `body`, `createdAt`, and nullable `readAt`. The last message includes its timestamp and sender side; no user IDs or profile information are returned. Enum values are stable uppercase API values; labels are translated by the frontend.
+
+Bodies are trimmed and limited to 1–4000 characters. Angle brackets and control characters other than tabs and line breaks are rejected. HTML, attachments, documents, unknown request fields, and whitespace-only messages are rejected with HTTP 400. Clients must render body content as text, without HTML parsing or entity decoding. Non-string bodies are rejected even when implicit conversion is enabled globally.
+
+Mark-as-read updates only unread incoming messages through the supplied positive sequence. A cutoff beyond the latest message is HTTP 400. Repeating a cutoff is idempotent. A closed conversation returns `markedCount: 0`. The cutoff prevents a read acknowledgement from marking messages that arrive after the client-observed sequence.
+
+Unauthorized sessions receive HTTP 401, wrong roles HTTP 403, and ownership failures/hidden WAITING applications HTTP 404. Wrong-turn or inactive-process sends receive HTTP 409. Provider reads require an owned listing and an application that is ACTIVE or was previously active; WAITING always returns HTTP 404, including restored WAITING applications with old conversation history. Applicants can read only their own application history.
+
+The first provider message, conversation creation, `CONVERSATION_OPENED`, and `MESSAGE_SENT` activities commit atomically. Later messages each record `MESSAGE_SENT`. Activity payloads contain no message bodies. Neither uploads nor notifications are part of this phase.

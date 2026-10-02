@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ApplicationConversationModule } from './application-conversation/application-conversation.module';
 import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env.validation';
 import { ApplicantListingActionsModule } from './applicant-listing-actions/applicant-listing-actions.module';
@@ -28,6 +29,7 @@ import { ListingAssistanceModule } from './listing-assistance/listing-assistance
     ListingImagesModule,
     DashboardModule,
     ApplicationsModule,
+    ApplicationConversationModule,
     ApplicantListingActionsModule,
     ApplicantProfileModule,
     EligibilityModule,
