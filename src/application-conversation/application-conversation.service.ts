@@ -9,14 +9,14 @@ import {
   ApplicationActivityActorType,
   ApplicationActivityType,
   ApplicationActivityVisibility,
-  ApplicationStatus,
   ConversationSide,
-  ListingStatus,
 } from '../generated/prisma/enums';
 import { ApplicationActivityService } from '../applications/application-activity.service';
+import { providerApplicationIsVisible } from '../applications/application-process.policy';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationMessageService } from './application-message.service';
+import { conversationResponsibility } from './application-conversation.policy';
 import { ConversationQueryDto } from './dto/conversation-query.dto';
 import {
   ApplicationMessageResponseDto,
@@ -201,9 +201,7 @@ export class ApplicationConversationService {
       application &&
       (side === ConversationSide.PROVIDER
         ? application.listing.providerId === userId &&
-          application.status !== ApplicationStatus.WAITING &&
-          (application.status === ApplicationStatus.ACTIVE ||
-            application.activeAt !== null)
+          providerApplicationIsVisible(application)
         : application.applicantId === userId);
     if (!authorized || !application) {
       throw new NotFoundException('Application not found');
@@ -232,15 +230,10 @@ export class ApplicationConversationService {
       ? await this.messages.snapshot(tx, application.conversation.id, side)
       : { lastMessage: null, unreadCount: 0 };
     const isOpen = snapshot.lastMessage !== null;
-    const processAllowsSending =
-      application.status === ApplicationStatus.ACTIVE &&
-      (application.listing.status === ListingStatus.PUBLISHED ||
-        application.listing.status === ListingStatus.PAUSED);
-    const expectedResponder = processAllowsSending
-      ? snapshot.lastMessage?.senderType === ConversationSide.PROVIDER
-        ? ConversationSide.APPLICANT
-        : ConversationSide.PROVIDER
-      : null;
+    const { expectedResponder } = conversationResponsibility(
+      application,
+      snapshot.lastMessage?.senderType ?? null,
+    );
     return new ConversationSummaryResponseDto(
       application.id,
       application.conversation?.id ?? null,

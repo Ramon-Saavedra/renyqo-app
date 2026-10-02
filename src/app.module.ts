@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ApplicationAttentionModule } from './application-attention/application-attention.module';
 import { ApplicationViewingsModule } from './application-viewings/application-viewings.module';
 import { ApplicationDocumentsModule } from './application-documents/application-documents.module';
 import { ApplicationConversationModule } from './application-conversation/application-conversation.module';
@@ -34,6 +35,7 @@ import { ListingAssistanceModule } from './listing-assistance/listing-assistance
     ApplicationConversationModule,
     ApplicationDocumentsModule,
     ApplicationViewingsModule,
+    ApplicationAttentionModule,
     ApplicantListingActionsModule,
     ApplicantProfileModule,
     EligibilityModule,

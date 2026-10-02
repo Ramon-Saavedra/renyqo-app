@@ -4,6 +4,7 @@ import { ConversationSide } from '../generated/prisma/enums';
 import { ApplicationMessageResponseDto } from './dto/conversation-response.dto';
 import { ConversationQueryDto } from './dto/conversation-query.dto';
 import { MAX_MESSAGE_LENGTH, PLAIN_TEXT_MESSAGE } from './dto/send-message.dto';
+import { incomingUnreadMessages } from './application-conversation.policy';
 
 @Injectable()
 export class ApplicationMessageService {
@@ -35,7 +36,7 @@ export class ApplicationMessageService {
         messages: { orderBy: { sequence: 'desc' }, take: 1 },
         _count: {
           select: {
-            messages: { where: { senderType: { not: side }, readAt: null } },
+            messages: { where: incomingUnreadMessages(side) },
           },
         },
       },
@@ -88,8 +89,7 @@ export class ApplicationMessageService {
     const result = await tx.applicationMessage.updateMany({
       where: {
         conversationId,
-        senderType: { not: side },
-        readAt: null,
+        ...incomingUnreadMessages(side),
         sequence: { lte: throughSequence },
       },
       data: { readAt: new Date() },
