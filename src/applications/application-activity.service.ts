@@ -11,6 +11,12 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 
 export type ApplicationActivityMetadata = {
+  viewingId?: string;
+  viewingRound?: number;
+  previousViewingId?: string;
+  startsAt?: string;
+  endsAt?: string;
+  outcomeRevision?: number;
   requestId?: string;
   documentType?: ApplicationDocumentType;
   initialStatus?: ApplicationStatus;
@@ -155,6 +161,30 @@ export class ApplicationActivityService {
 
     const record = payload;
     const safePayload: Omit<ApplicationActivityMetadata, 'reason'> = {};
+
+    for (const key of ['viewingId', 'previousViewingId'] as const) {
+      if (
+        typeof record[key] === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(
+          record[key],
+        )
+      )
+        safePayload[key] = record[key];
+    }
+    for (const key of ['startsAt', 'endsAt'] as const) {
+      const value = record[key];
+      if (
+        typeof value === 'string' &&
+        !Number.isNaN(Date.parse(value)) &&
+        new Date(value).toISOString() === value
+      )
+        safePayload[key] = value;
+    }
+    for (const key of ['viewingRound', 'outcomeRevision'] as const) {
+      const value = record[key];
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+        safePayload[key] = value;
+    }
 
     if (typeof record['requestId'] === 'string')
       safePayload.requestId = record['requestId'];

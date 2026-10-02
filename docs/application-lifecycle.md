@@ -1,5 +1,7 @@
 # Application Lifecycle
 
+Viewing rules are defined in [Application Viewings](application-viewings.md). All viewing writes require ACTIVE and a PUBLISHED or PAUSED listing. Terminal states retain authorized history without rewriting viewing records. Restoration to ACTIVE resumes an unresolved round when time permits; restoration to WAITING hides all viewing surfaces from providers.
+
 Application HTTP contracts are documented in [API](api.md#applications). This page is the domain source for status, eligibility, queue, rent, and related rate-limit behavior.
 
 ## Statuses

@@ -1,5 +1,7 @@
 # Renyqo Backend
 
+Application-scoped viewings support immutable proposal rounds, applicant change requests, attendance outcomes with audited correction, and final post-viewing interest. Group viewings may overlap across applications. Safe capabilities and derived next actions are documented in [Application Viewings](docs/application-viewings.md).
+
 Backend API for Renyqo, a smart rental platform for the German rental market.
 
 ## Stack
