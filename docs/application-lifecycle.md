@@ -60,3 +60,14 @@ RENTED listings disappear from applicant discovery and do not accept new applica
 ## Application action rate limit
 
 `POST /api/v1/listings/:id/apply` and `DELETE /api/v1/applicant/applications/:id` share a backend rate-limit bucket keyed by the authenticated applicant and listing. Four application actions are allowed per 60 seconds; the fifth rapid action returns `429` with `code: "APPLICATION_ACTION_RATE_LIMITED"`. This permits two complete apply/withdraw cycles in a short window while limiting automated history-row abuse. The application-scoped in-memory storage implements the NestJS throttler contract and applies per backend process; configure shared throttler storage before running multiple replicas.
+## Application conversations
+
+Each application owns at most one text conversation. A new application ID on re-application starts a separate conversation. Conversation history is retained through lifecycle changes.
+
+The provider opens a conversation by sending its first message. Applicants cannot initiate. Subsequent turns are derived from the last message: PROVIDER → APPLICANT → PROVIDER. Sending and lifecycle mutations share listing-before-application locking and Serializable isolation. No pending-action or next-action state is persisted.
+
+Sending requires an ACTIVE application and a PUBLISHED or PAUSED listing. PAUSED stops new applications while allowing existing participants to communicate. DRAFT, ARCHIVED and RENTED listings disable sending. REJECTED, WITHDRAWN, ACCEPTED and WAITING applications disable sending. Existing history remains readable and incoming messages can still be marked as read by authorized participants.
+
+As explicitly approved for this phase, restoration to ACTIVE resumes messaging in the same conversation, retaining history and the previous turn. Restoration to WAITING disables sending and hides all conversation surfaces from the provider until the application becomes ACTIVE again. No separate reopening endpoint exists.
+
+Provider access requires listing ownership, a non-WAITING application and current or prior ACTIVE visibility. Never-visible rejected/withdrawn WAITING applicants stay hidden. Applicant access always requires ownership of that exact application. Conversation DTOs expose no applicant profile or internal user IDs.

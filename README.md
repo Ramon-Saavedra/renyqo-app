@@ -80,6 +80,8 @@ Copy `.env.example` to `.env` and set the values for this machine. Names, requir
 
 ## Testing
 
+Application conversations are scoped to a single application and opened by the provider's first text message. The backend enforces alternating turns, ownership, WAITING privacy and terminal-state restrictions. See [Conversation API](docs/api.md#application-conversations) and [Lifecycle rules](docs/application-lifecycle.md#application-conversations).
+
 Unit tests:
 
 ```bash
@@ -109,6 +111,7 @@ src/
   applicant-listing-actions/    Applicant saved listings and reports
   applicant-listing-summaries/  Applicant-safe listing summaries
   applicant-profile/            Applicant profile used for eligibility
+  application-conversation/     Application text conversations and messages
   applications/                 Listing applications
   auth/                         Session-based auth
   common/                       Shared guards and types

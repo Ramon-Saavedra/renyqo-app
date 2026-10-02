@@ -69,6 +69,12 @@ Listing discovery sort modes are supported by these indexes:
 
 ## Transactions and concurrency
 
+`20261002120000_add_application_conversation` is additive: it adds `ApplicationConversation`, `ApplicationMessage`, `ConversationSide`, and the `CONVERSATION_OPENED`/`MESSAGE_SENT` activity types. It does not backfill conversations. A unique application foreign key enforces one conversation per application; a unique `(conversationId, sequence)` index enforces deterministic message order. An index on `(conversationId, senderType, readAt)` supports unread counts. Sender identity is determined by the application participants and message side, without duplicating user IDs or profile data.
+
+Conversation/message rows cascade only on physical deletion of their parent. Terminal application transitions never delete history. Message constraints enforce a positive sequence and nonempty body; HTTP and service validation enforce the complete plain-text contract.
+
+Conversation sends and read acknowledgements use Serializable transactions with existing serialization-conflict retries. They lock the listing before the application, matching lifecycle lock order, then recheck ownership and visibility. The application lock also serializes first sends before a conversation exists. Conversation creation, message creation and activity writes share the transaction, so failures leave no partial opening or orphan activity. Reads use Repeatable Read for consistent summary/detail state. Queries fetch bounded message pages and a filtered unread aggregate rather than loading complete histories or querying once per message. Future dashboard collection integration should use nested/batched aggregates rather than looping over per-application HTTP endpoints.
+
 Public listing collection `total` and page are calculated in a consistent Repeatable Read transaction.
 
 Waiting-queue promotion, apply, withdraw, reject, restore, and rent run in Serializable transactions with row locks and serialization-conflict retries where documented in [Application lifecycle](application-lifecycle.md). Concurrent promotions can never exceed five `ACTIVE` applications. Withdrawing an `ACTIVE` application keeps slot release and FIFO promotion atomic in the same Serializable transaction.
@@ -76,6 +82,8 @@ Waiting-queue promotion, apply, withdraw, reject, restore, and rent run in Seria
 `DELETE` of a listing image removes the image record and compacts the remaining positions in one transaction, then deletes the Cloudinary asset. If the database transaction fails, the Cloudinary asset is kept untouched; if the Cloudinary deletion fails afterwards, the failure is logged and the image stays removed.
 
 ## E2E Testing
+
+Conversation E2E tests use HTTPS and secure session cookies. OpenSSL must be available on PATH on Linux/macOS or through Git for Windows at `%ProgramFiles%/Git/usr/bin/openssl.exe`. The suite generates a one-day localhost certificate and private key in a temporary directory, trusts that certificate explicitly in its test clients, and removes the files on teardown. It does not disable TLS certificate verification or store private keys in the repository.
 
 End-to-end tests require a dedicated temporary PostgreSQL database and fail closed unless both variables are set:
 
