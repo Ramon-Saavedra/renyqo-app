@@ -2,7 +2,7 @@ import { Transform } from 'class-transformer';
 import { IsString, Length, Matches } from 'class-validator';
 
 export const MAX_MESSAGE_LENGTH = 4000;
-export const PLAIN_TEXT_MESSAGE = /^(?:[^\p{Cc}<>]|\r|\n|\t)*$/u;
+export const PLAIN_TEXT_MESSAGE = /^(?![\s\S]*(?![\r\n\t])\p{Cc})[^<>]*$/u;
 
 export class SendMessageDto {
   @Transform(({ obj }: { obj: Record<string, unknown> }) =>

@@ -1,5 +1,5 @@
 import { ValidationPipe } from '@nestjs/common';
-import { SendMessageDto } from './send-message.dto';
+import { PLAIN_TEXT_MESSAGE, SendMessageDto } from './send-message.dto';
 import { ConversationQueryDto } from './conversation-query.dto';
 import { MarkConversationReadDto } from './mark-conversation-read.dto';
 import { ApplicationConversationParamsDto } from './application-conversation-params.dto';
@@ -12,6 +12,14 @@ const pipe = new ValidationPipe({
 });
 
 describe('Conversation input DTOs', () => {
+  it('handles long tab-heavy text with an invalid trailing character', () => {
+    expect(PLAIN_TEXT_MESSAGE.test(`hello${'\t'.repeat(100000)}<`)).toBe(false);
+    expect(PLAIN_TEXT_MESSAGE.test(`hello${'\t'.repeat(100000)}\u0000`)).toBe(
+      false,
+    );
+    expect(PLAIN_TEXT_MESSAGE.test('hello\t\r\nGrüße')).toBe(true);
+    expect(PLAIN_TEXT_MESSAGE.test('hello\u0085')).toBe(false);
+  });
   it('trims text and preserves line breaks and Unicode', async () => {
     await expect(
       pipe.transform(

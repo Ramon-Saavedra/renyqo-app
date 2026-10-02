@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { Server } from 'node:http';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import connectPgSimple from 'connect-pg-simple';
@@ -45,6 +49,8 @@ describe('Application conversation E2E', () => {
   let prisma: PrismaService;
   let store: Store;
   let server: RequestTarget;
+  let certificate: Buffer;
+  let tlsDirectory: string | undefined;
   let provider: { agent: Agent; id: string };
   let applicant: { agent: Agent; id: string };
   let applicationId: string;
@@ -55,7 +61,7 @@ describe('Application conversation E2E', () => {
   }
 
   async function register(role: 'applicant' | 'provider') {
-    const agent = request.agent(server);
+    const agent = request.agent(server).ca(certificate);
     const response = await agent
       .post('/api/v1/auth/register')
       .send({
@@ -68,6 +74,14 @@ describe('Application conversation E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
+    const cookies: unknown = response.headers['set-cookie'];
+    expect(cookies).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/; Secure(?:;|$)/),
+        expect.stringMatching(/; HttpOnly(?:;|$)/),
+        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
+      ]),
+    );
     return { agent, id: getString(body(response), 'id') };
   }
 
@@ -92,7 +106,45 @@ describe('Application conversation E2E', () => {
     const module = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
-    app = module.createNestApplication();
+    tlsDirectory = mkdtempSync(join(tmpdir(), 'renyqo-conversation-tls-'));
+    const keyPath = join(tlsDirectory, 'key.pem');
+    const certPath = join(tlsDirectory, 'cert.pem');
+    const openssl =
+      process.platform === 'win32'
+        ? join(
+            process.env['ProgramFiles'] ?? 'C:\\Program Files',
+            'Git',
+            'usr',
+            'bin',
+            'openssl.exe',
+          )
+        : 'openssl';
+    execFileSync(
+      openssl,
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-sha256',
+        '-noenc',
+        '-keyout',
+        keyPath,
+        '-out',
+        certPath,
+        '-days',
+        '1',
+        '-subj',
+        '/CN=localhost',
+        '-addext',
+        'subjectAltName=DNS:localhost,IP:127.0.0.1',
+      ],
+      { stdio: 'ignore', timeout: 10000 },
+    );
+    certificate = readFileSync(certPath);
+    app = module.createNestApplication({
+      httpsOptions: { key: readFileSync(keyPath), cert: certificate },
+    });
     app.setGlobalPrefix('api/v1');
     app.useGlobalPipes(
       new ValidationPipe({
@@ -115,6 +167,7 @@ describe('Application conversation E2E', () => {
         resave: false,
         saveUninitialized: false,
         name: 'sid',
+        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
       }),
     );
     app.use(passport.initialize());
@@ -176,8 +229,16 @@ describe('Application conversation E2E', () => {
   });
 
   afterAll(async () => {
-    if (app) await app.close();
-    if (store) await Promise.resolve(store.close());
+    try {
+      if (app) await app.close();
+    } finally {
+      try {
+        if (store) await Promise.resolve(store.close());
+      } finally {
+        if (tlsDirectory)
+          rmSync(tlsDirectory, { recursive: true, force: true });
+      }
+    }
   });
 
   it('starts closed, denies applicant initiation and opens atomically with the first provider message', async () => {
@@ -574,7 +635,11 @@ describe('Application conversation E2E', () => {
         side === 'provider' ? otherProvider.agent : otherApplicant.agent;
       const wrongRole = side === 'provider' ? applicant.agent : provider.agent;
       for (const suffix of ['', '/summary']) {
-        await request(server).get(path(side, suffix)).expect(401);
+        await request
+          .agent(server)
+          .ca(certificate)
+          .get(path(side, suffix))
+          .expect(401);
         await foreign.get(path(side, suffix)).expect(404);
         await wrongRole.get(path(side, suffix)).expect(403);
       }
@@ -594,11 +659,15 @@ describe('Application conversation E2E', () => {
         .patch(path(side, '/read'))
         .send({ throughSequence: 1 })
         .expect(403);
-      await request(server)
+      await request
+        .agent(server)
+        .ca(certificate)
         .post(path(side, '/messages'))
         .send({ body: 'Unauthenticated' })
         .expect(401);
-      await request(server)
+      await request
+        .agent(server)
+        .ca(certificate)
         .patch(path(side, '/read'))
         .send({ throughSequence: 1 })
         .expect(401);

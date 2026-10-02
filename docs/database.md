@@ -83,6 +83,8 @@ Waiting-queue promotion, apply, withdraw, reject, restore, and rent run in Seria
 
 ## E2E Testing
 
+Conversation E2E tests use HTTPS and secure session cookies. OpenSSL must be available on PATH on Linux/macOS or through Git for Windows at `%ProgramFiles%/Git/usr/bin/openssl.exe`. The suite generates a one-day localhost certificate and private key in a temporary directory, trusts that certificate explicitly in its test clients, and removes the files on teardown. It does not disable TLS certificate verification or store private keys in the repository.
+
 End-to-end tests require a dedicated temporary PostgreSQL database and fail closed unless both variables are set:
 
 ```bash
