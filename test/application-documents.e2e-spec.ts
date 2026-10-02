@@ -831,7 +831,8 @@ describe('Application documents E2E', () => {
   );
 
   it('revokes a previously available document when a contradictory verdict arrives', async () => {
-    const file = await upload(await createRequest());
+    const requestId = await createRequest();
+    const file = await upload(requestId);
     await finalize(file);
     await app
       .get(ApplicationDocumentFinalizationService)
@@ -841,6 +842,25 @@ describe('Application documents E2E', () => {
     });
     expect(failed.state).toBe('FAILED');
     expect(failed.failureReason).toBe('CONTRADICTORY_VERDICT');
+    const requests = await applicant.agent
+      .get(path('applicant', '/document-requests'))
+      .expect(200);
+    const responseRows: unknown = requests.body;
+    expect(responseRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: requestId, canUpload: false }),
+      ]),
+    );
+    await applicant.agent
+      .post(path('applicant', `/document-requests/${requestId}/document`))
+      .attach('file', pdf, {
+        filename: 'retry.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(409);
+    expect(
+      await prisma.applicationDocumentFile.count({ where: { requestId } }),
+    ).toBe(1);
     await provider.agent
       .get(path('provider', `/documents/${file.id}/content`))
       .expect(404);

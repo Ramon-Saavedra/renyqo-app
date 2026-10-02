@@ -21,6 +21,7 @@ import { ApplicationDocumentStorageService } from './application-document-storag
 import { ApplicationDocumentRequestService } from './application-document-request.service';
 import { ApplicationDocumentActivityService } from './application-document-activity.service';
 import { DocumentResponseDto } from './dto/document-response.dto';
+import { documentUploadAllowed } from './application-document.policy';
 
 @Injectable()
 export class ApplicationDocumentService {
@@ -54,11 +55,7 @@ export class ApplicationDocumentService {
         include: { currentFile: true },
       });
       if (!request) throw new NotFoundException('Document request not found');
-      if (
-        request.currentFile &&
-        (request.currentFile.state !== ApplicationDocumentState.FAILED ||
-          request.currentFile.availableAt)
-      )
+      if (!documentUploadAllowed(request.currentFile))
         throw new ConflictException('This request already has a document');
     });
   }
@@ -79,11 +76,7 @@ export class ApplicationDocumentService {
         include: { currentFile: true },
       });
       if (!request) throw new NotFoundException('Document request not found');
-      if (
-        request.currentFile &&
-        (request.currentFile.state !== ApplicationDocumentState.FAILED ||
-          request.currentFile.availableAt)
-      )
+      if (!documentUploadAllowed(request.currentFile))
         throw new ConflictException('This request already has a document');
       const id = randomUUID();
       const now = Date.now();

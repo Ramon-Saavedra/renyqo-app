@@ -162,7 +162,9 @@ export class ApplicationViewingPolicy {
   }
 
   nextAction(
-    viewing: ViewingRecord,
+    viewing: Pick<ViewingRecord, 'status' | 'startsAt' | 'endsAt'> & {
+      interest: { id: string } | null;
+    },
     mutable: boolean,
     latest: boolean,
     now: Date,

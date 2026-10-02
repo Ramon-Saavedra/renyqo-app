@@ -4,7 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
-import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
+import {
+  applicationProcessAllowsMutation,
+  providerApplicationIsVisible,
+} from '../applications/application-process.policy';
 
 export type DocumentAudience = 'provider' | 'applicant';
 
@@ -38,9 +41,7 @@ export class ApplicationDocumentAccessService {
       !(audience === 'applicant'
         ? application.applicantId === userId
         : application.listing.providerId === userId &&
-          application.status !== ApplicationStatus.WAITING &&
-          (application.status === ApplicationStatus.ACTIVE ||
-            application.activeAt !== null))
+          providerApplicationIsVisible(application))
     )
       throw new NotFoundException('Application not found');
     return application;
@@ -87,10 +88,6 @@ export class ApplicationDocumentAccessService {
   }
 
   canMutate(application: DocumentApplication): boolean {
-    return (
-      application.status === ApplicationStatus.ACTIVE &&
-      (application.listing.status === ListingStatus.PUBLISHED ||
-        application.listing.status === ListingStatus.PAUSED)
-    );
+    return applicationProcessAllowsMutation(application);
   }
 }

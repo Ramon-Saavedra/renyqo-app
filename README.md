@@ -4,6 +4,8 @@ Application-scoped viewings support immutable proposal rounds, applicant change 
 
 Backend API for Renyqo, a smart rental platform for the German rental market.
 
+Application attention derives audience-specific pending actions and operational unread badges from existing domain state. Five dedicated read APIs provide application details and provider/listing/applicant totals without persisted badge state. See [Application Attention](docs/application-attention.md) for contracts, privacy and batch-query semantics.
+
 ## Stack
 
 - NestJS
