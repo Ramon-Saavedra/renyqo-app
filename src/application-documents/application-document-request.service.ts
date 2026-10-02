@@ -90,6 +90,7 @@ export class ApplicationDocumentRequestService {
           this.toDto(
             await this.append(tx, applicationId, input.type, label, key, 1),
             false,
+            true,
           ),
         );
       }
@@ -133,6 +134,7 @@ export class ApplicationDocumentRequestService {
           request.round + 1,
         ),
         false,
+        true,
       );
     });
   }

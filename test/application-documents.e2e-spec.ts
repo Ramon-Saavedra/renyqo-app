@@ -334,9 +334,13 @@ describe('Application documents E2E', () => {
           type: 'OTHER',
           customLabel: 'Arbeitsvertrag',
           status: 'UPLOAD_REQUIRED',
+          canUpload: false,
+          canRequestReplacement: true,
         }),
       ]),
     );
+    const createdList = await provider.agent.get(path('provider')).expect(200);
+    expect(createdList.body).toEqual(response.body);
     await provider.agent
       .post(path('provider'))
       .send({
@@ -728,6 +732,16 @@ describe('Application documents E2E', () => {
       .post(path('provider', `/document-requests/${requestId}/replacements`))
       .send({})
       .expect(201);
+    expect(result.body).toEqual(
+      expect.objectContaining({
+        canUpload: false,
+        canRequestReplacement: true,
+      }),
+    );
+    const replacementList = await provider.agent
+      .get(path('provider'))
+      .expect(200);
+    expect(replacementList.body).toEqual(expect.arrayContaining([result.body]));
     const second = await upload(getString(body(result), 'id'));
     expect(second.storageKey).not.toBe(first.storageKey);
     expect(second.requestId).not.toBe(first.requestId);
