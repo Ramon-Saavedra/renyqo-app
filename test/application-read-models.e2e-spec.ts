@@ -400,7 +400,7 @@ describe('Application read models E2E', () => {
     });
   }
 
-  it('returns compact provider listing overview and preserves the legacy dashboard field', async () => {
+  it('returns compact provider listing overview', async () => {
     const waitingApplicant = await register('applicant');
     await prisma.application.create({
       data: {
@@ -426,9 +426,6 @@ describe('Application read models E2E', () => {
       'status',
       'title',
     ]);
-    expect(
-      (await get('provider', 'dashboard/summary'))['newApplicationsCount'],
-    ).toBe(0);
   });
 
   it('returns max five ACTIVE applicants and recent exits in stable domain order', async () => {

@@ -125,7 +125,6 @@ src/
   auth/                         Session-based auth
   common/                       Shared guards and types
   config/                       Environment validation
-  dashboard/                    Provider dashboard summary
   eligibility/                  Explainable listing eligibility
   email/                        Amazon SES email delivery
   health/                       Liveness endpoint

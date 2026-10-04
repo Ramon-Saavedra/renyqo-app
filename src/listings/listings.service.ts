@@ -51,6 +51,17 @@ const PUBLISH_REQUIRED_FIELDS = [
 
 type PublishRequiredField = (typeof PUBLISH_REQUIRED_FIELDS)[number];
 
+type ListingStatusWrite = {
+  status: ListingStatus;
+  publishedAt?: Date;
+};
+
+const PUBLISH_CONFLICT = 'This listing cannot be published';
+const DRAFT_CONFLICT = 'This listing cannot be moved to draft';
+const PAUSE_CONFLICT = 'This listing cannot be paused';
+const RESUME_CONFLICT = 'This listing cannot be resumed';
+const ARCHIVE_CONFLICT = 'This listing cannot be archived';
+
 @Injectable()
 export class ListingsService {
   private readonly logger = new Logger(ListingsService.name);
@@ -154,6 +165,10 @@ export class ListingsService {
   async publish(id: string, providerId: string): Promise<Listing> {
     const listing = await this.findOneByProvider(id, providerId);
 
+    if (listing.status !== ListingStatus.DRAFT) {
+      throw new ConflictException(PUBLISH_CONFLICT);
+    }
+
     const missingFields = PUBLISH_REQUIRED_FIELDS.filter(
       (field: PublishRequiredField) => listing[field] == null,
     );
@@ -165,26 +180,56 @@ export class ListingsService {
       });
     }
 
-    return this.prisma.listing.update({
-      where: { id },
-      data: { status: ListingStatus.PUBLISHED, publishedAt: new Date() },
-    });
+    return this.commitListingStatus(
+      listing,
+      providerId,
+      [ListingStatus.DRAFT],
+      PUBLISH_CONFLICT,
+      {
+        status: ListingStatus.PUBLISHED,
+        ...(listing.publishedAt === null ? { publishedAt: new Date() } : {}),
+      },
+    );
   }
 
   async moveToDraft(id: string, providerId: string): Promise<Listing> {
-    await this.findOneByProvider(id, providerId);
-    return this.prisma.listing.update({
-      where: { id },
-      data: { status: ListingStatus.DRAFT },
-    });
+    return this.transitionListing(
+      id,
+      providerId,
+      [ListingStatus.PUBLISHED, ListingStatus.PAUSED],
+      DRAFT_CONFLICT,
+      { status: ListingStatus.DRAFT },
+    );
+  }
+
+  async pause(id: string, providerId: string): Promise<Listing> {
+    return this.transitionListing(
+      id,
+      providerId,
+      [ListingStatus.PUBLISHED],
+      PAUSE_CONFLICT,
+      { status: ListingStatus.PAUSED },
+    );
+  }
+
+  async resume(id: string, providerId: string): Promise<Listing> {
+    return this.transitionListing(
+      id,
+      providerId,
+      [ListingStatus.PAUSED],
+      RESUME_CONFLICT,
+      { status: ListingStatus.PUBLISHED },
+    );
   }
 
   async archive(id: string, providerId: string): Promise<Listing> {
-    await this.findOneByProvider(id, providerId);
-    return this.prisma.listing.update({
-      where: { id },
-      data: { status: ListingStatus.ARCHIVED },
-    });
+    return this.transitionListing(
+      id,
+      providerId,
+      [ListingStatus.DRAFT, ListingStatus.PUBLISHED, ListingStatus.PAUSED],
+      ARCHIVE_CONFLICT,
+      { status: ListingStatus.ARCHIVED },
+    );
   }
 
   async rentListing(
@@ -297,23 +342,6 @@ export class ListingsService {
     return this.prisma.listing.count({ where: { providerId } });
   }
 
-  async countDraftsByProvider(providerId: string): Promise<number> {
-    return this.prisma.listing.count({
-      where: { providerId, status: ListingStatus.DRAFT },
-    });
-  }
-
-  async findRecentByProvider(
-    providerId: string,
-    limit: number,
-  ): Promise<Listing[]> {
-    return this.prisma.listing.findMany({
-      where: { providerId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-  }
-
   toListingResponse(
     listing: ListingWithImages,
     options: { exposeExactAddress?: boolean } = {},
@@ -384,6 +412,57 @@ export class ListingsService {
   ): Promise<UploadApiResponse> {
     const folder = `${this.config.get('CLOUDINARY_FOLDER')}/listings/${listingId}`;
     return this.cloudinaryService.uploadBuffer(file.buffer, folder);
+  }
+
+  private async transitionListing(
+    id: string,
+    providerId: string,
+    allowedStatuses: readonly ListingStatus[],
+    conflictMessage: string,
+    data: ListingStatusWrite,
+  ): Promise<Listing> {
+    const listing = await this.findOneByProvider(id, providerId);
+    return this.commitListingStatus(
+      listing,
+      providerId,
+      allowedStatuses,
+      conflictMessage,
+      data,
+    );
+  }
+
+  private async commitListingStatus(
+    listing: Listing,
+    providerId: string,
+    allowedStatuses: readonly ListingStatus[],
+    conflictMessage: string,
+    data: ListingStatusWrite,
+  ): Promise<Listing> {
+    if (!allowedStatuses.includes(listing.status)) {
+      throw new ConflictException(conflictMessage);
+    }
+
+    const updated = await this.prisma.listing.updateMany({
+      where: {
+        id: listing.id,
+        providerId,
+        status: listing.status,
+        ...(data.publishedAt !== undefined ? { publishedAt: null } : {}),
+      },
+      data,
+    });
+
+    if (updated.count !== 1) {
+      const current = await this.prisma.listing.findFirst({
+        where: { id: listing.id, providerId },
+      });
+      if (!current) {
+        throw new NotFoundException('Listing not found');
+      }
+      throw new ConflictException(conflictMessage);
+    }
+
+    return this.findOneByProvider(listing.id, providerId);
   }
 
   private async deleteUploadedAssetAfterFailure(

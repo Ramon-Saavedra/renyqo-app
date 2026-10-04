@@ -125,10 +125,12 @@ Provider endpoints require an authenticated provider session and enforce listing
 | `GET`   | `/api/v1/provider/listings/:id`          | Provider | Get one owned listing                                     |
 | `PATCH` | `/api/v1/provider/listings/:id`          | Provider | Update an owned listing                                   |
 | `PATCH` | `/api/v1/provider/listings/:id/position` | Provider | Move an owned listing to a position in the provider order |
-| `PATCH` | `/api/v1/provider/listings/:id/publish`  | Provider | Publish an owned listing                                  |
-| `PATCH` | `/api/v1/provider/listings/:id/draft`    | Provider | Move a listing back to draft                              |
-| `PATCH` | `/api/v1/provider/listings/:id/archive`  | Provider | Archive an owned listing                                  |
-| `PATCH` | `/api/v1/provider/listings/:id/rent`     | Provider | Mark a listing as rented and finalize applications        |
+| `PATCH` | `/api/v1/provider/listings/:id/publish`  | Provider | Publish an owned draft                                    |
+| `PATCH` | `/api/v1/provider/listings/:id/draft`    | Provider | Move a published or paused listing back to draft          |
+| `PATCH` | `/api/v1/provider/listings/:id/pause`    | Provider | Pause an owned published listing                          |
+| `PATCH` | `/api/v1/provider/listings/:id/resume`   | Provider | Resume an owned paused listing                            |
+| `PATCH` | `/api/v1/provider/listings/:id/archive`  | Provider | Archive an owned draft, published, or paused listing      |
+| `PATCH` | `/api/v1/provider/listings/:id/rent`     | Provider | Mark a published or paused listing as rented              |
 
 `GET /api/v1/provider/listings/:id/active-applications` is documented under [Applications](#applications).
 
@@ -137,6 +139,19 @@ Provider endpoints require an authenticated provider session and enforce listing
 `PATCH /api/v1/provider/listings/:id/position` accepts `{ "position": 1 }`. `position` is the visible rank of that listing among the provider's listings, from `1` through the provider's total listing count. It is not a raw `displayOrder` assignment. The move rewrites that provider's `displayOrder` values to the contiguous ranks `1..N` in one serializable transaction, and the response returns the moved listing. A move that leaves the listing at its current visible rank still compacts any gaps. New listings append at the visible end of the provider order.
 
 Required property fields to publish: `street`, `zip`, `city`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`. A final `title` is also required; the frontend sends either its Provider override or its deterministic auto-title.
+
+Listing lifecycle transitions are guarded. A caller who does not own the listing receives `404`. Any other source state receives `409`. Publish still returns `422` with `missingFields` when a draft is incomplete.
+
+| Action  | Allowed sources                  | Effect on `publishedAt`                                      |
+| ------- | -------------------------------- | ------------------------------------------------------------ |
+| Publish | `DRAFT`                          | Set only when it is null. A later publish keeps the original |
+| Draft   | `PUBLISHED`, `PAUSED`            | Preserved                                                    |
+| Pause   | `PUBLISHED`                      | Preserved                                                    |
+| Resume  | `PAUSED`                         | Preserved                                                    |
+| Archive | `DRAFT`, `PUBLISHED`, `PAUSED`   | Preserved                                                    |
+| Rent    | `PUBLISHED`, `PAUSED`            | Preserved                                                    |
+
+`ARCHIVED` and `RENTED` are terminal. Repeating an action, including a second archive, returns `409`. Pause hides the listing from applicant discovery and blocks new applications. Existing applications, conversations, documents, and viewings stay in place and follow their current state rules. Resume returns the same listing to `PUBLISHED` without refreshing `publishedAt`.
 
 `POST /api/v1/provider/listings` accepts either `application/json` for listing data only, or `multipart/form-data` with the same listing fields and an optional `file` field. When `file` is provided, the API uploads the image to Cloudinary, creates the listing, stores image metadata in `listing_images`, and keeps the listing `photos` array in sync for existing consumers.
 
@@ -327,11 +342,6 @@ hasPets, isSmoker, introduction
 
 During the Phase 1 migration, `introduction` may be `null` for legacy profiles. New profiles and updated legacy profiles always persist a real introduction. Internal identifiers and timestamps are not exposed.
 
-## Dashboard
-
-| Method | Path                                 | Auth     | Description                      |
-| ------ | ------------------------------------ | -------- | -------------------------------- |
-| `GET`  | `/api/v1/provider/dashboard/summary` | Provider | Summary of the provider listings |
 ## Application conversations
 
 All routes below use the `/api/v1` prefix, session authentication, the corresponding role guard and application ownership checks. Replace `{audience}` with `provider` or `applicant`. There is no global conversation list or standalone conversation creation endpoint.

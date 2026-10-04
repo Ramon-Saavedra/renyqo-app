@@ -110,6 +110,8 @@ describe('ListingsController', () => {
             publish: jest.fn(),
             moveToDraft: jest.fn(),
             archive: jest.fn(),
+            pause: jest.fn(),
+            resume: jest.fn(),
             rentListing: jest.fn(),
             updatePosition: jest.fn(),
             toListingResponse: jest.fn(
@@ -369,6 +371,56 @@ describe('ListingsController', () => {
         exposeExactAddress: true,
       });
       expect(result.status).toBe(ListingStatus.ARCHIVED);
+    });
+  });
+
+  describe('pause', () => {
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('pause', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+    });
+
+    it('calls listingsService.pause with id and provider id', async () => {
+      const listing = makeListing({ status: ListingStatus.PAUSED });
+      listingsService.pause.mockResolvedValue(listing);
+
+      const result = await controller.pause(LISTING_ID, makeProviderUser());
+
+      expect(listingsService.pause).toHaveBeenCalledWith(
+        LISTING_ID,
+        PROVIDER_ID,
+      );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
+      expect(result.status).toBe(ListingStatus.PAUSED);
+    });
+  });
+
+  describe('resume', () => {
+    it('validates id as a UUID v4 route parameter', () => {
+      const metadata = getRouteArgMetadata('resume', 0);
+
+      expect(metadata?.data).toBe('id');
+      expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
+    });
+
+    it('calls listingsService.resume with id and provider id', async () => {
+      const listing = makeListing({ status: ListingStatus.PUBLISHED });
+      listingsService.resume.mockResolvedValue(listing);
+
+      const result = await controller.resume(LISTING_ID, makeProviderUser());
+
+      expect(listingsService.resume).toHaveBeenCalledWith(
+        LISTING_ID,
+        PROVIDER_ID,
+      );
+      expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
+        exposeExactAddress: true,
+      });
+      expect(result.status).toBe(ListingStatus.PUBLISHED);
     });
   });
 

@@ -43,6 +43,9 @@ type ListingsTransactionMock = {
       (args?: unknown) => Promise<Listing | null>
     >;
     update: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
+    updateMany: jest.MockedFunction<
+      (args?: unknown) => Promise<{ count: number }>
+    >;
     count: jest.MockedFunction<(args?: unknown) => Promise<number>>;
     aggregate: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
   };
@@ -130,6 +133,7 @@ describe('ListingsService', () => {
         findFirst: jest.fn<(args?: unknown) => Promise<unknown>>(),
         findUnique: jest.fn<(args?: unknown) => Promise<Listing | null>>(),
         update: jest.fn<(args?: unknown) => Promise<Listing>>(),
+        updateMany: jest.fn<(args?: unknown) => Promise<{ count: number }>>(),
         count: jest
           .fn<(args?: unknown) => Promise<number>>()
           .mockResolvedValue(0),
@@ -198,77 +202,305 @@ describe('ListingsService', () => {
     service = module.get<ListingsService>(ListingsService);
   });
 
+  const completeDraft = (overrides: Partial<Listing> = {}): Listing =>
+    makeRawListing({
+      title: 'Beautiful Apartment',
+      street: 'Hauptstraße 1',
+      livingArea: 65.5,
+      rooms: 3,
+      bedrooms: 2,
+      coldRent: 1200,
+      availableFrom: new Date('2024-06-01'),
+      ...overrides,
+    });
+
+  function mockStatusWrite(source: Listing, result: Listing): void {
+    prismaMock.listing.findFirst
+      .mockResolvedValueOnce(source)
+      .mockResolvedValueOnce(result);
+    prismaMock.listing.updateMany.mockResolvedValue({ count: 1 });
+  }
+
   describe('publish', () => {
     it('throws UnprocessableEntityException with missingFields when required fields are absent', async () => {
-      const listing = makeRawListing();
-      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
 
       await expect(service.publish(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
         UnprocessableEntityException,
       );
+      expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
     });
 
-    it('publishes the listing when all required fields are present', async () => {
-      const listing = makeRawListing({
-        title: 'Beautiful Apartment',
-        street: 'Hauptstraße 1',
-        livingArea: 65.5,
-        rooms: 3,
-        bedrooms: 2,
-        coldRent: 1200,
-        availableFrom: new Date('2024-06-01'),
-      });
-      const published = { ...listing, status: ListingStatus.PUBLISHED };
-      prismaMock.listing.findFirst.mockResolvedValue(listing);
-      prismaMock.listing.update.mockResolvedValue(published);
+    it('sets publishedAt when a complete draft has never been published', async () => {
+      const listing = completeDraft();
+      const publishedAt = new Date('2024-06-02T00:00:00.000Z');
+      const published = {
+        ...listing,
+        status: ListingStatus.PUBLISHED,
+        publishedAt,
+      };
+      mockStatusWrite(listing, published);
 
       const result = await service.publish(LISTING_ID, PROVIDER_ID);
 
-      expect(prismaMock.listing.update).toHaveBeenCalledWith(
+      expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: LISTING_ID },
-          data: expect.objectContaining({ status: ListingStatus.PUBLISHED }),
+          where: {
+            id: LISTING_ID,
+            providerId: PROVIDER_ID,
+            status: ListingStatus.DRAFT,
+            publishedAt: null,
+          },
+          data: {
+            status: ListingStatus.PUBLISHED,
+            publishedAt: expect.any(Date),
+          },
         }),
       );
       expect(result.status).toBe(ListingStatus.PUBLISHED);
     });
+
+    it('preserves an existing publishedAt when publishing a draft again', async () => {
+      const publishedAt = new Date('2020-01-01T00:00:00.000Z');
+      const listing = completeDraft({ publishedAt });
+      mockStatusWrite(listing, {
+        ...listing,
+        status: ListingStatus.PUBLISHED,
+      });
+
+      await service.publish(LISTING_ID, PROVIDER_ID);
+
+      expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: ListingStatus.PUBLISHED },
+        }),
+      );
+    });
+
+    it.each([
+      ListingStatus.PUBLISHED,
+      ListingStatus.PAUSED,
+      ListingStatus.ARCHIVED,
+      ListingStatus.RENTED,
+    ])('rejects publish from %s', async (status) => {
+      prismaMock.listing.findFirst.mockResolvedValue(completeDraft({ status }));
+
+      await expect(service.publish(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('returns a conflict when publish loses a concurrent transition', async () => {
+      prismaMock.listing.findFirst
+        .mockResolvedValueOnce(completeDraft())
+        .mockResolvedValueOnce(
+          completeDraft({ status: ListingStatus.ARCHIVED }),
+        );
+      prismaMock.listing.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.publish(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
+        ConflictException,
+      );
+    });
   });
 
   describe('moveToDraft', () => {
-    it('moves a published listing back to draft', async () => {
-      const listing = makeRawListing({ status: ListingStatus.PUBLISHED });
-      const drafted = { ...listing, status: ListingStatus.DRAFT };
-      prismaMock.listing.findFirst.mockResolvedValue(listing);
-      prismaMock.listing.update.mockResolvedValue(drafted);
+    it.each([ListingStatus.PUBLISHED, ListingStatus.PAUSED])(
+      'moves %s back to draft without changing publishedAt',
+      async (status) => {
+        const publishedAt = new Date('2020-01-01T00:00:00.000Z');
+        const listing = makeRawListing({ status, publishedAt });
+        mockStatusWrite(listing, {
+          ...listing,
+          status: ListingStatus.DRAFT,
+        });
 
-      const result = await service.moveToDraft(LISTING_ID, PROVIDER_ID);
+        const result = await service.moveToDraft(LISTING_ID, PROVIDER_ID);
 
-      expect(prismaMock.listing.update).toHaveBeenCalledWith(
+        expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              id: LISTING_ID,
+              providerId: PROVIDER_ID,
+              status,
+            },
+            data: { status: ListingStatus.DRAFT },
+          }),
+        );
+        expect(result.status).toBe(ListingStatus.DRAFT);
+        expect(result.publishedAt).toEqual(publishedAt);
+      },
+    );
+
+    it.each([
+      ListingStatus.DRAFT,
+      ListingStatus.ARCHIVED,
+      ListingStatus.RENTED,
+    ])('rejects draft from %s', async (status) => {
+      prismaMock.listing.findFirst.mockResolvedValue(
+        makeRawListing({ status }),
+      );
+
+      await expect(
+        service.moveToDraft(LISTING_ID, PROVIDER_ID),
+      ).rejects.toThrow(ConflictException);
+      expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pause', () => {
+    it('pauses a published listing and preserves publishedAt', async () => {
+      const publishedAt = new Date('2020-01-01T00:00:00.000Z');
+      const listing = makeRawListing({
+        status: ListingStatus.PUBLISHED,
+        publishedAt,
+      });
+      mockStatusWrite(listing, { ...listing, status: ListingStatus.PAUSED });
+
+      const result = await service.pause(LISTING_ID, PROVIDER_ID);
+
+      expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { status: ListingStatus.DRAFT },
+          where: {
+            id: LISTING_ID,
+            providerId: PROVIDER_ID,
+            status: ListingStatus.PUBLISHED,
+          },
+          data: { status: ListingStatus.PAUSED },
         }),
       );
-      expect(result.status).toBe(ListingStatus.DRAFT);
+      expect(result.status).toBe(ListingStatus.PAUSED);
+      expect(result.publishedAt).toEqual(publishedAt);
+    });
+
+    it.each([
+      ListingStatus.DRAFT,
+      ListingStatus.PAUSED,
+      ListingStatus.ARCHIVED,
+      ListingStatus.RENTED,
+    ])('rejects pause from %s', async (status) => {
+      prismaMock.listing.findFirst.mockResolvedValue(
+        makeRawListing({ status }),
+      );
+
+      await expect(service.pause(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the listing is not owned', async () => {
+      prismaMock.listing.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.pause(OTHER_LISTING_ID, PROVIDER_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('returns a conflict when pause loses a concurrent transition', async () => {
+      prismaMock.listing.findFirst
+        .mockResolvedValueOnce(
+          makeRawListing({ status: ListingStatus.PUBLISHED }),
+        )
+        .mockResolvedValueOnce(
+          makeRawListing({ status: ListingStatus.RENTED }),
+        );
+      prismaMock.listing.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.pause(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+  });
+
+  describe('resume', () => {
+    it('resumes a paused listing without changing publishedAt', async () => {
+      const publishedAt = new Date('2020-01-01T00:00:00.000Z');
+      const listing = makeRawListing({
+        status: ListingStatus.PAUSED,
+        publishedAt,
+      });
+      mockStatusWrite(listing, {
+        ...listing,
+        status: ListingStatus.PUBLISHED,
+      });
+
+      const result = await service.resume(LISTING_ID, PROVIDER_ID);
+
+      expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: LISTING_ID,
+            providerId: PROVIDER_ID,
+            status: ListingStatus.PAUSED,
+          },
+          data: { status: ListingStatus.PUBLISHED },
+        }),
+      );
+      expect(result.status).toBe(ListingStatus.PUBLISHED);
+      expect(result.publishedAt).toEqual(publishedAt);
+    });
+
+    it.each([
+      ListingStatus.DRAFT,
+      ListingStatus.PUBLISHED,
+      ListingStatus.ARCHIVED,
+      ListingStatus.RENTED,
+    ])('rejects resume from %s', async (status) => {
+      prismaMock.listing.findFirst.mockResolvedValue(
+        makeRawListing({ status }),
+      );
+
+      await expect(service.resume(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
     });
   });
 
   describe('archive', () => {
-    it('sets listing status to ARCHIVED', async () => {
-      const listing = makeRawListing({ status: ListingStatus.PUBLISHED });
-      const archived = { ...listing, status: ListingStatus.ARCHIVED };
-      prismaMock.listing.findFirst.mockResolvedValue(listing);
-      prismaMock.listing.update.mockResolvedValue(archived);
+    it.each([
+      ListingStatus.DRAFT,
+      ListingStatus.PUBLISHED,
+      ListingStatus.PAUSED,
+    ])('archives %s without changing publishedAt', async (status) => {
+      const publishedAt = new Date('2020-01-01T00:00:00.000Z');
+      const listing = makeRawListing({ status, publishedAt });
+      mockStatusWrite(listing, {
+        ...listing,
+        status: ListingStatus.ARCHIVED,
+      });
 
       const result = await service.archive(LISTING_ID, PROVIDER_ID);
 
-      expect(prismaMock.listing.update).toHaveBeenCalledWith(
+      expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: LISTING_ID },
+          where: {
+            id: LISTING_ID,
+            providerId: PROVIDER_ID,
+            status,
+          },
           data: { status: ListingStatus.ARCHIVED },
         }),
       );
       expect(result.status).toBe(ListingStatus.ARCHIVED);
+      expect(result.publishedAt).toEqual(publishedAt);
     });
+
+    it.each([ListingStatus.ARCHIVED, ListingStatus.RENTED])(
+      'rejects archive from %s',
+      async (status) => {
+        prismaMock.listing.findFirst.mockResolvedValue(
+          makeRawListing({ status }),
+        );
+
+        await expect(service.archive(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
+          ConflictException,
+        );
+        expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
+      },
+    );
 
     it('throws NotFoundException when listing does not belong to the provider', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
@@ -276,6 +508,19 @@ describe('ListingsService', () => {
       await expect(
         service.archive(OTHER_LISTING_ID, PROVIDER_ID),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('returns not found when a concurrent delete wins the conditional update', async () => {
+      prismaMock.listing.findFirst
+        .mockResolvedValueOnce(
+          makeRawListing({ status: ListingStatus.PUBLISHED }),
+        )
+        .mockResolvedValueOnce(null);
+      prismaMock.listing.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.archive(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -346,6 +591,53 @@ describe('ListingsService', () => {
       await expect(
         service.rentListing(LISTING_ID, PROVIDER_ID, dto),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it.each([ListingStatus.ARCHIVED, ListingStatus.RENTED])(
+      'throws ConflictException when listing is %s',
+      async (status) => {
+        prismaMock.$queryRaw.mockResolvedValue([]);
+        prismaMock.listing.findFirst.mockResolvedValue(
+          makeRawListing({ status }),
+        );
+
+        await expect(
+          service.rentListing(LISTING_ID, PROVIDER_ID, dto),
+        ).rejects.toThrow(ConflictException);
+        expect(prismaMock.listing.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it('marks a paused listing as rented without changing publishedAt', async () => {
+      const publishedAt = new Date('2020-01-01T00:00:00.000Z');
+      const listing = makeRawListing({
+        status: ListingStatus.PAUSED,
+        publishedAt,
+      });
+      const rentedListing = {
+        ...listing,
+        status: ListingStatus.RENTED,
+        rentedAt: new Date(),
+      };
+      prismaMock.$queryRaw.mockResolvedValue([]);
+      prismaMock.listing.findFirst.mockResolvedValue(listing);
+      prismaMock.application.findUnique.mockResolvedValue({
+        id: APPLICATION_ID,
+        listingId: LISTING_ID,
+        status: ApplicationStatus.ACTIVE,
+      });
+      prismaMock.application.findMany.mockResolvedValue([]);
+      prismaMock.application.update.mockResolvedValue({});
+      prismaMock.listing.update.mockResolvedValue(rentedListing);
+
+      const result = await service.rentListing(LISTING_ID, PROVIDER_ID, dto);
+
+      expect(result.publishedAt).toEqual(publishedAt);
+      expect(prismaMock.listing.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: ListingStatus.RENTED, rentedAt: expect.any(Date) },
+        }),
+      );
     });
 
     it('throws ConflictException when selected application is not ACTIVE', async () => {
