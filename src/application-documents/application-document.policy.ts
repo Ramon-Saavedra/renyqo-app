@@ -1,10 +1,53 @@
 import { ApplicationDocumentState } from '../generated/prisma/enums';
+import type { AttentionAudience } from '../application-attention/application-pending-action';
 
 export type DocumentFileState = {
   state: ApplicationDocumentState;
   availableAt: Date | null;
   reviewedAt: Date | null;
 };
+
+export function documentWasPublished(
+  file: DocumentFileState | null | undefined,
+): boolean {
+  return file?.availableAt != null;
+}
+
+export function documentCancellationAllowed(
+  supersededAt: Date | null,
+  file: DocumentFileState | null | undefined,
+  mutable: boolean,
+): boolean {
+  if (!mutable || supersededAt !== null) return false;
+  if (documentWasPublished(file)) return false;
+  if (file?.state === ApplicationDocumentState.PROCESSING) return false;
+  return true;
+}
+
+export function documentCancelCapability(
+  supersededAt: Date | null,
+  file: DocumentFileState | null | undefined,
+  mutable: boolean,
+  audience: AttentionAudience,
+): boolean {
+  return (
+    audience === 'provider' &&
+    documentCancellationAllowed(supersededAt, file, mutable)
+  );
+}
+
+export function documentReplacementAllowed(
+  supersededAt: Date | null,
+  file: DocumentFileState | null | undefined,
+  mutable: boolean,
+  audience: AttentionAudience,
+): boolean {
+  if (audience !== 'provider' || !mutable || supersededAt !== null)
+    return false;
+  if (!file || !documentWasPublished(file)) return false;
+  if (file.state === ApplicationDocumentState.PROCESSING) return false;
+  return true;
+}
 
 export function documentUploadAllowed(
   file: DocumentFileState | null | undefined,

@@ -34,6 +34,7 @@ export class DocumentRequestResponseDto {
       | 'REVIEWED'
       | 'SUPERSEDED',
     readonly canUpload: boolean,
+    readonly canCancel: boolean,
     readonly canRequestReplacement: boolean,
     readonly documents: DocumentResponseDto[],
   ) {}

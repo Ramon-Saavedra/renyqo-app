@@ -24,6 +24,9 @@ import {
 import { ApplicationDocumentActivityService } from './application-document-activity.service';
 import { DocumentRequestInputDto } from './dto/document-input.dto';
 import {
+  documentCancelCapability,
+  documentCancellationAllowed,
+  documentReplacementAllowed,
   documentRequestCapabilities,
   documentRequestStatus,
   documentReviewRequired,
@@ -61,11 +64,12 @@ export class ApplicationDocumentRequestService {
           },
           orderBy: [{ requestedAt: 'asc' }, { id: 'asc' }],
         });
+        const mutable = this.access.canMutate(application);
         return requests.map((request) =>
           this.toDto(
             request,
-            this.access.canMutate(application) && audience === 'applicant',
-            this.access.canMutate(application) && audience === 'provider',
+            mutable && audience === 'applicant',
+            mutable && audience === 'provider',
           ),
         );
       },
@@ -83,23 +87,62 @@ export class ApplicationDocumentRequestService {
       const responses: DocumentRequestResponseDto[] = [];
       for (const input of inputs) {
         const { label, key } = this.identity(input);
-        const previous = await tx.applicationDocumentRequest.findFirst({
+        const active = await tx.applicationDocumentRequest.findFirst({
+          where: { applicationId, logicalKey: key, supersededAt: null },
+        });
+        if (active)
+          throw new ConflictException(
+            'An active request for this document already exists',
+          );
+        const latest = await tx.applicationDocumentRequest.findFirst({
           where: { applicationId, logicalKey: key },
           orderBy: { round: 'desc' },
+          select: { round: true },
         });
-        if (previous)
-          throw new ConflictException(
-            'A request for this document already exists; use a replacement round',
-          );
+        const round = latest ? latest.round + 1 : 1;
         responses.push(
           this.toDto(
-            await this.append(tx, applicationId, input.type, label, key, 1),
+            await this.append(tx, applicationId, input.type, label, key, round),
             false,
             true,
           ),
         );
       }
       return responses;
+    });
+  }
+
+  cancel(
+    applicationId: string,
+    requestId: string,
+    userId: string,
+  ): Promise<DocumentRequestResponseDto> {
+    return runSerializableTransaction(this.prisma, async (tx) => {
+      await this.access.mutation(tx, applicationId, userId, 'provider');
+      const request = await this.loadRequest(tx, requestId, applicationId);
+      if (
+        !documentCancellationAllowed(
+          request.supersededAt,
+          request.currentFile,
+          true,
+        )
+      )
+        throw new ConflictException(
+          'Document request cannot be cancelled in its current state',
+        );
+      await this.supersedeCurrent(tx, request);
+      await this.activity.append(
+        tx,
+        applicationId,
+        request.id,
+        request.type,
+        ApplicationActivityType.DOCUMENT_REQUEST_CANCELLED,
+      );
+      return this.toDto(
+        await this.loadRequestWithFiles(tx, requestId, applicationId),
+        false,
+        true,
+      );
     });
   }
 
@@ -110,25 +153,19 @@ export class ApplicationDocumentRequestService {
   ): Promise<DocumentRequestResponseDto> {
     return runSerializableTransaction(this.prisma, async (tx) => {
       await this.access.mutation(tx, applicationId, userId, 'provider');
-      const request = await tx.applicationDocumentRequest.findFirst({
-        where: { id: requestId, applicationId },
-        include: { currentFile: true },
-      });
-      if (!request) throw new NotFoundException('Document request not found');
-      if (request.supersededAt)
-        throw new ConflictException('Document request is already superseded');
-      await tx.applicationDocumentRequest.update({
-        where: { id: requestId },
-        data: { supersededAt: new Date() },
-      });
-      if (request.currentFile?.state === ApplicationDocumentState.PROCESSING)
-        await tx.applicationDocumentFile.update({
-          where: { id: request.currentFile.id },
-          data: {
-            state: ApplicationDocumentState.FAILED,
-            failureReason: 'SUPERSEDED',
-          },
-        });
+      const request = await this.loadRequest(tx, requestId, applicationId);
+      if (
+        !documentReplacementAllowed(
+          request.supersededAt,
+          request.currentFile,
+          true,
+          'provider',
+        )
+      )
+        throw new ConflictException(
+          'Document replacement requires a received document',
+        );
+      await this.supersedeCurrent(tx, request);
       return this.toDto(
         await this.append(
           tx,
@@ -170,7 +207,18 @@ export class ApplicationDocumentRequestService {
     const file = request.files.find(
       (item) => item.id === request.currentFileId,
     );
-    const status = documentRequestStatus(request.supersededAt, file);
+    const fileState = file
+      ? {
+          state: file.state,
+          availableAt: file.availableAt,
+          reviewedAt: file.reviewedAt,
+        }
+      : null;
+    const capabilities = documentRequestCapabilities(
+      request.supersededAt,
+      fileState,
+      canMutate,
+    );
     return new DocumentRequestResponseDto(
       request.id,
       request.applicationId,
@@ -179,19 +227,79 @@ export class ApplicationDocumentRequestService {
       request.round,
       request.requestedAt,
       request.supersededAt,
-      status,
-      documentRequestCapabilities(request.supersededAt, file, canMutate)
-        .canUpload,
-      providerCanMutate && !request.supersededAt,
+      documentRequestStatus(request.supersededAt, fileState),
+      capabilities.canUpload,
+      documentCancelCapability(
+        request.supersededAt,
+        fileState,
+        providerCanMutate,
+        'provider',
+      ),
+      documentReplacementAllowed(
+        request.supersededAt,
+        fileState,
+        providerCanMutate,
+        'provider',
+      ),
       request.files.map((item) =>
         this.fileDto(
           item,
           providerCanMutate &&
             !request.supersededAt &&
-            item.id === request.currentFileId,
+            item.id === request.currentFileId &&
+            capabilities.canReview,
         ),
       ),
     );
+  }
+
+  private async loadRequest(
+    tx: Prisma.TransactionClient,
+    requestId: string,
+    applicationId: string,
+  ) {
+    const request = await tx.applicationDocumentRequest.findFirst({
+      where: { id: requestId, applicationId },
+      include: { currentFile: true },
+    });
+    if (!request) throw new NotFoundException('Document request not found');
+    if (request.supersededAt)
+      throw new ConflictException('Document request is already superseded');
+    return request;
+  }
+
+  private loadRequestWithFiles(
+    tx: Prisma.TransactionClient,
+    requestId: string,
+    applicationId: string,
+  ) {
+    return tx.applicationDocumentRequest.findFirstOrThrow({
+      where: { id: requestId, applicationId },
+      include: {
+        files: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+      },
+    });
+  }
+
+  private async supersedeCurrent(
+    tx: Prisma.TransactionClient,
+    request: {
+      id: string;
+      currentFile: ApplicationDocumentFile | null;
+    },
+  ): Promise<void> {
+    await tx.applicationDocumentRequest.update({
+      where: { id: request.id },
+      data: { supersededAt: new Date() },
+    });
+    if (request.currentFile?.state === ApplicationDocumentState.PROCESSING)
+      await tx.applicationDocumentFile.update({
+        where: { id: request.currentFile.id },
+        data: {
+          state: ApplicationDocumentState.FAILED,
+          failureReason: 'SUPERSEDED',
+        },
+      });
   }
 
   private identity(input: DocumentRequestInputDto): {

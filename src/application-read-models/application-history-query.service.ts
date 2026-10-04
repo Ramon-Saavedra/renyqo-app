@@ -4,6 +4,8 @@ import { ApplicationActivityReadService } from '../applications/application-acti
 import { ApplicationDocumentState } from '../generated/prisma/enums';
 import { applicationProcessAllowsMutation } from '../applications/application-process.policy';
 import {
+  documentCancelCapability,
+  documentReplacementAllowed,
   documentRequestCapabilities,
   documentRequestStatus,
 } from '../application-documents/application-document.policy';
@@ -154,8 +156,18 @@ export class ApplicationHistoryQueryService {
             documentId: row.currentFile?.id ?? null,
             canUpload: audience === 'applicant' && capabilities.canUpload,
             canReview: audience === 'provider' && capabilities.canReview,
-            canRequestReplacement:
-              audience === 'provider' && mutable && row.supersededAt === null,
+            canCancel: documentCancelCapability(
+              row.supersededAt,
+              row.currentFile,
+              mutable,
+              audience,
+            ),
+            canRequestReplacement: documentReplacementAllowed(
+              row.supersededAt,
+              row.currentFile,
+              mutable,
+              audience,
+            ),
           };
         });
         return new ReadModelPageDto(

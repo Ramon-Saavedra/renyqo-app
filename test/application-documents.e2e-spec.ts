@@ -335,7 +335,8 @@ describe('Application documents E2E', () => {
           customLabel: 'Arbeitsvertrag',
           status: 'UPLOAD_REQUIRED',
           canUpload: false,
-          canRequestReplacement: true,
+          canCancel: true,
+          canRequestReplacement: false,
         }),
       ]),
     );
@@ -710,6 +711,8 @@ describe('Application documents E2E', () => {
       'rejected',
     ]);
     const first = await prisma.applicationDocumentRequest.findFirstOrThrow();
+    const file = await upload(first.id);
+    await finalize(file);
     const replacements = await Promise.allSettled([
       requests.replace(applicationId, first.id, provider.id),
       requests.replace(applicationId, first.id, provider.id),
@@ -719,6 +722,22 @@ describe('Application documents E2E', () => {
       'rejected',
     ]);
     expect(await prisma.applicationDocumentRequest.count()).toBe(2);
+  });
+
+  it('rejects replacement before a received document exists', async () => {
+    const requestId = await createRequest();
+    const list = await provider.agent.get(path('provider')).expect(200);
+    expect(list.body).toEqual([
+      expect.objectContaining({
+        id: requestId,
+        status: 'UPLOAD_REQUIRED',
+        canRequestReplacement: false,
+      }),
+    ]);
+    await provider.agent
+      .post(path('provider', `/document-requests/${requestId}/replacements`))
+      .send({})
+      .expect(409);
   });
 
   it('preserves reviewed history and immutable storage keys when creating a replacement', async () => {
@@ -735,7 +754,7 @@ describe('Application documents E2E', () => {
     expect(result.body).toEqual(
       expect.objectContaining({
         canUpload: false,
-        canRequestReplacement: true,
+        canRequestReplacement: false,
       }),
     );
     const replacementList = await provider.agent
@@ -762,6 +781,11 @@ describe('Application documents E2E', () => {
   it('ignores stale versions and old attempts without changing the current replacement', async () => {
     const requestId = await createRequest();
     const first = await upload(requestId);
+    await finalize(first);
+    const replacement = await app
+      .get(ApplicationDocumentRequestService)
+      .replace(applicationId, requestId, provider.id);
+    const second = await upload(replacement.id);
     await app
       .get(ApplicationDocumentFinalizationService)
       .process({ ...verdict(first), versionId: 'wrong-version' });
@@ -771,19 +795,7 @@ describe('Application documents E2E', () => {
           where: { id: first.id },
         })
       ).state,
-    ).toBe('PROCESSING');
-    const replacement = await app
-      .get(ApplicationDocumentRequestService)
-      .replace(applicationId, requestId, provider.id);
-    const second = await upload(replacement.id);
-    await finalize(first);
-    expect(
-      (
-        await prisma.applicationDocumentFile.findUniqueOrThrow({
-          where: { id: first.id },
-        })
-      ).state,
-    ).toBe('FAILED');
+    ).toBe('AVAILABLE');
     expect(
       (
         await prisma.applicationDocumentFile.findUniqueOrThrow({
@@ -795,7 +807,7 @@ describe('Application documents E2E', () => {
       await prisma.applicationActivity.count({
         where: { type: ApplicationActivityType.DOCUMENT_UPLOADED },
       }),
-    ).toBe(0);
+    ).toBe(1);
   });
 
   it.each([
@@ -1114,5 +1126,150 @@ describe('Application documents E2E', () => {
       })
       .expect(409);
     expect(await prisma.applicationDocumentFile.count()).toBe(2);
+  });
+
+  describe('Document request cancellation and replacement rules', () => {
+    function cancelPath(requestId: string): string {
+      return path('provider', `/document-requests/${requestId}/cancel`);
+    }
+
+    it('cancels an upload-required request, clears current summaries, and allows re-requesting', async () => {
+      const requestId = await createRequest();
+      const cancelled = await provider.agent
+        .patch(cancelPath(requestId))
+        .expect(200);
+      expect(cancelled.body).toEqual(
+        expect.objectContaining({ id: requestId, status: 'SUPERSEDED' }),
+      );
+      expect(
+        await prisma.applicationActivity.count({
+          where: { type: ApplicationActivityType.DOCUMENT_REQUEST_CANCELLED },
+        }),
+      ).toBe(1);
+      expect(
+        await prisma.applicationActivity.count({
+          where: { type: ApplicationActivityType.DOCUMENT_REQUESTED },
+        }),
+      ).toBe(1);
+      const workspace = await provider.agent
+        .get(`/api/v1/provider/applications/${applicationId}/workspace`)
+        .expect(200);
+      const summary = body(workspace)['documentsSummary'];
+      if (!isRecord(summary) || !isRecord(summary['counts']))
+        throw new Error('Expected documentsSummary');
+      expect(summary['counts']).toMatchObject({ requestedCount: 0 });
+      const list = await provider.agent.get(path('provider')).expect(200);
+      expect(list.body).toEqual([
+        expect.objectContaining({
+          id: requestId,
+          status: 'SUPERSEDED',
+          canCancel: false,
+        }),
+      ]);
+      const recreated = await provider.agent
+        .post(path('provider'))
+        .send({ requests: [{ type: 'SCHUFA' }] })
+        .expect(201);
+      const created: unknown = recreated.body;
+      if (!Array.isArray(created) || !isRecord(created[0]))
+        throw new Error('Expected recreated request');
+      expect(created[0]['round']).toBe(2);
+      expect(created[0]['canCancel']).toBe(true);
+      const workspaceAfter = await provider.agent
+        .get(`/api/v1/provider/applications/${applicationId}/workspace`)
+        .expect(200);
+      const documentsSummary = body(workspaceAfter)['documentsSummary'];
+      if (!isRecord(documentsSummary))
+        throw new Error('Expected documentsSummary');
+      const currentRequests = documentsSummary['currentRequests'];
+      if (!Array.isArray(currentRequests) || !isRecord(currentRequests[0]))
+        throw new Error('Expected currentRequests');
+      expect(currentRequests[0]['canCancel']).toBe(true);
+      expect(currentRequests[0]['canRequestReplacement']).toBe(false);
+      await provider.agent
+        .post(path('provider'))
+        .send({ requests: [{ type: 'SCHUFA' }] })
+        .expect(409);
+    });
+
+    it('cancels a failed attempt that never became available', async () => {
+      const requestId = await createRequest();
+      jest
+        .spyOn(app.get(ApplicationDocumentStorageService), 'put')
+        .mockRejectedValueOnce(new Error('Storage unavailable'));
+      await applicant.agent
+        .post(path('applicant', `/document-requests/${requestId}/document`))
+        .attach('file', pdf, {
+          filename: 'document.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(503);
+      await provider.agent.patch(cancelPath(requestId)).expect(200);
+    });
+
+    it('rejects cancellation for processing, received, reviewed, and repeat attempts', async () => {
+      const processingId = await createRequest();
+      await upload(processingId);
+      await provider.agent.patch(cancelPath(processingId)).expect(409);
+
+      const receivedId = await createRequest(
+        ApplicationDocumentType.INCOME_PROOF,
+      );
+      const receivedFile = await upload(receivedId);
+      await finalize(receivedFile);
+      await provider.agent.patch(cancelPath(receivedId)).expect(409);
+
+      const reviewedId = await createRequest(
+        ApplicationDocumentType.IDENTITY_DOCUMENT,
+      );
+      const reviewedFile = await upload(reviewedId);
+      await finalize(reviewedFile);
+      await app
+        .get(ApplicationDocumentService)
+        .review(applicationId, reviewedFile.id, provider.id);
+      await provider.agent.patch(cancelPath(reviewedId)).expect(409);
+
+      const bareId = await createRequest(
+        ApplicationDocumentType.LIABILITY_INSURANCE,
+      );
+      await provider.agent.patch(cancelPath(bareId)).expect(200);
+      await provider.agent.patch(cancelPath(bareId)).expect(409);
+    });
+
+    it('serializes cancel against replacement and duplicate cancel attempts', async () => {
+      const requestId = await createRequest();
+      const results = await Promise.allSettled([
+        app
+          .get(ApplicationDocumentRequestService)
+          .cancel(applicationId, requestId, provider.id),
+        app
+          .get(ApplicationDocumentRequestService)
+          .replace(applicationId, requestId, provider.id),
+      ]);
+      expect(results.map((result) => result.status).sort()).toEqual([
+        'fulfilled',
+        'rejected',
+      ]);
+      expect(
+        await prisma.applicationDocumentRequest.count({
+          where: { supersededAt: null },
+        }),
+      ).toBe(0);
+    });
+
+    it('rejects replacement while processing and allows it after finalization', async () => {
+      const requestId = await createRequest();
+      await upload(requestId);
+      await provider.agent
+        .post(path('provider', `/document-requests/${requestId}/replacements`))
+        .send({})
+        .expect(409);
+      const file = await prisma.applicationDocumentFile.findFirstOrThrow();
+      await finalize(file);
+      await provider.agent
+        .post(path('provider', `/document-requests/${requestId}/replacements`))
+        .send({})
+        .expect(201);
+    });
   });
 });
