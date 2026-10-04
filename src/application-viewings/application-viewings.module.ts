@@ -4,23 +4,18 @@ import { ApplicationViewingAccessService } from './application-viewing-access.se
 import { ApplicationViewingOutcomeService } from './application-viewing-outcome.service';
 import { ApplicationViewingQueryService } from './application-viewing-query.service';
 import { ApplicationViewingService } from './application-viewing.service';
-import {
-  ApplicationViewingPolicy,
-  ViewingClock,
-} from './application-viewing.policy';
+import { ApplicationViewingReadModule } from './application-viewing-read.module';
 import { ApplicantViewingsController } from './applicant-viewings.controller';
 import { ProviderViewingsController } from './provider-viewings.controller';
 
 @Module({
-  imports: [ApplicationsModule],
+  imports: [ApplicationsModule, ApplicationViewingReadModule],
   controllers: [ProviderViewingsController, ApplicantViewingsController],
   providers: [
     ApplicationViewingService,
     ApplicationViewingOutcomeService,
     ApplicationViewingAccessService,
     ApplicationViewingQueryService,
-    ApplicationViewingPolicy,
-    ViewingClock,
   ],
 })
 export class ApplicationViewingsModule {}

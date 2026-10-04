@@ -24,6 +24,10 @@ import {
 import { ApplicationDocumentActivityService } from './application-document-activity.service';
 import { DocumentRequestInputDto } from './dto/document-input.dto';
 import {
+  documentRequestCapabilities,
+  documentReviewRequired,
+} from './application-document.policy';
+import {
   DocumentRequestResponseDto,
   DocumentResponseDto,
 } from './dto/document-response.dto';
@@ -153,9 +157,7 @@ export class ApplicationDocumentRequestService {
       file.availableAt,
       file.reviewedAt,
       file.state === ApplicationDocumentState.AVAILABLE,
-      canReview &&
-        file.state === ApplicationDocumentState.AVAILABLE &&
-        file.reviewedAt === null,
+      canReview && documentReviewRequired(file),
     );
   }
 
@@ -185,11 +187,8 @@ export class ApplicationDocumentRequestService {
       request.requestedAt,
       request.supersededAt,
       status,
-      canMutate &&
-        !request.supersededAt &&
-        (!file ||
-          (file.state === ApplicationDocumentState.FAILED &&
-            !file.availableAt)),
+      documentRequestCapabilities(request.supersededAt, file, canMutate)
+        .canUpload,
       providerCanMutate && !request.supersededAt,
       request.files.map((item) =>
         this.fileDto(

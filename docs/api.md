@@ -1,5 +1,13 @@
 # API
 
+## Application attention
+
+GET /api/v1/provider/applications/:applicationId/attention and GET /api/v1/applicant/applications/:applicationId/attention return audience-specific pendingActions, pendingActionCount, hasPendingAction, historicalUnreadMessageCount, actionableUnreadMessageCount, conversation responsibility/read-only state and asOf.
+
+GET /api/v1/provider/attention, GET /api/v1/provider/listings/:listingId/attention and GET /api/v1/applicant/attention return full-scope totals, per-listing totals and compact application summaries. Pagination uses offset (default 0) and limit (default 20, maximum 100); pagination does not reduce totals. Operational summaries use actionableUnreadMessageCount exclusively.
+
+See [Application attention](application-attention.md) for action targets, deterministic ordering, lifecycle/privacy rules and query boundaries. Existing application/listing routes retain their response shapes.
+
 ## Application viewings
 
 The complete application-scoped viewing API, DTO contracts, pagination, capabilities and derived next actions are documented in [Application Viewings](application-viewings.md#api). Provider and applicant routes are under `/api/v1/{provider|applicant}/applications/:applicationId/viewings`; there is no global viewing API.
