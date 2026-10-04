@@ -1272,4 +1272,98 @@ describe('Application documents E2E', () => {
         .expect(201);
     });
   });
+
+  it('keeps provider document list canReview aligned with workspace after finalization', async () => {
+    const requestId = await createRequest();
+    const file = await upload(requestId);
+    await finalize(file);
+    const workspacePath = `/api/v1/provider/applications/${applicationId}/workspace`;
+
+    function listDocumentCanReview(
+      listResponse: Response,
+      owner: 'provider' | 'applicant',
+    ): boolean {
+      const data: unknown = listResponse.body;
+      if (!Array.isArray(data)) throw new Error('Expected list');
+      let row: Record<string, unknown> | undefined;
+      for (const item of data) {
+        if (isRecord(item) && item['id'] === requestId) {
+          row = item;
+          break;
+        }
+      }
+      if (!row || !Array.isArray(row['documents']))
+        throw new Error('Expected request row');
+      let doc: Record<string, unknown> | undefined;
+      for (const item of row['documents']) {
+        if (isRecord(item) && item['id'] === file.id) {
+          doc = item;
+          break;
+        }
+      }
+      if (!doc) throw new Error('Expected document');
+      if (owner === 'applicant') expect(doc['canReview']).toBe(false);
+      return doc['canReview'] === true;
+    }
+
+    async function expectListMatchesWorkspace(listResponse: Response) {
+      const workspace = await provider.agent.get(workspacePath).expect(200);
+      const summary = body(workspace)['documentsSummary'];
+      if (!isRecord(summary) || !isRecord(summary['counts']))
+        throw new Error('Expected documentsSummary');
+      const currentRequests = summary['currentRequests'];
+      if (!Array.isArray(currentRequests))
+        throw new Error('Expected currentRequests');
+      let workspaceRow: Record<string, unknown> | undefined;
+      for (const item of currentRequests) {
+        if (isRecord(item) && item['requestId'] === requestId) {
+          workspaceRow = item;
+          break;
+        }
+      }
+      if (!workspaceRow) throw new Error('Expected workspace row');
+      const data: unknown = listResponse.body;
+      if (!Array.isArray(data)) throw new Error('Expected list');
+      let listRow: Record<string, unknown> | undefined;
+      for (const item of data) {
+        if (isRecord(item) && item['id'] === requestId) {
+          listRow = item;
+          break;
+        }
+      }
+      if (!listRow) throw new Error('Expected list row');
+      expect(listRow['canCancel']).toBe(workspaceRow['canCancel']);
+      expect(listRow['canRequestReplacement']).toBe(
+        workspaceRow['canRequestReplacement'],
+      );
+      return summary['counts'];
+    }
+
+    const providerList = await provider.agent.get(path('provider')).expect(200);
+    const counts = await expectListMatchesWorkspace(providerList);
+    expect(counts).toMatchObject({ reviewRequiredCount: 1 });
+    expect(listDocumentCanReview(providerList, 'provider')).toBe(true);
+    expect(
+      listDocumentCanReview(
+        await applicant.agent.get(path('applicant')).expect(200),
+        'applicant',
+      ),
+    ).toBe(false);
+
+    await provider.agent
+      .post(path('provider', `/documents/${file.id}/review`))
+      .send({ status: 'REVIEWED' })
+      .expect(201);
+
+    const providerListAfterReview = await provider.agent
+      .get(path('provider'))
+      .expect(200);
+    const countsAfterReview = await expectListMatchesWorkspace(
+      providerListAfterReview,
+    );
+    expect(countsAfterReview).toMatchObject({ reviewRequiredCount: 0 });
+    expect(listDocumentCanReview(providerListAfterReview, 'provider')).toBe(
+      false,
+    );
+  });
 });

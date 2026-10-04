@@ -246,8 +246,7 @@ export class ApplicationDocumentRequestService {
           item,
           providerCanMutate &&
             !request.supersededAt &&
-            item.id === request.currentFileId &&
-            capabilities.canReview,
+            item.id === request.currentFileId,
         ),
       ),
     );
