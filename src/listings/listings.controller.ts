@@ -119,6 +119,28 @@ export class ListingsController {
     });
   }
 
+  @Patch(':id/pause')
+  async pause(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: SafeUser,
+  ): Promise<ListingResponseDto> {
+    const listing = await this.listingsService.pause(id, user.id);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
+  }
+
+  @Patch(':id/resume')
+  async resume(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: SafeUser,
+  ): Promise<ListingResponseDto> {
+    const listing = await this.listingsService.resume(id, user.id);
+    return this.listingsService.toListingResponse(listing, {
+      exposeExactAddress: true,
+    });
+  }
+
   @Patch(':id/rent')
   async rent(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

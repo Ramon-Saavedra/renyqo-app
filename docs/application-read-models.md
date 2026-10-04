@@ -71,7 +71,7 @@ Applicants read only their own applications. Unauthorized/hidden applications an
 
 No response exposes password hashes, internal actor IDs, storage keys/buckets/versions, security verdicts, private reasons, message bodies or idempotency/queue metadata. Public resource IDs are retained when needed to navigate or invoke existing APIs.
 
-Legacy provider application arrays intentionally stop returning never-active exited identities. All other existing response envelopes and pagination contracts remain unchanged. Legacy dashboard `newApplicationsCount` remains zero; no authoritative product definition was found, and optimized models do not depend on it.
+Legacy provider application arrays intentionally stop returning never-active exited identities. All other existing response envelopes and pagination contracts remain unchanged.
 
 ## Query boundaries
 

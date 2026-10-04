@@ -2048,4 +2048,282 @@ describe('Application Lifecycle E2E', () => {
       );
     });
   });
+
+  describe('Provider listing lifecycle', () => {
+    const originalPublishedAt = new Date('2020-01-15T10:00:00.000Z');
+
+    async function createCompleteDraft(
+      providerId: string,
+      publishedAt: Date | null,
+    ) {
+      const maxOrder = await getPrisma().listing.aggregate({
+        where: { providerId },
+        _max: { displayOrder: true },
+      });
+
+      return getPrisma().listing.create({
+        data: {
+          providerId,
+          displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
+          status: ListingStatus.DRAFT,
+          publishedAt,
+          city: 'Berlin',
+          zip: '10115',
+          street: 'Test Street 1',
+          title: 'Lifecycle Listing',
+          coldRent: 800,
+          livingArea: 50,
+          rooms: 2,
+          bedrooms: 1,
+          availableFrom: new Date('2026-11-01T00:00:00.000Z'),
+        },
+      });
+    }
+
+    async function loginProvider(email: string) {
+      const agent = request.agent(getServer());
+      await agent
+        .post('/api/v1/auth/login')
+        .send({ email, password: userPassword })
+        .expect(200);
+      return agent;
+    }
+
+    function lifecyclePath(listingId: string, action: string): string {
+      return `/api/v1/provider/listings/${listingId}/${action}`;
+    }
+
+    it('publishes a draft once and keeps that publishedAt through pause, resume, draft, and archive', async () => {
+      const { agent } = await registerProvider();
+      const me = await agent.get('/api/v1/auth/me').expect(200);
+      const providerId = safeUserBody(me).id;
+      const listing = await createCompleteDraft(providerId, null);
+
+      await agent.patch(lifecyclePath(listing.id, 'publish')).expect(200);
+      const published = await getPrisma().listing.findUniqueOrThrow({
+        where: { id: listing.id },
+      });
+      expect(published.status).toBe(ListingStatus.PUBLISHED);
+      expect(published.publishedAt).toBeInstanceOf(Date);
+      const firstPublishedAt = published.publishedAt;
+
+      await agent.patch(lifecyclePath(listing.id, 'pause')).expect(200);
+      await agent.patch(lifecyclePath(listing.id, 'resume')).expect(200);
+      await agent.patch(lifecyclePath(listing.id, 'draft')).expect(200);
+      await agent.patch(lifecyclePath(listing.id, 'publish')).expect(200);
+      await agent.patch(lifecyclePath(listing.id, 'archive')).expect(200);
+
+      const archived = await getPrisma().listing.findUniqueOrThrow({
+        where: { id: listing.id },
+      });
+      expect(archived.status).toBe(ListingStatus.ARCHIVED);
+      expect(archived.publishedAt).toEqual(firstPublishedAt);
+    });
+
+    it('preserves an existing publishedAt on the first publish of a previously published draft', async () => {
+      const { agent } = await registerProvider();
+      const me = await agent.get('/api/v1/auth/me').expect(200);
+      const listing = await createCompleteDraft(
+        safeUserBody(me).id,
+        originalPublishedAt,
+      );
+
+      await agent.patch(lifecyclePath(listing.id, 'publish')).expect(200);
+      const stored = await getPrisma().listing.findUniqueOrThrow({
+        where: { id: listing.id },
+      });
+      expect(stored.publishedAt).toEqual(originalPublishedAt);
+    });
+
+    it.each([
+      ['publish', ListingStatus.PUBLISHED],
+      ['publish', ListingStatus.PAUSED],
+      ['publish', ListingStatus.ARCHIVED],
+      ['publish', ListingStatus.RENTED],
+      ['draft', ListingStatus.DRAFT],
+      ['draft', ListingStatus.ARCHIVED],
+      ['draft', ListingStatus.RENTED],
+      ['pause', ListingStatus.DRAFT],
+      ['pause', ListingStatus.PAUSED],
+      ['pause', ListingStatus.ARCHIVED],
+      ['pause', ListingStatus.RENTED],
+      ['resume', ListingStatus.DRAFT],
+      ['resume', ListingStatus.PUBLISHED],
+      ['resume', ListingStatus.ARCHIVED],
+      ['resume', ListingStatus.RENTED],
+      ['archive', ListingStatus.ARCHIVED],
+      ['archive', ListingStatus.RENTED],
+    ] as const)('rejects %s from %s', async (action, status) => {
+      const { agent } = await registerProvider();
+      const me = await agent.get('/api/v1/auth/me').expect(200);
+      const listing = await createCompleteDraft(
+        safeUserBody(me).id,
+        originalPublishedAt,
+      );
+      await getPrisma().listing.update({
+        where: { id: listing.id },
+        data: {
+          status,
+          rentedAt: status === ListingStatus.RENTED ? new Date() : null,
+        },
+      });
+
+      await agent.patch(lifecyclePath(listing.id, action)).expect(409);
+    });
+
+    it('rejects anonymous and applicant lifecycle mutations', async () => {
+      const { provider } = await registerProvider();
+      const applicantAgent = await registerApplicant();
+      const listing = await publishListing(provider.id);
+      const actions = ['publish', 'draft', 'pause', 'resume', 'archive'];
+
+      for (const action of actions) {
+        await request(getServer())
+          .patch(lifecyclePath(listing.id, action))
+          .expect(401);
+        await applicantAgent
+          .patch(lifecyclePath(listing.id, action))
+          .expect(403);
+      }
+    });
+
+    it('hides a paused listing from another provider and from discovery while keeping the active application', async () => {
+      const { agent, provider } = await registerProvider();
+      const otherProvider = await registerProvider();
+      const applicantAgent = await registerApplicant();
+      const secondApplicant = await registerApplicant();
+      const listing = await publishListing(provider.id);
+      const application = await applyToListing(applicantAgent, listing.id);
+
+      await otherProvider.agent
+        .patch(lifecyclePath(listing.id, 'pause'))
+        .expect(404);
+      await agent.patch(lifecyclePath(listing.id, 'pause')).expect(200);
+      await agent.patch(lifecyclePath(listing.id, 'pause')).expect(409);
+
+      const storedApplication = await getPrisma().application.findUniqueOrThrow(
+        {
+          where: { id: String(application['id']) },
+        },
+      );
+      expect(storedApplication.status).toBe(ApplicationStatus.ACTIVE);
+
+      const discovery = await request(getServer())
+        .get('/api/v1/listings')
+        .expect(200);
+      const items = responseBody(discovery)['items'] as Array<
+        Record<string, unknown>
+      >;
+      expect(items.some((item) => item['id'] === listing.id)).toBe(false);
+
+      await secondApplicant
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .expect(422);
+      await secondApplicant
+        .get(`/api/v1/listings/${listing.id}/eligibility`)
+        .expect(422);
+
+      await agent.patch(lifecyclePath(listing.id, 'resume')).expect(200);
+      const resumed = await getPrisma().listing.findUniqueOrThrow({
+        where: { id: listing.id },
+      });
+      expect(resumed.status).toBe(ListingStatus.PUBLISHED);
+      expect(resumed.publishedAt).toEqual(listing.publishedAt);
+      const stillActive = await getPrisma().application.findUniqueOrThrow({
+        where: { id: String(application['id']) },
+      });
+      expect(stillActive.status).toBe(ApplicationStatus.ACTIVE);
+    });
+
+    async function expectConsistentRace(
+      left: Promise<Response>,
+      right: Promise<Response>,
+      listingId: string,
+      overlapped: readonly ListingStatus[],
+      serialized: ListingStatus,
+    ): Promise<ListingStatus> {
+      const [first, second] = await Promise.all([left, right]);
+      const codes = [first.status, second.status].sort();
+      const stored = await getPrisma().listing.findUniqueOrThrow({
+        where: { id: listingId },
+      });
+
+      if (codes[0] === 200 && codes[1] === 200) {
+        expect(stored.status).toBe(serialized);
+      } else {
+        expect(codes).toEqual([200, 409]);
+        expect(overlapped).toContain(stored.status);
+      }
+
+      return stored.status;
+    }
+
+    it('lets only one of pause and rent win', async () => {
+      const { agent, provider } = await registerProvider();
+      const applicantAgent = await registerApplicant();
+      const listing = await publishListing(provider.id);
+      const application = await applyToListing(applicantAgent, listing.id);
+      const renter = await loginProvider(provider.email);
+      const body = { selectedApplicationId: String(application['id']) };
+
+      const status = await expectConsistentRace(
+        agent.patch(lifecyclePath(listing.id, 'pause')),
+        renter.patch(lifecyclePath(listing.id, 'rent')).send(body),
+        listing.id,
+        [ListingStatus.PAUSED, ListingStatus.RENTED],
+        ListingStatus.RENTED,
+      );
+
+      const storedApplication = await getPrisma().application.findUniqueOrThrow(
+        {
+          where: { id: String(application['id']) },
+        },
+      );
+      expect(storedApplication.status).toBe(
+        status === ListingStatus.RENTED
+          ? ApplicationStatus.ACCEPTED
+          : ApplicationStatus.ACTIVE,
+      );
+    });
+
+    it('lets only one of resume and archive win', async () => {
+      const { agent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      await agent.patch(lifecyclePath(listing.id, 'pause')).expect(200);
+      const other = await loginProvider(provider.email);
+
+      await expectConsistentRace(
+        agent.patch(lifecyclePath(listing.id, 'resume')),
+        other.patch(lifecyclePath(listing.id, 'archive')),
+        listing.id,
+        [ListingStatus.PUBLISHED, ListingStatus.ARCHIVED],
+        ListingStatus.ARCHIVED,
+      );
+      const stored = await getPrisma().listing.findUniqueOrThrow({
+        where: { id: listing.id },
+      });
+      expect(stored.publishedAt).toEqual(listing.publishedAt);
+    });
+
+    it('lets only one of publish and archive win', async () => {
+      const { agent, provider } = await registerProvider();
+      const listing = await createCompleteDraft(
+        provider.id,
+        originalPublishedAt,
+      );
+      const other = await loginProvider(provider.email);
+
+      await expectConsistentRace(
+        agent.patch(lifecyclePath(listing.id, 'publish')),
+        other.patch(lifecyclePath(listing.id, 'archive')),
+        listing.id,
+        [ListingStatus.PUBLISHED, ListingStatus.ARCHIVED],
+        ListingStatus.ARCHIVED,
+      );
+      const stored = await getPrisma().listing.findUniqueOrThrow({
+        where: { id: listing.id },
+      });
+      expect(stored.publishedAt).toEqual(originalPublishedAt);
+    });
+  });
 });
