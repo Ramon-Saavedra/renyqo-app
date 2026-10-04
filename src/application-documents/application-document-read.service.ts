@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import {
+  documentCancelCapability,
+  documentReplacementAllowed,
   documentRequestCapabilities,
   documentRequestStatus,
 } from './application-document.policy';
@@ -34,8 +36,18 @@ export class ApplicationDocumentReadService {
             request.currentFile?.state === ApplicationDocumentState.AVAILABLE,
           canUpload: audience === 'applicant' && capabilities.canUpload,
           canReview: audience === 'provider' && capabilities.canReview,
-          canRequestReplacement:
-            audience === 'provider' && mutable && request.supersededAt === null,
+          canCancel: documentCancelCapability(
+            request.supersededAt,
+            request.currentFile,
+            mutable,
+            audience,
+          ),
+          canRequestReplacement: documentReplacementAllowed(
+            request.supersededAt,
+            request.currentFile,
+            mutable,
+            audience,
+          ),
         };
       })
       .sort((a, b) =>

@@ -4,6 +4,7 @@ import {
   Get,
   Header,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -54,6 +55,18 @@ export class ProviderDocumentsController {
     @CurrentUser() user: SafeUser,
   ) {
     return this.requests.replace(
+      params.applicationId,
+      params.requestId,
+      user.id,
+    );
+  }
+
+  @Patch('document-requests/:requestId/cancel')
+  cancel(
+    @Param() params: DocumentRequestParamsDto,
+    @CurrentUser() user: SafeUser,
+  ) {
+    return this.requests.cancel(
       params.applicationId,
       params.requestId,
       user.id,

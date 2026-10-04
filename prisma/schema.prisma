@@ -93,6 +93,7 @@ enum ApplicationActivityType {
   CONVERSATION_OPENED            @map("conversation_opened")
   MESSAGE_SENT                   @map("message_sent")
   DOCUMENT_REQUESTED             @map("document_requested")
+  DOCUMENT_REQUEST_CANCELLED       @map("document_request_cancelled")
   DOCUMENT_UPLOADED              @map("document_uploaded")
   DOCUMENT_REVIEWED              @map("document_reviewed")
 }

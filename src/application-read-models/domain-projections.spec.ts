@@ -115,7 +115,22 @@ describe('Read model domain projections', () => {
       uploadRequiredCount: 0,
       reviewRequiredCount: 1,
     });
+    expect(provider.currentRequests[0].canRequestReplacement).toBe(false);
+    expect(
+      provider.currentRequests.find((row) => row.status === 'RECEIVED')
+        ?.canRequestReplacement,
+    ).toBe(true);
+    expect(
+      provider.currentRequests.find((row) => row.status === 'UPLOAD_REQUIRED')
+        ?.canCancel,
+    ).toBe(true);
+    expect(
+      provider.currentRequests.find((row) => row.status === 'PROCESSING')
+        ?.canCancel,
+    ).toBe(false);
+    expect(applicant.currentRequests[0].canCancel).toBe(false);
     expect(Object.keys(applicant.currentRequests[0]).sort()).toEqual([
+      'canCancel',
       'canDownload',
       'canRequestReplacement',
       'canReview',
