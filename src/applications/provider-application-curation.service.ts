@@ -21,13 +21,11 @@ import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import type { ApplicationTransactionClient } from './application-lifecycle.service';
-import {
-  ACTIVE_APPLICATIONS_LIMIT,
-  PROVIDER_CURATION_COOLDOWN_MS,
-} from './application-lifecycle.constants';
+import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicationActivityService } from './application-activity.service';
+import { providerCurationAllowed } from './application-process.policy';
 
 @Injectable()
 export class ProviderApplicationCurationService {
@@ -282,11 +280,7 @@ export class ProviderApplicationCurationService {
       select: { occurredAt: true },
     });
 
-    if (
-      lastEvent &&
-      now.getTime() - lastEvent.occurredAt.getTime() <
-        PROVIDER_CURATION_COOLDOWN_MS
-    ) {
+    if (!providerCurationAllowed(lastEvent?.occurredAt ?? null, now)) {
       throw new HttpException(
         {
           statusCode: HttpStatus.TOO_MANY_REQUESTS,

@@ -25,6 +25,7 @@ import { ApplicationDocumentActivityService } from './application-document-activ
 import { DocumentRequestInputDto } from './dto/document-input.dto';
 import {
   documentRequestCapabilities,
+  documentRequestStatus,
   documentReviewRequired,
 } from './application-document.policy';
 import {
@@ -169,15 +170,7 @@ export class ApplicationDocumentRequestService {
     const file = request.files.find(
       (item) => item.id === request.currentFileId,
     );
-    const status = request.supersededAt
-      ? 'SUPERSEDED'
-      : file?.state === ApplicationDocumentState.AVAILABLE
-        ? file.reviewedAt
-          ? 'REVIEWED'
-          : 'RECEIVED'
-        : file?.state === ApplicationDocumentState.PROCESSING
-          ? 'PROCESSING'
-          : 'UPLOAD_REQUIRED';
+    const status = documentRequestStatus(request.supersededAt, file);
     return new DocumentRequestResponseDto(
       request.id,
       request.applicationId,

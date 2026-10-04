@@ -1,5 +1,9 @@
 # API
 
+## Optimized application reads
+
+The additive overview, workspace and bounded history endpoints are documented in [Application read models](application-read-models.md). Existing response envelopes and pagination contracts remain intact. The intentional security correction excludes never-active exited applications from legacy provider application lists.
+
 ## Application attention
 
 GET /api/v1/provider/applications/:applicationId/attention and GET /api/v1/applicant/applications/:applicationId/attention return audience-specific pendingActions, pendingActionCount, hasPendingAction, historicalUnreadMessageCount, actionableUnreadMessageCount, conversation responsibility/read-only state and asOf.

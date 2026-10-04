@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { ConversationSide } from '../generated/prisma/enums';
-import { incomingUnreadMessages } from './application-conversation.policy';
+import {
+  conversationResponsibility,
+  incomingUnreadMessages,
+} from './application-conversation.policy';
+import type { ApplicationProcessState } from '../applications/application-process.policy';
+import { CompactConversationSummaryDto } from './dto/compact-conversation-summary.dto';
 
 export type ConversationAttentionFacts = {
   lastSender: ConversationSide | null;
@@ -11,6 +16,22 @@ export type ConversationAttentionFacts = {
 
 @Injectable()
 export class ApplicationConversationReadService {
+  summary(
+    application: ApplicationProcessState,
+    lastSender: ConversationSide | null,
+    side: ConversationSide,
+  ) {
+    const { isReadOnly, expectedResponder } = conversationResponsibility(
+      application,
+      lastSender,
+    );
+    return new CompactConversationSummaryDto(
+      lastSender !== null,
+      isReadOnly,
+      expectedResponder,
+      expectedResponder === side,
+    );
+  }
   async batch(
     tx: Prisma.TransactionClient,
     applicationIds: readonly string[],

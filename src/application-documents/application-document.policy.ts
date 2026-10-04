@@ -39,3 +39,18 @@ export function documentRequestCapabilities(
       documentReviewRequired(file),
   };
 }
+
+export function documentRequestStatus(
+  supersededAt: Date | null,
+  file: DocumentFileState | null | undefined,
+) {
+  return supersededAt
+    ? ('SUPERSEDED' as const)
+    : file?.state === ApplicationDocumentState.AVAILABLE
+      ? file.reviewedAt
+        ? ('REVIEWED' as const)
+        : ('RECEIVED' as const)
+      : file?.state === ApplicationDocumentState.PROCESSING
+        ? ('PROCESSING' as const)
+        : ('UPLOAD_REQUIRED' as const);
+}

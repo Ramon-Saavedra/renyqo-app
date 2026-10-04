@@ -9,6 +9,7 @@ import {
 import type { EligibilityWarning } from '../eligibility/dto/eligibility-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
+import { providerApplicationVisibility } from './application-process.policy';
 import { BLOCKING_APPLICATION_STATUSES } from './blocking-application-statuses';
 import type { BlockingApplicationState } from './applicant-listing-application-state';
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
@@ -118,10 +119,7 @@ export class ApplicationProcessQueryService {
 
   async findAllByProvider(providerId: string): Promise<Application[]> {
     return this.prisma.application.findMany({
-      where: {
-        listing: { providerId },
-        status: { not: ApplicationStatus.WAITING },
-      },
+      where: providerApplicationVisibility(providerId),
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -135,8 +133,7 @@ export class ApplicationProcessQueryService {
     return this.prisma.application.findMany({
       where: {
         listingId,
-        listing: { providerId },
-        status: { not: ApplicationStatus.WAITING },
+        ...providerApplicationVisibility(providerId),
       },
       orderBy: { createdAt: 'asc' },
     });
