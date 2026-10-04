@@ -205,8 +205,18 @@ export class ApplicationAttentionQueryService {
     audience: AttentionAudience,
     asOf: Date,
   ) {
+    return (
+      await this.composeWithinTransaction(tx, applications, audience, asOf)
+    ).attention;
+  }
+
+  async composeWithinTransaction(
+    tx: Prisma.TransactionClient,
+    applications: readonly AttentionApplication[],
+    audience: AttentionAudience,
+    asOf: Date,
+  ) {
     const result = new Map<string, ApplicationAttentionResponseDto>();
-    if (!applications.length) return result;
     const ids = applications.map((row) => row.id);
     const conversations = await this.conversations.batch(
       tx,
@@ -255,7 +265,7 @@ export class ApplicationAttentionQueryService {
         ),
       );
     }
-    return result;
+    return { attention: result, conversations, documents, viewings };
   }
 
   private totals(

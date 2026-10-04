@@ -1,5 +1,22 @@
 import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
 import type { Prisma } from '../generated/prisma/client';
+import { PROVIDER_CURATION_COOLDOWN_MS } from './application-lifecycle.constants';
+
+export function applicationCanWithdraw(status: ApplicationStatus): boolean {
+  return (
+    status === ApplicationStatus.ACTIVE || status === ApplicationStatus.WAITING
+  );
+}
+
+export function providerCurationAllowed(
+  lastOccurredAt: Date | null,
+  asOf: Date,
+): boolean {
+  return (
+    !lastOccurredAt ||
+    asOf.getTime() - lastOccurredAt.getTime() >= PROVIDER_CURATION_COOLDOWN_MS
+  );
+}
 
 export type ApplicationProcessState = {
   status: ApplicationStatus;

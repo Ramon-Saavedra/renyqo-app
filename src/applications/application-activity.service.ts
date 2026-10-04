@@ -1,3 +1,4 @@
+import { toPublicActivityPayload } from './application-activity.policy';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ApplicationActivity, Prisma } from '../generated/prisma/client';
 import {
@@ -135,7 +136,7 @@ export class ApplicationActivityService {
   private toTimelineItem(
     activity: ApplicationActivity,
   ): ApplicationActivityTimelineItem {
-    const payload = this.toPublicPayload(activity.payload);
+    const payload = toPublicActivityPayload(activity.payload);
 
     return {
       id: activity.id,
@@ -146,66 +147,6 @@ export class ApplicationActivityService {
       occurredAt: activity.occurredAt,
       payload,
     };
-  }
-
-  private toPublicPayload(
-    payload: Prisma.JsonValue,
-  ): Omit<ApplicationActivityMetadata, 'reason'> | null {
-    if (
-      payload === null ||
-      typeof payload !== 'object' ||
-      Array.isArray(payload)
-    ) {
-      return null;
-    }
-
-    const record = payload;
-    const safePayload: Omit<ApplicationActivityMetadata, 'reason'> = {};
-
-    for (const key of ['viewingId', 'previousViewingId'] as const) {
-      if (
-        typeof record[key] === 'string' &&
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(
-          record[key],
-        )
-      )
-        safePayload[key] = record[key];
-    }
-    for (const key of ['startsAt', 'endsAt'] as const) {
-      const value = record[key];
-      if (
-        typeof value === 'string' &&
-        !Number.isNaN(Date.parse(value)) &&
-        new Date(value).toISOString() === value
-      )
-        safePayload[key] = value;
-    }
-    for (const key of ['viewingRound', 'outcomeRevision'] as const) {
-      const value = record[key];
-      if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
-        safePayload[key] = value;
-    }
-
-    if (typeof record['requestId'] === 'string')
-      safePayload.requestId = record['requestId'];
-    if (typeof record['documentType'] === 'string') {
-      const type = Object.values(ApplicationDocumentType).find(
-        (value) => value === record['documentType'],
-      );
-      if (type) safePayload.documentType = type;
-    }
-
-    if (typeof record['initialStatus'] === 'string') {
-      safePayload.initialStatus = record['initialStatus'] as ApplicationStatus;
-    }
-    if (typeof record['fromStatus'] === 'string') {
-      safePayload.fromStatus = record['fromStatus'] as ApplicationStatus;
-    }
-    if (typeof record['toStatus'] === 'string') {
-      safePayload.toStatus = record['toStatus'] as ApplicationStatus;
-    }
-
-    return safePayload;
   }
 
   private create(

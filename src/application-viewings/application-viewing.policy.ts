@@ -11,6 +11,13 @@ export const viewingInclude = {
 export type ViewingRecord = Prisma.ApplicationViewingGetPayload<{
   include: typeof viewingInclude;
 }>;
+export type ViewingCapabilityState = Pick<
+  ViewingRecord,
+  'status' | 'startsAt' | 'endsAt'
+> & {
+  outcomes: { recordedAt: Date }[];
+  interest: { id: string } | null;
+};
 export type ViewingNextAction =
   | 'APPLICANT_RESPOND_TO_VIEWING'
   | 'PROVIDER_RESPOND_TO_CHANGE_REQUEST'
@@ -106,14 +113,14 @@ export class ApplicationViewingPolicy {
     return date;
   }
 
-  unresolved(viewing: ViewingRecord): boolean {
+  unresolved(viewing: Pick<ViewingRecord, 'status'>): boolean {
     return (
       viewing.status === Status.PROPOSED || viewing.status === Status.ACCEPTED
     );
   }
 
   capabilities(
-    viewing: ViewingRecord,
+    viewing: ViewingCapabilityState,
     side: ViewingAudience,
     mutable: boolean,
     latest: boolean,

@@ -30,6 +30,18 @@ export type ListingEligibilityCriteria = {
   smokingPolicy: string | null;
 };
 
+export type ApplicantEligibilityFacts = Pick<
+  ApplicantProfile,
+  | 'householdNetIncome'
+  | 'schufaAvailable'
+  | 'incomeProofAvailable'
+  | 'adultsCount'
+  | 'childrenCount'
+  | 'peopleCount'
+  | 'hasPets'
+  | 'isSmoker'
+>;
+
 const COMPLETE_PROFILE_FIELDS = [
   'householdNetIncome',
   'incomeProofAvailable',
@@ -85,7 +97,7 @@ export class EligibilityService {
 
   evaluateCriteria(
     criteria: ListingEligibilityCriteria,
-    profile: ApplicantProfile | null,
+    profile: ApplicantEligibilityFacts | null,
   ): EligibilityResponseDto {
     const reasons = this.findCriteriaReasons(criteria, profile);
     const warnings = this.findCriteriaWarnings(criteria, profile);
@@ -231,7 +243,7 @@ export class EligibilityService {
 
   private findCriteriaReasons(
     criteria: ListingEligibilityCriteria,
-    profile: ApplicantProfile | null,
+    profile: ApplicantEligibilityFacts | null,
   ): EligibilityReason[] {
     const reasons: EligibilityReason[] = [];
 
@@ -305,7 +317,7 @@ export class EligibilityService {
 
   private findCriteriaWarnings(
     criteria: ListingEligibilityCriteria,
-    profile: ApplicantProfile | null,
+    profile: ApplicantEligibilityFacts | null,
   ): EligibilityWarning[] {
     if (!profile) {
       return [];
@@ -326,7 +338,9 @@ export class EligibilityService {
     return warnings;
   }
 
-  private getHouseholdSize(profile: ApplicantProfile | null): number | null {
+  private getHouseholdSize(
+    profile: ApplicantEligibilityFacts | null,
+  ): number | null {
     if (profile?.adultsCount !== null && profile?.adultsCount !== undefined) {
       if (
         profile.childrenCount !== null &&

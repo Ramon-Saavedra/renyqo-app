@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ApplicationReadModelsModule } from './application-read-models/application-read-models.module';
 import { ApplicationAttentionModule } from './application-attention/application-attention.module';
 import { ApplicationViewingsModule } from './application-viewings/application-viewings.module';
 import { ApplicationDocumentsModule } from './application-documents/application-documents.module';
@@ -24,6 +25,7 @@ import { ListingAssistanceModule } from './listing-assistance/listing-assistance
       isGlobal: true,
       validate: validateEnv,
     }),
+    ApplicationReadModelsModule,
     PrismaModule,
     AuthModule,
     MeModule,

@@ -6,6 +6,8 @@ Backend API for Renyqo, a smart rental platform for the German rental market.
 
 Application attention derives audience-specific pending actions and operational unread badges from existing domain state. Five dedicated read APIs provide application details and provider/listing/applicant totals without persisted badge state. See [Application Attention](docs/application-attention.md) for contracts, privacy and batch-query semantics.
 
+Optimized application read models provide compact provider listing overviews, applicant application cards and audience-specific workspaces in one consistent database snapshot. Activity, document request history and file attempts remain separately paginated. See [Application read models](docs/application-read-models.md) for contracts, compatibility and measured query behavior.
+
 ## Stack
 
 - NestJS
@@ -118,6 +120,7 @@ src/
   applicant-listing-summaries/  Applicant-safe listing summaries
   applicant-profile/            Applicant profile used for eligibility
   application-conversation/     Application text conversations and messages
+  application-read-models/      Compact overviews and application workspaces
   applications/                 Listing applications
   auth/                         Session-based auth
   common/                       Shared guards and types
@@ -146,6 +149,7 @@ docker-compose.e2e.yml
 
 - [API](docs/api.md)
 - [Application lifecycle](docs/application-lifecycle.md)
+- [Application read models](docs/application-read-models.md)
 - [Security](docs/security.md)
 - [Database](docs/database.md)
 

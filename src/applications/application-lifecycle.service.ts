@@ -22,6 +22,7 @@ import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { BLOCKING_APPLICATION_STATUSES } from './blocking-application-statuses';
+import { applicationCanWithdraw } from './application-process.policy';
 
 import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
 import { ApplicationActivityService } from './application-activity.service';
@@ -159,10 +160,7 @@ export class ApplicationLifecycleService {
         return application;
       }
 
-      if (
-        application.status !== ApplicationStatus.ACTIVE &&
-        application.status !== ApplicationStatus.WAITING
-      ) {
+      if (!applicationCanWithdraw(application.status)) {
         throw new ConflictException('This application cannot be withdrawn');
       }
 

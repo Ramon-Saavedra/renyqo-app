@@ -1080,7 +1080,11 @@ describe('ApplicationsService', () => {
         expect.objectContaining({
           where: {
             listing: { providerId: PROVIDER_ID },
-            status: { not: ApplicationStatus.WAITING },
+            status: { notIn: [ApplicationStatus.WAITING] },
+            OR: [
+              { status: { in: [ApplicationStatus.ACTIVE] } },
+              { activeAt: { not: null } },
+            ],
           },
         }),
       );
@@ -1102,7 +1106,11 @@ describe('ApplicationsService', () => {
           where: {
             listingId: LISTING_ID,
             listing: { providerId: PROVIDER_ID },
-            status: { not: ApplicationStatus.WAITING },
+            status: { notIn: [ApplicationStatus.WAITING] },
+            OR: [
+              { status: { in: [ApplicationStatus.ACTIVE] } },
+              { activeAt: { not: null } },
+            ],
           },
         }),
       );
