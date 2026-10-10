@@ -10,6 +10,7 @@ import type { ApplicantApplicationRecord } from './dto/applicant-application-res
 import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
 import type { ProviderExitedApplicationRecord } from './dto/provider-exited-application-response.dto';
 import { ProviderApplicationCurationService } from './provider-application-curation.service';
+import type { ApplicationAdmission } from './application-admission.service';
 
 @Injectable()
 export class ApplicationsService {
@@ -21,6 +22,18 @@ export class ApplicationsService {
 
   apply(listingId: string, applicantId: string): Promise<Application> {
     return this.lifecycleService.apply(listingId, applicantId);
+  }
+
+  findAdmissionForListings(
+    applicantId: string,
+    listings: readonly { id: string; eligible: boolean }[],
+    asOf: Date,
+  ): Promise<ReadonlyMap<string, ApplicationAdmission>> {
+    return this.queryService.findAdmissionForListings(
+      applicantId,
+      listings,
+      asOf,
+    );
   }
 
   withdraw(applicationId: string, applicantId: string): Promise<Application> {

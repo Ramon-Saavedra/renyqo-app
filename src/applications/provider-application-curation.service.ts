@@ -26,6 +26,7 @@ import { ApplicationTransactionService } from './application-transaction.service
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicationActivityService } from './application-activity.service';
 import { providerCurationAllowed } from './application-process.policy';
+import { ApplicationAdmissionService } from './application-admission.service';
 
 @Injectable()
 export class ProviderApplicationCurationService {
@@ -35,6 +36,7 @@ export class ProviderApplicationCurationService {
     private readonly transactionService: ApplicationTransactionService,
     private readonly promotionService: ApplicationWaitingPromotionService,
     private readonly activityService: ApplicationActivityService,
+    private readonly admissionService: ApplicationAdmissionService,
   ) {}
 
   async reject(
@@ -172,6 +174,12 @@ export class ProviderApplicationCurationService {
         tx,
         application.applicantId,
       );
+      if (await this.admissionService.hasNewerAttempt(tx, application)) {
+        throw new ConflictException({
+          message: 'A newer application attempt already exists',
+          code: 'APPLICATION_ATTEMPT_SUPERSEDED',
+        });
+      }
       const eligibility = this.eligibilityService.evaluate(
         application.listing,
         profile,

@@ -11,6 +11,8 @@ import { ApplicantListingSummaryDto } from '../listings/dto/applicant-listing-su
 import type { ApplicantListingSummaryBuildSource } from './applicant-listing-summary-listing.select';
 import { ProfileMatch } from '../listings/dto/applicant-listing-profile-match.enum';
 import type { SafeUser } from '../users/types/safe-user.type';
+import { ApplicationAdmissionResponseDto } from '../applications/dto/application-admission-response.dto';
+import type { ApplicationAdmission } from '../applications/application-admission.service';
 
 export type BuildApplicantListingSummariesOptions = {
   readonly isSavedByListingId: ReadonlySet<string>;
@@ -45,6 +47,7 @@ export class ApplicantListingSummaryService {
       string,
       BlockingApplicationState
     > = new Map();
+    let admissions: ReadonlyMap<string, ApplicationAdmission> = new Map();
 
     if (isApplicant) {
       profile =
@@ -59,6 +62,15 @@ export class ApplicantListingSummaryService {
           applicantUser.id,
           listings.map((listing) => listing.id),
         );
+      admissions = await this.applicationsService.findAdmissionForListings(
+        applicantUser.id,
+        listings.map((listing) => ({
+          id: listing.id,
+          eligible: this.eligibilityService.evaluateCriteria(listing, profile)
+            .canApply,
+        })),
+        evaluationTimestamp,
+      );
     }
 
     return listings.map((listing) =>
@@ -69,6 +81,7 @@ export class ApplicantListingSummaryService {
         blockingApplicationsByListingId,
         evaluationTimestamp,
         options.isSavedByListingId.has(listing.id),
+        new ApplicationAdmissionResponseDto(admissions.get(listing.id)),
       ),
     );
   }
@@ -83,6 +96,7 @@ export class ApplicantListingSummaryService {
     >,
     evaluationTimestamp: Date,
     isSaved: boolean,
+    admission: ApplicationAdmissionResponseDto,
   ): ApplicantListingSummaryDto {
     const isApplicant =
       applicantUser?.role === Role.APPLICANT &&
@@ -112,6 +126,7 @@ export class ApplicantListingSummaryService {
         blockingApplicationsByListingId.get(listing.id),
       ),
       isSaved,
+      admission,
     );
   }
 }

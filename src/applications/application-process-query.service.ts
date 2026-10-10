@@ -3,6 +3,7 @@ import type { ApplicantProfile, Application } from '../generated/prisma/client';
 import {
   ApplicationRejectionReason,
   ApplicationStatus,
+  ListingStatus,
   PetsPolicy,
   SmokingPolicy,
 } from '../generated/prisma/enums';
@@ -15,6 +16,10 @@ import type { BlockingApplicationState } from './applicant-listing-application-s
 import type { ApplicantApplicationRecord } from './dto/applicant-application-response.dto';
 import type { ProviderActiveApplicationRecord } from './dto/provider-active-application-response.dto';
 import type { ProviderExitedApplicationRecord } from './dto/provider-exited-application-response.dto';
+import {
+  ApplicationAdmissionService,
+  type ApplicationAdmission,
+} from './application-admission.service';
 
 const EXITED_APPLICATIONS_LIMIT = 5;
 
@@ -50,7 +55,38 @@ function computeProviderActiveApplicantWarnings(
 
 @Injectable()
 export class ApplicationProcessQueryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly admissionService: ApplicationAdmissionService,
+  ) {}
+
+  async findAdmissionForListings(
+    applicantId: string,
+    listings: readonly { id: string; eligible: boolean }[],
+    asOf: Date,
+  ): Promise<ReadonlyMap<string, ApplicationAdmission>> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const histories = await this.admissionService.historyForListings(
+          tx,
+          applicantId,
+          listings.map((listing) => listing.id),
+        );
+        return new Map(
+          listings.map((listing) => [
+            listing.id,
+            this.admissionService.evaluate(
+              histories.get(listing.id) ?? [],
+              ListingStatus.PUBLISHED,
+              listing.eligible,
+              asOf,
+            ),
+          ]),
+        );
+      },
+      { isolationLevel: 'RepeatableRead' },
+    );
+  }
 
   async findAllByApplicantWithListing(
     applicantId: string,

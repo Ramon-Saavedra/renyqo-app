@@ -5,9 +5,18 @@ import connectPgSimple from 'connect-pg-simple';
 import session from 'express-session';
 import passport from 'passport';
 import request, { type Response } from 'supertest';
-import { jest } from '@jest/globals';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
 import { AppModule } from '../src/app.module';
 import { ApplicationActivityService } from '../src/applications/application-activity.service';
+import { REAPPLICATION_COOLDOWN_MS } from '../src/applications/application-admission.service';
 import type { EnvironmentVariables } from '../src/config/env.validation';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
@@ -397,6 +406,422 @@ describe('Application Lifecycle E2E', () => {
 
   afterEach(async () => {
     await clearDatabase();
+  });
+
+  describe('Re-application admission', () => {
+    async function rejectedByProvider() {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      const applicant = await registerApplicant();
+      const entry = await applyToListing(applicant, listing.id);
+      const id = String(entry['id']);
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${id}/reject`)
+        .send()
+        .expect(200);
+      return { providerAgent, provider, listing, applicant, id };
+    }
+
+    async function ageRejection(id: string, elapsed: number) {
+      const occurredAt = new Date(Date.now() - elapsed);
+      await getPrisma().listingEvent.updateMany({
+        where: {
+          applicationId: id,
+          type: ListingEventType.REJECTED_BY_PROVIDER,
+        },
+        data: { occurredAt },
+      });
+      await getPrisma().application.update({
+        where: { id },
+        data: { rejectedAt: occurredAt },
+      });
+      return occurredAt;
+    }
+
+    it('recovers from automatic eligibility rejection with a fresh row and unchanged history', async () => {
+      const { provider } = await registerProvider();
+      const listing = await publishListingWithRequirements(provider.id, {
+        suitableForPeopleCount: 1,
+      });
+      const applicant = await registerApplicant();
+      await updateApplicantProfile(applicant, {
+        adultsCount: 1,
+        childrenCount: 0,
+        introduction: 'A short applicant introduction.',
+      });
+      const entry = await applyToListing(applicant, listing.id);
+      const id = String(entry['id']);
+      await updateApplicantProfile(applicant, {
+        adultsCount: 2,
+        childrenCount: 0,
+      });
+      const old = await getPrisma().application.findUniqueOrThrow({
+        where: { id },
+      });
+      expect(old.publicReason).toBe(
+        ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+      );
+      const activities = await getPrisma().applicationActivity.findMany({
+        where: { applicationId: id },
+        orderBy: { id: 'asc' },
+      });
+      const failed = await applicant
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .send()
+        .expect(422);
+      expect(responseBody(failed)['canApply']).toBe(false);
+      await updateApplicantProfile(applicant, {
+        adultsCount: 1,
+        childrenCount: 0,
+      });
+      const detail = responseBody(
+        await applicant.get(`/api/v1/listings/${listing.id}`).expect(200),
+      );
+      expect(detail['hasApplied']).toBe(true);
+      expect(detail['admission']).toMatchObject({
+        hasApplicationHistory: true,
+        currentApplicationId: null,
+        canSubmitApplication: true,
+        submissionBlockReason: null,
+      });
+      const collection = responseBody(
+        await applicant.get('/api/v1/listings').expect(200),
+      );
+      expect(collection['items']).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: listing.id,
+            admission: detail['admission'],
+          }),
+        ]),
+      );
+      const fresh = await applyToListing(applicant, listing.id);
+      expect(fresh['id']).not.toBe(id);
+      expect(fresh['status']).toBe(ApplicationStatus.ACTIVE);
+      expect(
+        await getPrisma().application.findUniqueOrThrow({ where: { id } }),
+      ).toEqual(old);
+      expect(
+        await getPrisma().applicationActivity.findMany({
+          where: { applicationId: id },
+          orderBy: { id: 'asc' },
+        }),
+      ).toEqual(activities);
+      const updated = responseBody(
+        await applicant.get(`/api/v1/listings/${listing.id}`).expect(200),
+      );
+      expect(updated['admission']).toMatchObject({
+        currentApplicationId: fresh['id'],
+        currentApplicationStatus: ApplicationStatus.ACTIVE,
+        canSubmitApplication: false,
+      });
+      const workspace = responseBody(
+        await applicant
+          .get(`/api/v1/applicant/applications/${id}/workspace`)
+          .expect(200),
+      );
+      expect(workspace['capabilities']).toMatchObject({
+        admission: updated['admission'],
+      });
+    });
+
+    it('returns an explicit cooldown while eligibility remains about matching', async () => {
+      const { listing, applicant, id } = await rejectedByProvider();
+      const event = await getPrisma().listingEvent.findFirstOrThrow({
+        where: {
+          applicationId: id,
+          type: ListingEventType.REJECTED_BY_PROVIDER,
+        },
+      });
+      const failed = responseBody(
+        await applicant
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .send()
+          .expect(409),
+      );
+      expect(failed['code']).toBe('APPLICATION_REAPPLICATION_COOLDOWN');
+      expect(failed['reapplyAvailableAt']).toBe(
+        new Date(
+          event.occurredAt.getTime() + REAPPLICATION_COOLDOWN_MS,
+        ).toISOString(),
+      );
+      expect(
+        responseBody(
+          await applicant
+            .get(`/api/v1/listings/${listing.id}/eligibility`)
+            .expect(200),
+        )['canApply'],
+      ).toBe(true);
+      const detail = responseBody(
+        await applicant.get(`/api/v1/listings/${listing.id}`).expect(200),
+      );
+      expect(detail['admission']).toMatchObject({
+        currentApplicationId: null,
+        submissionBlockReason: failed['code'],
+        reapplyAvailableAt: failed['reapplyAvailableAt'],
+      });
+      const collection = responseBody(
+        await applicant.get('/api/v1/listings').expect(200),
+      );
+      expect(collection['items']).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: listing.id,
+            admission: detail['admission'],
+          }),
+        ]),
+      );
+    });
+
+    it.each([0, 5])(
+      'creates a fresh attempt after cooldown with %s occupied slots',
+      async (slots) => {
+        const { listing, applicant, id } = await rejectedByProvider();
+        await ageRejection(id, REAPPLICATION_COOLDOWN_MS + 1000);
+        for (let index = 0; index < slots; index++) {
+          await applyToListing(await registerApplicant(), listing.id);
+        }
+        const earlierWaitingApplicant =
+          slots === 5 ? await registerApplicant() : null;
+        const earlierWaiting = earlierWaitingApplicant
+          ? await applyToListing(earlierWaitingApplicant, listing.id)
+          : null;
+        const old = await getPrisma().application.findUniqueOrThrow({
+          where: { id },
+        });
+        const fresh = await applyToListing(applicant, listing.id);
+        expect(fresh['status']).toBe(
+          slots === 0 ? ApplicationStatus.ACTIVE : ApplicationStatus.WAITING,
+        );
+        expect(fresh['id']).not.toBe(id);
+        expect(
+          await getPrisma().application.findUniqueOrThrow({ where: { id } }),
+        ).toEqual(old);
+        const inserted = await getPrisma().application.findUniqueOrThrow({
+          where: { id: String(fresh['id']) },
+        });
+        expect(inserted.queueOrder).toBeGreaterThan(old.queueOrder);
+        if (slots === 5) {
+          const queuedBefore = await getPrisma().application.findUniqueOrThrow({
+            where: { id: String(earlierWaiting?.['id']) },
+          });
+          expect(inserted.queueOrder).toBeGreaterThan(queuedBefore.queueOrder);
+          const active = await getPrisma().application.findFirstOrThrow({
+            where: { listingId: listing.id, status: ApplicationStatus.ACTIVE },
+          });
+          const owner = await getPrisma().user.findUniqueOrThrow({
+            where: { id: active.applicantId },
+          });
+          const activeAgent = request.agent(getServer());
+          await activeAgent
+            .post('/api/v1/auth/login')
+            .send({ email: owner.email, password: userPassword })
+            .expect(200);
+          await activeAgent
+            .delete(`/api/v1/applicant/applications/${active.id}`)
+            .expect(200);
+          expect(
+            (
+              await getPrisma().application.findUniqueOrThrow({
+                where: { id: inserted.id },
+              })
+            ).status,
+          ).toBe(ApplicationStatus.WAITING);
+          expect(
+            (
+              await getPrisma().application.findUniqueOrThrow({
+                where: { id: queuedBefore.id },
+              })
+            ).status,
+          ).toBe(ApplicationStatus.ACTIVE);
+          if (!earlierWaitingApplicant)
+            throw new Error('Missing earlier waiting applicant');
+          await earlierWaitingApplicant
+            .delete(`/api/v1/applicant/applications/${queuedBefore.id}`)
+            .expect(200);
+          expect(
+            (
+              await getPrisma().application.findUniqueOrThrow({
+                where: { id: inserted.id },
+              })
+            ).status,
+          ).toBe(ApplicationStatus.ACTIVE);
+        }
+      },
+    );
+
+    it('restores during applicant cooldown but retains cooldown after withdrawal', async () => {
+      const { listing, applicant, providerAgent, id } =
+        await rejectedByProvider();
+      await ageRejection(id, 61_000);
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${id}/restore`)
+        .send()
+        .expect(200);
+      await applicant
+        .delete(`/api/v1/applicant/applications/${id}`)
+        .expect(200);
+      const failed = responseBody(
+        await applicant
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .send()
+          .expect(409),
+      );
+      expect(failed['code']).toBe('APPLICATION_REAPPLICATION_COOLDOWN');
+    });
+
+    it('a repeated provider rejection starts a new cooldown', async () => {
+      const { listing, applicant, providerAgent, id } =
+        await rejectedByProvider();
+      await ageRejection(id, REAPPLICATION_COOLDOWN_MS + 1000);
+      const fresh = await applyToListing(applicant, listing.id);
+      const freshId = String(fresh['id']);
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${freshId}/reject`)
+        .send()
+        .expect(200);
+      const event = await getPrisma().listingEvent.findFirstOrThrow({
+        where: {
+          applicationId: freshId,
+          type: ListingEventType.REJECTED_BY_PROVIDER,
+        },
+      });
+      const failed = responseBody(
+        await applicant
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .send()
+          .expect(409),
+      );
+      expect(failed['code']).toBe('APPLICATION_REAPPLICATION_COOLDOWN');
+      expect(failed['reapplyAvailableAt']).toBe(
+        new Date(
+          event.occurredAt.getTime() + REAPPLICATION_COOLDOWN_MS,
+        ).toISOString(),
+      );
+    });
+
+    it('profile rejection and recovery after restoration cannot bypass provider cooldown', async () => {
+      const { listing, applicant, providerAgent, id } =
+        await rejectedByProvider();
+      await ageRejection(id, 61_000);
+      await providerAgent
+        .patch(`/api/v1/provider/applications/${id}/restore`)
+        .send()
+        .expect(200);
+      await getPrisma().listing.update({
+        where: { id: listing.id },
+        data: { minimumHouseholdNetIncome: 1000 },
+      });
+      await updateApplicantProfile(applicant, {
+        introduction: 'A short applicant introduction.',
+        householdNetIncome: 0,
+      });
+      expect(
+        (await getPrisma().application.findUniqueOrThrow({ where: { id } }))
+          .publicReason,
+      ).toBe(ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE);
+      await updateApplicantProfile(applicant, { householdNetIncome: 2000 });
+      const failed = responseBody(
+        await applicant
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .send()
+          .expect(409),
+      );
+      expect(failed['code']).toBe('APPLICATION_REAPPLICATION_COOLDOWN');
+    });
+
+    it('does not restore an old attempt after a newer withdrawn attempt', async () => {
+      const { listing, applicant, providerAgent, id } =
+        await rejectedByProvider();
+      await ageRejection(id, REAPPLICATION_COOLDOWN_MS + 1000);
+      const fresh = await applyToListing(applicant, listing.id);
+      await applicant
+        .delete(`/api/v1/applicant/applications/${String(fresh['id'])}`)
+        .expect(200);
+      const failed = responseBody(
+        await providerAgent
+          .patch(`/api/v1/provider/applications/${id}/restore`)
+          .send()
+          .expect(409),
+      );
+      expect(failed['code']).toBe('APPLICATION_ATTEMPT_SUPERSEDED');
+      const workspace = responseBody(
+        await providerAgent
+          .get(`/api/v1/provider/applications/${id}/workspace`)
+          .expect(200),
+      );
+      expect(workspace['capabilities']).toMatchObject({ canRestore: false });
+    });
+
+    it.each([
+      ListingStatus.PAUSED,
+      ListingStatus.DRAFT,
+      ListingStatus.ARCHIVED,
+      ListingStatus.RENTED,
+    ])('refuses fresh submission to %s after expiry', async (status) => {
+      const { listing, applicant, id } = await rejectedByProvider();
+      await ageRejection(id, REAPPLICATION_COOLDOWN_MS + 1000);
+      await getPrisma().listing.update({
+        where: { id: listing.id },
+        data: { status },
+      });
+      await applicant
+        .post(`/api/v1/listings/${listing.id}/apply`)
+        .send()
+        .expect(422);
+    });
+
+    it('serializes concurrent fresh submissions after expiry', async () => {
+      const { listing, applicant, id } = await rejectedByProvider();
+      await ageRejection(id, REAPPLICATION_COOLDOWN_MS + 1000);
+      const responses = await Promise.all([
+        applicant.post(`/api/v1/listings/${listing.id}/apply`).send(),
+        applicant.post(`/api/v1/listings/${listing.id}/apply`).send(),
+      ]);
+      expect(responses.map((response) => response.status).sort()).toEqual([
+        201, 409,
+      ]);
+      expect(
+        await getPrisma().application.count({
+          where: {
+            listingId: listing.id,
+            status: {
+              in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING],
+            },
+          },
+        }),
+      ).toBe(1);
+    });
+
+    it('serializes fresh submission against restoration of the prior attempt', async () => {
+      const { listing, applicant, providerAgent, id } =
+        await rejectedByProvider();
+      await ageRejection(id, REAPPLICATION_COOLDOWN_MS + 1000);
+      const responses = await Promise.all([
+        applicant.post(`/api/v1/listings/${listing.id}/apply`).send(),
+        providerAgent
+          .patch(`/api/v1/provider/applications/${id}/restore`)
+          .send(),
+      ]);
+      expect(
+        responses.filter((response) => response.status === 409),
+      ).toHaveLength(1);
+      expect(
+        responses.filter(
+          (response) => response.status === 200 || response.status === 201,
+        ),
+      ).toHaveLength(1);
+      expect(
+        await getPrisma().application.count({
+          where: {
+            listingId: listing.id,
+            status: {
+              in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING],
+            },
+          },
+        }),
+      ).toBe(1);
+    });
   });
 
   describe('Provider mutation authorization', () => {

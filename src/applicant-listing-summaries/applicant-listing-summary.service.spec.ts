@@ -93,7 +93,10 @@ describe('ApplicantListingSummaryService', () => {
     };
   };
   let applicationsMock: jest.Mocked<
-    Pick<ApplicationsService, 'findBlockingApplicationsForListings'>
+    Pick<
+      ApplicationsService,
+      'findBlockingApplicationsForListings' | 'findAdmissionForListings'
+    >
   >;
   let eligibilityMock: jest.Mocked<EligibilityService>;
 
@@ -107,6 +110,9 @@ describe('ApplicantListingSummaryService', () => {
     };
 
     applicationsMock = {
+      findAdmissionForListings: jest
+        .fn<ApplicationsService['findAdmissionForListings']>()
+        .mockResolvedValue(new Map()),
       findBlockingApplicationsForListings: jest
         .fn<
           (

@@ -10,7 +10,16 @@ import connectPgSimple from 'connect-pg-simple';
 import session from 'express-session';
 import passport from 'passport';
 import request, { type Response } from 'supertest';
-import { jest } from '@jest/globals';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
 import { Client } from 'pg';
 import { ApplicantApplicationOverviewQueryService } from '../src/application-read-models/applicant-application-overview-query.service';
 import { ProviderApplicationOverviewQueryService } from '../src/application-read-models/provider-application-overview-query.service';
@@ -1045,8 +1054,18 @@ describe('Application read models E2E', () => {
       statements.filter((text) =>
         text.includes('FROM "public"."applications"'),
       ),
+    ).toHaveLength(2);
+    expect(
+      statements.filter((text) =>
+        text.includes('FROM "public"."applicant_profiles"'),
+      ),
     ).toHaveLength(1);
-    expect(statements.join(' ')).not.toMatch(/applicant_profiles/);
+    expect(result.capabilities.admission).toMatchObject({
+      currentApplicationId: applicationId,
+      currentApplicationStatus: ApplicationStatus.ACTIVE,
+      canSubmitApplication: false,
+      submissionBlockReason: 'CURRENT_APPLICATION_EXISTS',
+    });
   });
 
   it.each([

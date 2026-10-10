@@ -4,6 +4,7 @@ import { ApplicationStatus } from '../../generated/prisma/enums';
 import type { ApplicantListingApplicationStateFields } from '../../applications/applicant-listing-application-state';
 import { ApplicantListingImageDto } from './applicant-listing-image.dto';
 import { ProfileMatch } from './applicant-listing-profile-match.enum';
+import { ApplicationAdmissionResponseDto } from '../../applications/dto/application-admission-response.dto';
 
 type ApplicantListingDetailSource = Pick<
   Listing,
@@ -60,6 +61,7 @@ export class ApplicantListingDetailDto {
   readonly applicationStatus!: ApplicationStatus | null;
   readonly publicReason!: ApplicationRejectionReason | null;
   readonly isSaved!: boolean;
+  readonly admission: ApplicationAdmissionResponseDto;
   readonly requirements!: {
     readonly minimumHouseholdNetIncome: number | null;
     readonly schufaRequired: boolean;
@@ -75,6 +77,7 @@ export class ApplicantListingDetailDto {
     evaluationTimestamp: Date,
     applicationState: ApplicantListingApplicationStateFields,
     isSaved: boolean,
+    admission = new ApplicationAdmissionResponseDto(),
   ) {
     this.id = listing.id;
     this.title = listing.title;
@@ -102,6 +105,7 @@ export class ApplicantListingDetailDto {
     this.applicationStatus = applicationState.applicationStatus;
     this.publicReason = applicationState.publicReason;
     this.isSaved = isSaved;
+    this.admission = admission;
     this.requirements = {
       minimumHouseholdNetIncome: listing.minimumHouseholdNetIncome,
       schufaRequired: listing.schufaRequired,

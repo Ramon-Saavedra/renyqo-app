@@ -18,6 +18,7 @@ import type {
 } from './dto/applicant-listings-query.dto';
 import { ProfileMatch } from './dto/applicant-listing-profile-match.enum';
 import { ApplicantListingDiscoveryQuery } from './applicant-listing-discovery-query';
+import { ApplicationAdmissionResponseDto } from '../applications/dto/application-admission-response.dto';
 
 @Injectable()
 export class ApplicantListingsService {
@@ -159,6 +160,7 @@ export class ApplicantListingsService {
     let profileMatch = ProfileMatch.UNKNOWN;
     let applicationState = toApplicantListingApplicationStateFields(undefined);
     let isSaved = false;
+    let admission = new ApplicationAdmissionResponseDto();
 
     if (isApplicant) {
       const profile = await this.prisma.applicantProfile.findUnique({
@@ -184,6 +186,23 @@ export class ApplicantListingsService {
         );
       applicationState =
         toApplicantListingApplicationStateFields(blockingApplication);
+      const admissions =
+        await this.applicationsService.findAdmissionForListings(
+          applicantUser.id,
+          [
+            {
+              id: listing.id,
+              eligible: this.eligibilityService.evaluateCriteria(
+                listing,
+                profile,
+              ).canApply,
+            },
+          ],
+          evaluationTimestamp,
+        );
+      admission = new ApplicationAdmissionResponseDto(
+        admissions.get(listing.id),
+      );
       isSaved = await this.savedListingsService.isListingSaved(
         applicantUser.id,
         listing.id,
@@ -201,6 +220,7 @@ export class ApplicantListingsService {
       evaluationTimestamp,
       applicationState,
       isSaved,
+      admission,
     );
   }
 }

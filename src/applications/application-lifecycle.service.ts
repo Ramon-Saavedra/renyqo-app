@@ -21,7 +21,7 @@ import {
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
-import { BLOCKING_APPLICATION_STATUSES } from './blocking-application-statuses';
+import { ApplicationAdmissionService } from './application-admission.service';
 import { applicationCanWithdraw } from './application-process.policy';
 
 import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
@@ -39,6 +39,7 @@ export class ApplicationLifecycleService {
     private readonly transactionService: ApplicationTransactionService,
     private readonly promotionService: ApplicationWaitingPromotionService,
     private readonly activityService: ApplicationActivityService,
+    private readonly admissionService: ApplicationAdmissionService,
   ) {}
 
   async apply(listingId: string, applicantId: string): Promise<Application> {
@@ -56,16 +57,28 @@ export class ApplicationLifecycleService {
         );
       }
 
-      const existingBlockingApplication = await tx.application.findFirst({
-        where: {
-          listingId,
-          applicantId,
-          status: { in: [...BLOCKING_APPLICATION_STATUSES] },
-        },
-      });
-
-      if (existingBlockingApplication) {
-        throw new ConflictException('You have already applied to this listing');
+      const histories = await this.admissionService.historyForListings(
+        tx,
+        applicantId,
+        [listingId],
+      );
+      const history = histories.get(listingId) ?? [];
+      const admission = this.admissionService.evaluate(
+        history,
+        listing.status,
+        true,
+        new Date(),
+      );
+      if (!admission.canSubmitApplication) {
+        throw new ConflictException({
+          message:
+            admission.submissionBlockReason ===
+            'APPLICATION_REAPPLICATION_COOLDOWN'
+              ? 'Re-application is temporarily unavailable after provider rejection'
+              : 'You have already applied to this listing',
+          code: admission.submissionBlockReason,
+          reapplyAvailableAt: admission.reapplyAvailableAt,
+        });
       }
 
       const profile = await this.transactionService.lockApplicantProfile(
@@ -88,7 +101,12 @@ export class ApplicationLifecycleService {
       const status = isActive
         ? ApplicationStatus.ACTIVE
         : ApplicationStatus.WAITING;
-      const now = new Date();
+      const now = new Date(
+        history.reduce(
+          (timestamp, row) => Math.max(timestamp, row.createdAt.getTime() + 1),
+          Date.now(),
+        ),
+      );
 
       try {
         const application = await tx.application.create({

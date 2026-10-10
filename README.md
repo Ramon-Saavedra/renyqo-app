@@ -4,6 +4,8 @@ Application-scoped viewings support immutable proposal rounds, applicant change 
 
 Backend API for Renyqo, a smart rental platform for the German rental market.
 
+Application re-submission distinguishes automatic eligibility rejection from manual provider rejection. Eligibility recovery permits a fresh attempt; manual `NOT_SELECTED` rejection imposes a 720-hour applicant cooldown. Provider restoration retains its existing capacity rules and 60-second throttle. Listing admission and applicant workspace capabilities expose submission permission separately from historical application state. See [Application lifecycle](docs/application-lifecycle.md).
+
 Application attention derives audience-specific pending actions and operational unread badges from existing domain state. Five dedicated read APIs provide application details and provider/listing/applicant totals without persisted badge state. See [Application Attention](docs/application-attention.md) for contracts, privacy and batch-query semantics.
 
 Optimized application read models provide compact provider listing overviews, applicant application cards and audience-specific workspaces in one consistent database snapshot. Activity, document request history and file attempts remain separately paginated. See [Application read models](docs/application-read-models.md) for contracts, compatibility and measured query behavior.
@@ -68,6 +70,8 @@ npm run start:dev
 Copy `.env.example` to `.env` and set the values for this machine. Names, required flags, and descriptions are in [Database](docs/database.md#environment-variables). Production and upload credential rules are documented in [Security](docs/security.md).
 
 ## Scripts
+
+The `test/tsconfig.json` configuration extends the shared test configuration so editors resolve Jest globals in E2E files. Production compilation keeps Jest types excluded. Run `npm run typecheck` to validate production, test and evaluation configurations.
 
 | Script                                | Purpose                       |
 | ------------------------------------- | ----------------------------- |

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ApplicationProcessReadModule } from './application-process-read.module';
 
 import { PrismaModule } from '../prisma/prisma.module';
 import { EligibilityModule } from '../eligibility/eligibility.module';
@@ -17,7 +18,7 @@ import { ProviderApplicationsController } from './provider-applications.controll
 import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-application-action-throttler.guard';
 
 @Module({
-  imports: [PrismaModule, EligibilityModule],
+  imports: [PrismaModule, EligibilityModule, ApplicationProcessReadModule],
   controllers: [
     ApplicationsController,
     ApplicantApplicationsController,
