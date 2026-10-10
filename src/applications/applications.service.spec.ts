@@ -37,6 +37,7 @@ import { ApplicationTransactionService } from './application-transaction.service
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicationsService } from './applications.service';
 import { ProviderApplicationCurationService } from './provider-application-curation.service';
+import { ApplicationAdmissionService } from './application-admission.service';
 const LISTING_ID = '00000000-0000-4000-8000-000000000001';
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000002';
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000003';
@@ -166,6 +167,7 @@ describe('ApplicationsService', () => {
     );
     prismaMock.$queryRaw.mockResolvedValue([]);
     prismaMock.application.findFirst.mockResolvedValue(null);
+    prismaMock.application.findMany.mockResolvedValue([]);
     activityService = {
       appendWithinTransaction: jest.fn(),
     };
@@ -177,6 +179,7 @@ describe('ApplicationsService', () => {
           useValue: activityService,
         },
         ApplicationLifecycleService,
+        ApplicationAdmissionService,
         ApplicationProcessQueryService,
         ApplicationTransactionService,
         ApplicationWaitingPromotionService,
@@ -368,9 +371,12 @@ describe('ApplicationsService', () => {
     it('throws ConflictException when a live application already exists', async () => {
       const listing = makeRawListing();
       prismaMock.listing.findUnique.mockResolvedValue(listing);
-      prismaMock.application.findFirst.mockResolvedValue(
-        makeRawApplication({ status: ApplicationStatus.ACTIVE }),
-      );
+      prismaMock.application.findMany.mockResolvedValue([
+        {
+          ...makeRawApplication({ status: ApplicationStatus.ACTIVE }),
+          listingEvents: [],
+        },
+      ]);
 
       await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
         ConflictException,
@@ -381,9 +387,12 @@ describe('ApplicationsService', () => {
     it('throws ConflictException when a WAITING application already exists', async () => {
       const listing = makeRawListing();
       prismaMock.listing.findUnique.mockResolvedValue(listing);
-      prismaMock.application.findFirst.mockResolvedValue(
-        makeRawApplication({ status: ApplicationStatus.WAITING }),
-      );
+      prismaMock.application.findMany.mockResolvedValue([
+        {
+          ...makeRawApplication({ status: ApplicationStatus.WAITING }),
+          listingEvents: [],
+        },
+      ]);
 
       await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
         ConflictException,
@@ -391,12 +400,15 @@ describe('ApplicationsService', () => {
       expect(prismaMock.application.create).not.toHaveBeenCalled();
     });
 
-    it('throws ConflictException when a REJECTED application already exists', async () => {
+    it('requires review for an unidentified historical rejection', async () => {
       const listing = makeRawListing();
       prismaMock.listing.findUnique.mockResolvedValue(listing);
-      prismaMock.application.findFirst.mockResolvedValue(
-        makeRawApplication({ status: ApplicationStatus.REJECTED }),
-      );
+      prismaMock.application.findMany.mockResolvedValue([
+        {
+          ...makeRawApplication({ status: ApplicationStatus.REJECTED }),
+          listingEvents: [],
+        },
+      ]);
 
       await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
         ConflictException,
@@ -407,9 +419,12 @@ describe('ApplicationsService', () => {
     it('throws ConflictException when an ACCEPTED application already exists', async () => {
       const listing = makeRawListing();
       prismaMock.listing.findUnique.mockResolvedValue(listing);
-      prismaMock.application.findFirst.mockResolvedValue(
-        makeRawApplication({ status: ApplicationStatus.ACCEPTED }),
-      );
+      prismaMock.application.findMany.mockResolvedValue([
+        {
+          ...makeRawApplication({ status: ApplicationStatus.ACCEPTED }),
+          listingEvents: [],
+        },
+      ]);
 
       await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
         ConflictException,

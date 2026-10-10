@@ -14,10 +14,15 @@ import {
   type ApplicationProcessState,
 } from './application-process.policy';
 import type { AttentionAudience } from '../application-attention/application-pending-action';
+import { ApplicationAdmissionService } from './application-admission.service';
+import { ApplicationAdmissionResponseDto } from './dto/application-admission-response.dto';
 
 @Injectable()
 export class ApplicationLifecycleReadService {
-  constructor(private readonly eligibility: EligibilityService) {}
+  constructor(
+    private readonly eligibility: EligibilityService,
+    private readonly admissionService: ApplicationAdmissionService,
+  ) {}
 
   async capabilities(
     tx: Prisma.TransactionClient,
@@ -26,6 +31,7 @@ export class ApplicationLifecycleReadService {
       applicantId: string;
       listingId: string;
       publicReason: ApplicationRejectionReason | null;
+      createdAt: Date;
     },
     audience: AttentionAudience,
     asOf: Date,
@@ -57,7 +63,8 @@ export class ApplicationLifecycleReadService {
       application.status === ApplicationStatus.REJECTED &&
       application.publicReason === ApplicationRejectionReason.NOT_SELECTED &&
       application.listing.status === ListingStatus.PUBLISHED &&
-      curationAllowed
+      curationAllowed &&
+      !(await this.admissionService.hasNewerAttempt(tx, application))
     ) {
       const listing = await tx.listing.findUniqueOrThrow({
         where: { id: application.listingId },
@@ -85,6 +92,47 @@ export class ApplicationLifecycleReadService {
       });
       canRestore = this.eligibility.evaluateCriteria(listing, profile).canApply;
     }
+    let admission: ApplicationAdmissionResponseDto | undefined;
+    if (!provider) {
+      const listing = await tx.listing.findUniqueOrThrow({
+        where: { id: application.listingId },
+        select: {
+          status: true,
+          minimumHouseholdNetIncome: true,
+          schufaRequired: true,
+          incomeProofRequired: true,
+          suitableForPeopleCount: true,
+          petsPolicy: true,
+          smokingPolicy: true,
+        },
+      });
+      const profile = await tx.applicantProfile.findUnique({
+        where: { applicantId: application.applicantId },
+        select: {
+          householdNetIncome: true,
+          schufaAvailable: true,
+          incomeProofAvailable: true,
+          adultsCount: true,
+          childrenCount: true,
+          peopleCount: true,
+          hasPets: true,
+          isSmoker: true,
+        },
+      });
+      const histories = await this.admissionService.historyForListings(
+        tx,
+        application.applicantId,
+        [application.listingId],
+      );
+      admission = new ApplicationAdmissionResponseDto(
+        this.admissionService.evaluate(
+          histories.get(application.listingId) ?? [],
+          listing.status,
+          this.eligibility.evaluateCriteria(listing, profile).canApply,
+          asOf,
+        ),
+      );
+    }
     return {
       canWithdraw: !provider && applicationCanWithdraw(application.status),
       canReject:
@@ -94,6 +142,7 @@ export class ApplicationLifecycleReadService {
       canRestore,
       canSelectForRental:
         provider && applicationProcessAllowsMutation(application),
+      ...(admission ? { admission } : {}),
     };
   }
 }

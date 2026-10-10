@@ -8,19 +8,19 @@ Application HTTP contracts are documented in [API](api.md#applications). This pa
 
 Application statuses are `ACTIVE`, `WAITING`, `REJECTED`, `WITHDRAWN`, and `ACCEPTED`.
 
-Application terminal states are `REJECTED`, `WITHDRAWN`, `ACCEPTED` and listing `RENTED`. These states serve as the authoritative source for downstream features such as view restrictions and chat availability. `WITHDRAWN` is terminal for the row it marks, but it is the only terminal state that allows a new application row to be created afterwards; `REJECTED` and `ACCEPTED` block re-applying.
+Only `ACTIVE` and `WAITING` are current/live application attempts. `REJECTED`, `WITHDRAWN` and `ACCEPTED` end the application process; listing `RENTED` also closes it. `ACCEPTED` and `LISTING_RENTED` rejections continue blocking fresh submissions. Rejected history is retained, while permitted re-submissions create new rows. Provider restoration is a separate same-row exception for `NOT_SELECTED`.
 
 ## Eligibility authority
 
 `GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns `canApply`, `reasons`, `warnings` and `evaluatedAt`. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
 
-`POST /api/v1/listings/:id/apply` always recalculates eligibility from current database data inside the same transaction that creates the application. A previous frontend eligibility result is never trusted. A rejected application returns `422` with the same explainable payload, where `evaluatedAt` is the timestamp of the evaluation that caused the rejection.
+`POST /api/v1/listings/:id/apply` evaluates admission history and recalculates eligibility from current database data inside the same Serializable transaction that creates the application, under the existing listing lock. A previous frontend eligibility result is never trusted. An ineligible submission returns `422` with the explainable eligibility payload and creates no application row.
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 
 ## Apply
 
-The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING`. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. A duplicate live (`ACTIVE` or `WAITING`) application for the same listing returns `409`. Only a previous `WITHDRAWN` application allows re-applying; `REJECTED` and `ACCEPTED` applications remain terminal and also return `409` on a new application.
+The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING`. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. A duplicate live (`ACTIVE` or `WAITING`) application returns `409`; the database partial unique index continues enforcing one live row per applicant/listing. Historical admission restrictions are enforced by the applications domain.
 
 ## Withdraw
 
@@ -28,7 +28,19 @@ The first five eligible applications are `ACTIVE`; later eligible applications a
 
 ## Re-apply after WITHDRAWN
 
-Withdrawing no longer permanently blocks re-applying. `POST /api/v1/listings/:id/apply` creates a new application row with a new `id` and a new `queueOrder` when the applicant's most recent application for that listing is `WITHDRAWN`. The previous `WITHDRAWN` row is kept unchanged as history. The new status is recalculated from the current listing state, so a re-application may be `ACTIVE` (if a slot is free) or `WAITING` (if the active limit is full). Re-applications are subject to the same `PUBLISHED` listing and eligibility checks as first-time applications. `REJECTED` and `ACCEPTED` applications remain terminal and block new applications.
+Withdrawing permits a fresh application subject to admission history, current eligibility and a `PUBLISHED` listing. Previous withdrawn and rejected rows remain unchanged. The new attempt has a new `id`, submission timestamp and `queueOrder`; it becomes `ACTIVE` if a slot is free or `WAITING` at its fresh queue position otherwise. Documents, conversations, viewings and activities remain attached to their original attempt.
+
+## Re-apply after rejection
+
+`PROFILE_NO_LONGER_ELIGIBLE` starts no cooldown. Profile recovery does not revive the old row; a currently eligible applicant may submit a fresh attempt, unless another admission restriction applies.
+
+Manual provider rejection (`NOT_SELECTED`) blocks fresh applicant submission for exactly 720 elapsed hours. The latest relevant provider rejection across all attempts for the applicant/listing pair governs expiry. At the exact expiry timestamp submission is allowed, subject to current eligibility, a `PUBLISHED` listing and no live or accepted application. Profile changes, subsequent withdrawal, same-row restoration or newer automatic rejection cannot erase an unexpired cooldown.
+
+The authoritative timestamp is the immutable `REJECTED_BY_PROVIDER` event with source `PROVIDER` and reason `NOT_SELECTED`. An identifiable `NOT_SELECTED` row without that event falls back to its actual `rejectedAt`. Missing reliable dates or an unidentified rejection block submission with `APPLICATION_HISTORY_REQUIRES_REVIEW`; `createdAt` and `updatedAt` are never used as cooldown dates. No cooldown deadline is persisted and no historical data migration is required.
+
+An active cooldown returns `409` with `code: APPLICATION_REAPPLICATION_COOLDOWN` and ISO timestamp `reapplyAvailableAt`. Current ineligibility remains `422`. `DRAFT`, `PAUSED`, `ARCHIVED` and `RENTED` listings do not accept fresh submissions. Rental-completion rejection (`LISTING_RENTED`) starts no manual-rejection cooldown and retains its existing blocking behavior.
+
+Listing summary/detail responses include `admission { hasApplicationHistory, currentApplicationId, currentApplicationStatus, canSubmitApplication, submissionBlockReason, reapplyAvailableAt }`. Existing `hasApplied`, `applicationStatus` and `publicReason` remain compatible historical indicators, not submission permission. `hasApplicationHistory` also includes withdrawn rows. Anonymous/non-applicant admission returns `AUTHENTICATION_REQUIRED`. Eligibility endpoints remain solely about requirement matching.
 
 ## Waiting queue promotion
 
@@ -47,6 +59,8 @@ Withdrawing an `ACTIVE` application calls the private `promoteWithinTransaction(
 `PATCH /api/v1/provider/applications/:id/restore` lets a provider bring back a `REJECTED` application whose `publicReason` is `NOT_SELECTED`. Owning providers get `404` for foreign or missing applications, and any other state (`WITHDRAWN`, `ACCEPTED`, or system rejections such as `LISTING_RENTED` and `PROFILE_NO_LONGER_ELIGIBLE`) returns `409`. The slot/queue decision is made transactionally under `Serializable` with listing and application row locks: if fewer than five `ACTIVE` applications exist the application returns to `ACTIVE` with a new `activeAt`; otherwise it is appended to the end of the listing's `WAITING` queue with a fresh `queueOrder`. On restore the current-state rejection fields (`rejectedAt`, `publicReason`) are cleared; a restore to `WAITING` also clears `activeAt`.
 
 Provider reject and restore transitions are recorded as append-only `ListingEvent` history rows so prior `ACTIVE` / `REJECTED` states are never lost, even when the current-state `Application` row is restored. A backend-enforced cooldown rejects rapid `REJECT`→`RESTORE`→`REJECT` toggling with `429` and `code: "PROVIDER_CURATION_RATE_LIMITED"` when a provider curation event for the same application happened within the last 60 seconds. History rows are immutable and never cascade-deleted by listing or application deletion, forming the foundation for the future Objektakte (full listing timeline).
+
+The applicant 720-hour cooldown does not apply to provider restoration. Restoring an obsolete attempt returns `409` with `APPLICATION_ATTEMPT_SUPERSEDED` when another attempt has a later submission timestamp, even if that newer attempt was withdrawn. Fresh submissions receive a timestamp strictly after their history to disambiguate rapidly repeated attempts. Provider workspace `canRestore` uses the same safeguard. Listing locks, Serializable retries and the live-only unique index protect concurrent fresh submission/restoration.
 
 ## Rent
 
