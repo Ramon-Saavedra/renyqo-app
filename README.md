@@ -200,4 +200,6 @@ The production container runs `node dist/main` with production dependencies only
 
 ## License
 
-See [LICENSE](./LICENSE).
+Copyright (c) 2026 Ramon Saavedra. All rights reserved.
+
+This repository is publicly accessible for source-code review and portfolio purposes only. No permission is granted to copy, reuse, modify, redistribute, sublicense, or commercially use the source code.
