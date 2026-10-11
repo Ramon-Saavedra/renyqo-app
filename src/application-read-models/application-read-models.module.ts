@@ -5,6 +5,7 @@ import { ApplicationAttentionModule } from '../application-attention/application
 import { ApplicationDocumentReadModule } from '../application-documents/application-document-read.module';
 import { ApplicationViewingReadModule } from '../application-viewings/application-viewing-read.module';
 import { ApplicationProcessReadModule } from '../applications/application-process-read.module';
+import { ApplicationsModule } from '../applications/applications.module';
 import { ProviderReadModelsController } from './provider-read-models.controller';
 import { ApplicantReadModelsController } from './applicant-read-models.controller';
 import { ApplicationWorkspaceQueryService } from './application-workspace-query.service';
@@ -20,6 +21,7 @@ import { ApplicationHistoryQueryService } from './application-history-query.serv
     ApplicationDocumentReadModule,
     ApplicationViewingReadModule,
     ApplicationProcessReadModule,
+    ApplicationsModule,
   ],
   controllers: [ProviderReadModelsController, ApplicantReadModelsController],
   providers: [

@@ -38,6 +38,7 @@ import { ApplicationWaitingPromotionService } from './application-waiting-promot
 import { ApplicationsService } from './applications.service';
 import { ProviderApplicationCurationService } from './provider-application-curation.service';
 import { ApplicationAdmissionService } from './application-admission.service';
+import { ProviderRecentExitsQueryService } from './provider-recent-exits-query.service';
 const LISTING_ID = '00000000-0000-4000-8000-000000000001';
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000002';
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000003';
@@ -98,6 +99,10 @@ const makeRawApplication = (
 
 describe('ApplicationsService', () => {
   let service: ApplicationsService;
+  const recentExits = {
+    select: jest.fn<ProviderRecentExitsQueryService['select']>(),
+    cards: jest.fn<ProviderRecentExitsQueryService['cards']>(),
+  };
   let eligibilityService: jest.Mocked<EligibilityService>;
   let activityService: jest.Mocked<
     Pick<ApplicationActivityService, 'appendWithinTransaction'>
@@ -138,6 +143,8 @@ describe('ApplicationsService', () => {
   };
 
   beforeEach(async () => {
+    recentExits.select.mockReset();
+    recentExits.cards.mockReset();
     prismaMock = {
       listing: {
         findUnique: jest.fn<(args?: unknown) => Promise<Listing | null>>(),
@@ -181,6 +188,7 @@ describe('ApplicationsService', () => {
         ApplicationLifecycleService,
         ApplicationAdmissionService,
         ApplicationProcessQueryService,
+        { provide: ProviderRecentExitsQueryService, useValue: recentExits },
         ApplicationTransactionService,
         ApplicationWaitingPromotionService,
         ProviderApplicationCurationService,
@@ -1807,88 +1815,67 @@ describe('ApplicationsService', () => {
   });
 
   describe('findExitedByListing', () => {
-    it('returns exited applications that were once active for an owned listing', async () => {
-      const exitedApplication = {
-        id: '00000000-0000-4000-8000-000000000040',
+    it('returns the shared recent-exit projection inside a consistent read transaction', async () => {
+      const projection = {
+        id: APPLICATION_ID,
         listingId: LISTING_ID,
-        status: 'rejected',
-        publicReason: 'not_selected',
+        status: ApplicationStatus.WITHDRAWN,
+        publicReason: null,
         activeAt: new Date('2024-05-01'),
-        rejectedAt: new Date('2024-06-01'),
-        withdrawnAt: null,
-        applicantName: 'Max Mover',
-        peopleCount: 3,
-        introduction: 'A short introduction.',
+        exitedAt: new Date('2024-06-01'),
+      };
+      const card = {
+        ...projection,
+        canRestore: false,
+        createdAt: new Date('2024-04-01'),
+        listing: { status: ListingStatus.PUBLISHED },
+        applicant: { name: 'Max Mover', profile: null },
       };
       prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
-      prismaMock.$queryRaw.mockResolvedValue([exitedApplication]);
-      prismaMock.application.count.mockResolvedValue(1);
-
-      const result = await service.findExitedByListing(LISTING_ID, PROVIDER_ID);
-
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0].id).toBe(exitedApplication.id);
-      expect(result.items[0].status).toBe(ApplicationStatus.REJECTED);
-      expect(result.items[0].publicReason).toBe(
-        ApplicationRejectionReason.NOT_SELECTED,
+      recentExits.select.mockResolvedValue(
+        new Map([[LISTING_ID, { items: [projection], totalCount: 7 }]]),
       );
-      expect(result.items[0].activeAt).toEqual(new Date('2024-05-01'));
-      expect(result.items[0].applicant.name).toBe('Max Mover');
-      expect(result.items[0].applicant.profile).toEqual({
-        peopleCount: 3,
-        introduction: 'A short introduction.',
-      });
-      expect(result.items[0].exitedAt).toEqual(new Date('2024-06-01'));
-      expect(result.totalCount).toBe(1);
-      expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
-        where: { id: LISTING_ID, providerId: PROVIDER_ID },
-        select: { id: true },
-      });
-      expect(prismaMock.$queryRaw).toHaveBeenCalled();
-      const queryArgs = prismaMock.$queryRaw.mock.calls[0];
-      expect(String(queryArgs?.[0])).toContain('LIMIT');
-      expect(String(queryArgs?.[0])).toContain('ap.people_count');
-      expect(String(queryArgs?.[0])).toContain('ap.introduction');
-      expect(String(queryArgs?.[0])).toContain('a.active_at AS "activeAt"');
-      expect(String(queryArgs?.[0])).not.toContain('ap.household_net_income');
-      expect(String(queryArgs?.[0])).not.toContain('ap.schufa_available');
-      expect(String(queryArgs?.[0])).not.toContain('ap.income_proof_available');
-      expect(queryArgs).toContain(LISTING_ID);
-      expect(queryArgs).toContain(5);
-      expect(prismaMock.application.count).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            listingId: LISTING_ID,
-            activeAt: { not: null },
-            status: {
-              in: [ApplicationStatus.WITHDRAWN, ApplicationStatus.REJECTED],
-            },
-          }),
-        }),
+      recentExits.cards.mockResolvedValue([card]);
+      expect(
+        await service.findExitedByListing(LISTING_ID, PROVIDER_ID),
+      ).toEqual({ items: [card], totalCount: 7 });
+      expect(prismaMock.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: 'RepeatableRead' },
+      );
+      expect(recentExits.select).toHaveBeenCalledWith(
+        expect.any(Object),
+        PROVIDER_ID,
+        [LISTING_ID],
+      );
+      expect(recentExits.cards).toHaveBeenCalledWith(
+        expect.any(Object),
+        PROVIDER_ID,
+        [projection],
+        expect.any(Date),
       );
     });
 
-    it('throws NotFoundException when listing does not belong to provider', async () => {
+    it('rejects foreign listing access before selecting or hydrating identities', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
-
       await expect(
         service.findExitedByListing(LISTING_ID, PROVIDER_ID),
       ).rejects.toThrow(NotFoundException);
-      expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
-      expect(prismaMock.application.count).not.toHaveBeenCalled();
+      expect(recentExits.select).not.toHaveBeenCalled();
+      expect(recentExits.cards).not.toHaveBeenCalled();
     });
 
-    it('returns empty items and zero totalCount when no exited applications exist', async () => {
+    it('returns zero when no latest qualifying attempt exists', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
-      prismaMock.$queryRaw.mockResolvedValue([]);
-      prismaMock.application.count.mockResolvedValue(0);
-
-      const result = await service.findExitedByListing(LISTING_ID, PROVIDER_ID);
-
-      expect(result).toEqual({ items: [], totalCount: 0 });
+      recentExits.select.mockResolvedValue(
+        new Map([[LISTING_ID, { items: [], totalCount: 0 }]]),
+      );
+      recentExits.cards.mockResolvedValue([]);
+      expect(
+        await service.findExitedByListing(LISTING_ID, PROVIDER_ID),
+      ).toEqual({ items: [], totalCount: 0 });
     });
   });
-
   describe('findBlockingApplicationsForListings', () => {
     it('returns an empty map when listingIds is empty without querying', async () => {
       const result = await service.findBlockingApplicationsForListings(

@@ -8,6 +8,7 @@ import type { ApplicationDocumentReadService } from '../../application-documents
 import type { ApplicationViewingReadService } from '../../application-viewings/application-viewing-read.service';
 import type { ApplicationLifecycleReadService } from '../../applications/application-lifecycle-read.service';
 import type { ApplicationActivityReadService } from '../../applications/application-activity-read.service';
+import type { ProviderRecentExitCardRecord } from '../../applications/provider-recent-exits-query.service';
 import type {
   ReadModelApplication,
   ProviderReadModelApplication,
@@ -87,7 +88,17 @@ export class ProviderApplicationCardDto {
   readonly publicReason: ReadModelApplication['publicReason'];
   readonly applicant: CompactApplicantDto;
   constructor(
-    application: ProviderReadModelApplication,
+    application: Pick<
+      ProviderReadModelApplication,
+      | 'id'
+      | 'status'
+      | 'activeAt'
+      | 'createdAt'
+      | 'rejectedAt'
+      | 'withdrawnAt'
+      | 'publicReason'
+      | 'applicant'
+    >,
     readonly attention: ApplicationAttentionSummaryDto,
   ) {
     this.applicationId = application.id;
@@ -97,6 +108,30 @@ export class ProviderApplicationCardDto {
     this.exitedAt = application.rejectedAt ?? application.withdrawnAt;
     this.publicReason = application.publicReason;
     this.applicant = new CompactApplicantDto(application.applicant);
+  }
+}
+
+export class ProviderRecentExitCardDto extends ProviderApplicationCardDto {
+  readonly canRestore: boolean;
+  constructor(
+    application: ProviderRecentExitCardRecord,
+    attention: ApplicationAttentionSummaryDto,
+  ) {
+    super(
+      {
+        ...application,
+        rejectedAt:
+          application.status === 'REJECTED' ? application.exitedAt : null,
+        withdrawnAt:
+          application.status === 'WITHDRAWN' ? application.exitedAt : null,
+        applicant: {
+          name: application.applicant.name,
+          profile: application.applicant.profile ?? null,
+        },
+      },
+      attention,
+    );
+    this.canRestore = application.canRestore;
   }
 }
 
@@ -137,7 +172,7 @@ export class ProviderListingApplicationOverviewDto extends ProviderListingOvervi
     readonly asOf: Date,
     summary: ProviderListingOverviewDto,
     readonly activeApplications: ProviderApplicationCardDto[],
-    readonly recentExits: ProviderApplicationCardDto[],
+    readonly recentExits: ProviderRecentExitCardDto[],
   ) {
     super(
       summary.listing,

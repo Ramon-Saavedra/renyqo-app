@@ -17,6 +17,7 @@ const makeExitedRecord = (
   publicReason: null,
   activeAt: new Date('2024-06-01'),
   exitedAt: new Date('2024-06-15'),
+  canRestore: false,
   applicant: {
     name: 'Anna Applicant',
     profile: { peopleCount: 3, introduction: 'A short introduction.' },
@@ -40,6 +41,7 @@ describe('ProviderExitedApplicationResponseDto', () => {
     expect(dto.introduction).toBe('A short introduction.');
     expect(dto.status).toBe(ApplicationStatus.WITHDRAWN);
     expect(dto.publicReason).toBeNull();
+    expect(dto.canRestore).toBe(false);
     expect(dto.activeAt).toEqual(new Date('2024-06-01'));
     expect(dto.exitedAt).toEqual(new Date('2024-06-15'));
   });

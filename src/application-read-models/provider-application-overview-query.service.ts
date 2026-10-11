@@ -6,6 +6,10 @@ import {
   AttentionTotalsDto,
 } from '../application-attention/dto/attention-response.dto';
 import { providerApplicationVisibility } from '../applications/application-process.policy';
+import {
+  ProviderRecentExitsQueryService,
+  type ProviderRecentExitSelection,
+} from '../applications/provider-recent-exits-query.service';
 import { ApplicationWorkspaceQueryService } from './application-workspace-query.service';
 import { ReadModelPageQueryDto } from './dto/read-model-input.dto';
 import {
@@ -13,6 +17,7 @@ import {
   ProviderListingOverviewDto,
   ProviderListingApplicationOverviewDto,
   ProviderApplicationCardDto,
+  ProviderRecentExitCardDto,
   ReadModelPageDto,
   ReadModelPaginationDto,
 } from './dto/read-model-response.dto';
@@ -28,7 +33,10 @@ import {
 
 @Injectable()
 export class ProviderApplicationOverviewQueryService {
-  constructor(private readonly workspace: ApplicationWorkspaceQueryService) {}
+  constructor(
+    private readonly workspace: ApplicationWorkspaceQueryService,
+    private readonly recentExits: ProviderRecentExitsQueryService,
+  ) {}
 
   private async summaries(
     tx: Prisma.TransactionClient,
@@ -36,6 +44,7 @@ export class ProviderApplicationOverviewQueryService {
     listings: { id: string }[],
     asOf: Date,
     retainIds: readonly string[] = [],
+    exitSelections?: ReadonlyMap<string, ProviderRecentExitSelection>,
   ) {
     const ids = listings.map((row) => row.id);
     const totals = new Map(
@@ -70,25 +79,11 @@ export class ProviderApplicationOverviewQueryService {
         else total.waiting = row._count._all;
       }
     }
-    const exits = await tx.application.groupBy({
-      by: ['listingId'],
-      where: {
-        AND: [
-          providerApplicationVisibility(userId),
-          {
-            listingId: { in: ids },
-            activeAt: { not: null },
-            status: {
-              in: [ApplicationStatus.REJECTED, ApplicationStatus.WITHDRAWN],
-            },
-          },
-        ],
-      },
-      _count: { _all: true },
-    });
-    for (const row of exits) {
-      const total = totals.get(row.listingId);
-      if (total) total.exited = row._count._all;
+    const exits =
+      exitSelections ?? (await this.recentExits.select(tx, userId, ids));
+    for (const [listingId, selection] of exits) {
+      const total = totals.get(listingId);
+      if (total) total.exited = selection.totalCount;
     }
     let cursor: string | undefined;
     for (;;) {
@@ -216,31 +211,29 @@ export class ProviderApplicationOverviewQueryService {
           orderBy: [{ activeAt: 'asc' }, { id: 'asc' }],
           take: 5,
         });
-        const exits = await tx.$queryRaw<{ id: string }[]>`
-        SELECT id FROM applications WHERE listing_id = ${listingId}::uuid AND active_at IS NOT NULL AND status IN ('rejected', 'withdrawn')
-        ORDER BY COALESCE(rejected_at, withdrawn_at) DESC NULLS LAST, id DESC LIMIT 5
-      `;
-        const exited = exits.length
-          ? await tx.application.findMany({
-              where: {
-                AND: [
-                  providerApplicationVisibility(userId),
-                  { id: { in: exits.map((row) => row.id) } },
-                ],
-              },
-              select: providerApplicationSelect,
-            })
-          : [];
-        const exitOrder = new Map(exits.map((row, index) => [row.id, index]));
-        exited.sort(
-          (a, b) => (exitOrder.get(a.id) ?? 0) - (exitOrder.get(b.id) ?? 0),
+        const exits = await this.recentExits.select(tx, userId, [listingId]);
+        const selection = exits.get(listingId);
+        if (!selection) throw new Error('Missing recent-exit selection');
+        const exited = await this.recentExits.cards(
+          tx,
+          userId,
+          selection.items,
+          asOf,
         );
+        const exitFacts =
+          await this.workspace.attention.composeWithinTransaction(
+            tx,
+            exited,
+            'provider',
+            asOf,
+          );
         const summaries = await this.summaries(
           tx,
           userId,
           [listing],
           asOf,
-          [...active, ...exited].map((row) => row.id),
+          active.map((row) => row.id),
+          exits,
         );
         const totals = summaries.totals.get(listingId);
         if (!totals) throw new Error('Missing listing summary');
@@ -264,7 +257,17 @@ export class ProviderApplicationOverviewQueryService {
             ),
           ),
           cards(active),
-          cards(exited),
+          exited.map((row) => {
+            const attention = exitFacts.attention.get(row.id);
+            if (!attention) throw new Error('Missing recent-exit attention');
+            return new ProviderRecentExitCardDto(
+              row,
+              new ApplicationAttentionSummaryDto(
+                attention.pendingActionCount,
+                attention.actionableUnreadMessageCount,
+              ),
+            );
+          }),
         );
       },
       { isolationLevel: 'RepeatableRead' },

@@ -219,6 +219,7 @@ describe('ProviderApplicationsController', () => {
         publicReason: ApplicationRejectionReason.NOT_SELECTED,
         activeAt: new Date('2024-05-01'),
         exitedAt: new Date('2024-06-01'),
+        canRestore: true,
         applicant: { name: 'Anna Applicant' },
       };
       applicationsService.findExitedByListing.mockResolvedValue({

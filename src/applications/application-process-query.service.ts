@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ApplicantProfile, Application } from '../generated/prisma/client';
 import {
-  ApplicationRejectionReason,
   ApplicationStatus,
   ListingStatus,
   PetsPolicy,
@@ -9,6 +8,7 @@ import {
 } from '../generated/prisma/enums';
 import type { EligibilityWarning } from '../eligibility/dto/eligibility-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { ProviderRecentExitsQueryService } from './provider-recent-exits-query.service';
 import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
 import { providerApplicationVisibility } from './application-process.policy';
 import { BLOCKING_APPLICATION_STATUSES } from './blocking-application-statuses';
@@ -20,8 +20,6 @@ import {
   ApplicationAdmissionService,
   type ApplicationAdmission,
 } from './application-admission.service';
-
-const EXITED_APPLICATIONS_LIMIT = 5;
 
 function computeProviderActiveApplicantWarnings(
   profile: Pick<ApplicantProfile, 'hasPets' | 'isSmoker'> | null,
@@ -58,6 +56,7 @@ export class ApplicationProcessQueryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly admissionService: ApplicationAdmissionService,
+    private readonly recentExits: ProviderRecentExitsQueryService,
   ) {}
 
   async findAdmissionForListings(
@@ -252,123 +251,31 @@ export class ApplicationProcessQueryService {
     listingId: string,
     providerId: string,
   ): Promise<{ items: ProviderExitedApplicationRecord[]; totalCount: number }> {
-    const listing = await this.prisma.listing.findFirst({
-      where: { id: listingId, providerId },
-      select: { id: true },
-    });
-
-    if (!listing) {
-      throw new NotFoundException('Listing not found');
-    }
-
-    type ExitedApplicationRow = {
-      id: string;
-      listingId: string;
-      status: string;
-      publicReason: string | null;
-      activeAt: Date;
-      rejectedAt: Date | null;
-      withdrawnAt: Date | null;
-      applicantName: string;
-      peopleCount: number | null;
-      introduction: string | null;
-    };
-
-    const [rows, totalCount] = await Promise.all([
-      this.prisma.$queryRaw<ExitedApplicationRow[]>`
-        SELECT
-          a.id,
-          a.listing_id AS "listingId",
-          a.status,
-          a.public_reason AS "publicReason",
-          a.active_at AS "activeAt",
-          a.rejected_at AS "rejectedAt",
-          a.withdrawn_at AS "withdrawnAt",
-          u.name AS "applicantName",
-          ap.people_count AS "peopleCount",
-          ap.introduction AS "introduction"
-        FROM "applications" AS a
-        JOIN "users" AS u ON u.id = a.applicant_id
-        LEFT JOIN "applicant_profiles" AS ap ON ap.applicant_id = a.applicant_id
-        WHERE a.listing_id = ${listingId}::uuid
-          AND a.active_at IS NOT NULL
-          AND a.status IN ('withdrawn', 'rejected')
-        ORDER BY COALESCE(a.rejected_at, a.withdrawn_at) DESC NULLS LAST, a.id DESC
-        LIMIT ${EXITED_APPLICATIONS_LIMIT}
-      `,
-      this.prisma.application.count({
-        where: {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const asOf = new Date();
+        const listing = await tx.listing.findFirst({
+          where: { id: listingId, providerId },
+          select: { id: true },
+        });
+        if (!listing) throw new NotFoundException('Listing not found');
+        const selections = await this.recentExits.select(tx, providerId, [
           listingId,
-          activeAt: { not: null },
-          status: {
-            in: [ApplicationStatus.WITHDRAWN, ApplicationStatus.REJECTED],
-          },
-        },
-      }),
-    ]);
-
-    const mapStatus = (value: string): ApplicationStatus => {
-      switch (value) {
-        case 'withdrawn':
-          return ApplicationStatus.WITHDRAWN;
-        case 'rejected':
-          return ApplicationStatus.REJECTED;
-        default:
-          throw new Error(`Unexpected exited application status: ${value}`);
-      }
-    };
-
-    const mapReason = (
-      value: string | null,
-    ): ApplicationRejectionReason | null => {
-      if (value === null) {
-        return null;
-      }
-
-      switch (value) {
-        case 'not_selected':
-          return ApplicationRejectionReason.NOT_SELECTED;
-        case 'listing_rented':
-          return ApplicationRejectionReason.LISTING_RENTED;
-        case 'profile_no_longer_eligible':
-          return ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE;
-        default:
-          throw new Error(
-            `Unexpected exited application rejection reason: ${value}`,
-          );
-      }
-    };
-
-    const items = rows.map((row) => {
-      const exitedAt = row.rejectedAt ?? row.withdrawnAt;
-
-      if (!exitedAt) {
-        throw new Error(
-          `Exited application ${row.id} has neither rejectedAt nor withdrawnAt`,
-        );
-      }
-
-      return {
-        id: row.id,
-        listingId: row.listingId,
-        status: mapStatus(row.status),
-        publicReason: mapReason(row.publicReason),
-        activeAt: row.activeAt,
-        exitedAt,
-        applicant: {
-          name: row.applicantName,
-          profile:
-            row.peopleCount === null && row.introduction === null
-              ? null
-              : {
-                  peopleCount: row.peopleCount,
-                  introduction: row.introduction,
-                },
-        },
-      };
-    });
-
-    return { items, totalCount: Number(totalCount) };
+        ]);
+        const selection = selections.get(listingId);
+        if (!selection) throw new Error('Missing recent-exit selection');
+        return {
+          items: await this.recentExits.cards(
+            tx,
+            providerId,
+            selection.items,
+            asOf,
+          ),
+          totalCount: selection.totalCount,
+        };
+      },
+      { isolationLevel: 'RepeatableRead' },
+    );
   }
 
   private async assertOwnedListing(

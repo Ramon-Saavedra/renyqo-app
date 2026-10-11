@@ -14,6 +14,7 @@ export type ProviderExitedApplicationRecord = Pick<
     profile?: Pick<ApplicantProfile, 'peopleCount' | 'introduction'> | null;
   };
   exitedAt: Date;
+  canRestore: boolean;
 };
 
 export class ProviderExitedApplicationResponseDto {
@@ -26,6 +27,7 @@ export class ProviderExitedApplicationResponseDto {
   readonly publicReason: ApplicationRejectionReason | null;
   readonly activeAt: Date;
   readonly exitedAt: Date;
+  readonly canRestore: boolean;
 
   constructor(application: ProviderExitedApplicationRecord) {
     this.id = application.id;
@@ -37,6 +39,7 @@ export class ProviderExitedApplicationResponseDto {
     this.publicReason = application.publicReason;
     this.activeAt = application.activeAt;
     this.exitedAt = application.exitedAt;
+    this.canRestore = application.canRestore;
   }
 }
 

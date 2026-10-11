@@ -24,6 +24,25 @@ export class ApplicationLifecycleReadService {
     private readonly admissionService: ApplicationAdmissionService,
   ) {}
 
+  restoreAllowed(
+    application: Pick<ApplicationProcessState, 'status' | 'listing'> & {
+      publicReason: ApplicationRejectionReason | null;
+    },
+    lastCurationAt: Date | null,
+    hasNewerAttempt: boolean,
+    eligible: boolean,
+    asOf: Date,
+  ): boolean {
+    return (
+      application.status === ApplicationStatus.REJECTED &&
+      application.publicReason === ApplicationRejectionReason.NOT_SELECTED &&
+      application.listing.status === ListingStatus.PUBLISHED &&
+      providerCurationAllowed(lastCurationAt, asOf) &&
+      !hasNewerAttempt &&
+      eligible
+    );
+  }
+
   async capabilities(
     tx: Prisma.TransactionClient,
     application: ApplicationProcessState & {
@@ -60,10 +79,13 @@ export class ApplicationLifecycleReadService {
     let canRestore = false;
     if (
       provider &&
-      application.status === ApplicationStatus.REJECTED &&
-      application.publicReason === ApplicationRejectionReason.NOT_SELECTED &&
-      application.listing.status === ListingStatus.PUBLISHED &&
-      curationAllowed &&
+      this.restoreAllowed(
+        application,
+        last?.occurredAt ?? null,
+        false,
+        true,
+        asOf,
+      ) &&
       !(await this.admissionService.hasNewerAttempt(tx, application))
     ) {
       const listing = await tx.listing.findUniqueOrThrow({
@@ -90,7 +112,13 @@ export class ApplicationLifecycleReadService {
           isSmoker: true,
         },
       });
-      canRestore = this.eligibility.evaluateCriteria(listing, profile).canApply;
+      canRestore = this.restoreAllowed(
+        application,
+        last?.occurredAt ?? null,
+        false,
+        this.eligibility.evaluateCriteria(listing, profile).canApply,
+        asOf,
+      );
     }
     let admission: ApplicationAdmissionResponseDto | undefined;
     if (!provider) {
