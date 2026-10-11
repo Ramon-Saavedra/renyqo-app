@@ -1,7 +1,10 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
+import type { Prisma } from '../generated/prisma/client';
 import {
   ApplicationRejectionReason,
   ApplicationStatus,
+  ListingEventType,
+  ListingEventSource,
   ListingStatus,
 } from '../generated/prisma/enums';
 import {
@@ -23,7 +26,9 @@ const row = (
   publicReason: ApplicationRejectionReason.NOT_SELECTED,
   rejectedAt,
   createdAt: new Date('2026-02-01T12:00:00Z'),
-  listingEvents: [{ occurredAt: rejectedAt }],
+  listingEvents: [
+    { type: ListingEventType.REJECTED_BY_PROVIDER, occurredAt: rejectedAt },
+  ],
   ...overrides,
 });
 const evaluate = (
@@ -34,6 +39,45 @@ const evaluate = (
 ) => service.evaluate(history, status, eligible, asOf);
 
 describe('Application admission', () => {
+  it('loads the latest provider curation event separately for each attempt', async () => {
+    const rows = [row(), row({ id: 'attempt-2' })];
+    const findMany = jest
+      .fn<
+        (
+          args: Prisma.ApplicationFindManyArgs,
+        ) => Promise<ApplicationAdmissionHistory[]>
+      >()
+      .mockResolvedValue(rows);
+    const tx = {
+      application: { findMany },
+    } as unknown as Prisma.TransactionClient;
+    const history = await service.historyForListings(tx, 'applicant-1', [
+      'listing-1',
+    ]);
+    expect(history.get('listing-1')).toEqual(rows);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { applicantId: 'applicant-1', listingId: { in: ['listing-1'] } },
+        select: expect.objectContaining({
+          listingEvents: {
+            where: {
+              type: {
+                in: [
+                  ListingEventType.REJECTED_BY_PROVIDER,
+                  ListingEventType.RESTORED_BY_PROVIDER,
+                ],
+              },
+              source: ListingEventSource.PROVIDER,
+              reason: ApplicationRejectionReason.NOT_SELECTED,
+            },
+            select: { type: true, occurredAt: true },
+            orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+          },
+        }),
+      }),
+    );
+  });
   it('allows a recovered eligibility rejection without reopening the old attempt', () => {
     const history = [
       row({
@@ -105,23 +149,120 @@ describe('Application admission', () => {
     },
   );
 
-  it('keeps cooldown after same-row restoration clears rejection fields', () => {
+  it('cancels cooldown after same-row restoration and withdrawal', () => {
     expect(
       evaluate([
         row({
           status: ApplicationStatus.WITHDRAWN,
           publicReason: null,
           rejectedAt: null,
+          listingEvents: [
+            {
+              type: ListingEventType.RESTORED_BY_PROVIDER,
+              occurredAt: new Date(rejectedAt.getTime() + 60_000),
+            },
+          ],
         }),
       ]).reapplyAvailableAt,
-    ).toEqual(expiry);
+    ).toBeNull();
   });
+
+  it('uses current eligibility after restoration and automatic rejection', () => {
+    const history = [
+      row({
+        publicReason: ApplicationRejectionReason.PROFILE_NO_LONGER_ELIGIBLE,
+        listingEvents: [
+          {
+            type: ListingEventType.RESTORED_BY_PROVIDER,
+            occurredAt: rejectedAt,
+          },
+        ],
+      }),
+    ];
+    expect(evaluate(history, rejectedAt, false)).toMatchObject({
+      submissionBlockReason: 'APPLICANT_NOT_ELIGIBLE',
+      reapplyAvailableAt: null,
+    });
+    expect(evaluate(history).canSubmitApplication).toBe(true);
+  });
+
+  it('does not revive cancelled cooldown through stale legacy rejection fields', () => {
+    const restored = row({
+      status: ApplicationStatus.WITHDRAWN,
+      listingEvents: [
+        { type: ListingEventType.RESTORED_BY_PROVIDER, occurredAt: rejectedAt },
+      ],
+    });
+    expect(evaluate([restored])).toMatchObject({
+      canSubmitApplication: true,
+      reapplyAvailableAt: null,
+    });
+    expect(
+      evaluate([row({ ...restored, status: ApplicationStatus.REJECTED })])
+        .submissionBlockReason,
+    ).toBe('APPLICATION_HISTORY_REQUIRES_REVIEW');
+  });
+
+  it('cancels only the restored attempt across multiple historical attempts', () => {
+    const restored = row({
+      id: 'attempt-2',
+      status: ApplicationStatus.WITHDRAWN,
+      publicReason: null,
+      rejectedAt: null,
+      listingEvents: [
+        {
+          type: ListingEventType.RESTORED_BY_PROVIDER,
+          occurredAt: new Date(rejectedAt.getTime() + 60_000),
+        },
+      ],
+    });
+    expect(evaluate([restored, row()])).toMatchObject({
+      submissionBlockReason: 'APPLICATION_REAPPLICATION_COOLDOWN',
+      reapplyAvailableAt: expiry,
+    });
+    const newerWithdrawn = row({
+      id: 'attempt-3',
+      status: ApplicationStatus.WITHDRAWN,
+      publicReason: null,
+      rejectedAt: null,
+      listingEvents: [],
+    });
+    expect(evaluate([newerWithdrawn, restored]).canSubmitApplication).toBe(
+      true,
+    );
+  });
+
+  it.each([ApplicationStatus.ACTIVE, ApplicationStatus.WAITING])(
+    'blocks duplicates after restoration to %s without cooldown',
+    (status) => {
+      expect(
+        evaluate([
+          row({
+            status,
+            publicReason: null,
+            rejectedAt: null,
+            listingEvents: [
+              {
+                type: ListingEventType.RESTORED_BY_PROVIDER,
+                occurredAt: rejectedAt,
+              },
+            ],
+          }),
+        ]),
+      ).toMatchObject({
+        submissionBlockReason: 'CURRENT_APPLICATION_EXISTS',
+        reapplyAvailableAt: null,
+      });
+    },
+  );
 
   it('a repeated rejection restarts cooldown across attempts', () => {
     const later = new Date(expiry.getTime() + 10);
     const newer = row({
       id: 'attempt-2',
-      listingEvents: [{ occurredAt: later }],
+      listingEvents: [
+        { type: ListingEventType.REJECTED_BY_PROVIDER, occurredAt: later },
+      ],
       rejectedAt: later,
     });
     expect(evaluate([row(), newer], later).reapplyAvailableAt).toEqual(

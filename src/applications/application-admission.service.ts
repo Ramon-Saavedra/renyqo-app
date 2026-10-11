@@ -17,7 +17,7 @@ export type ApplicationAdmissionHistory = {
   publicReason: ApplicationRejectionReason | null;
   rejectedAt: Date | null;
   createdAt: Date;
-  listingEvents: { occurredAt: Date }[];
+  listingEvents: { type: ListingEventType; occurredAt: Date }[];
 };
 
 export type ApplicationSubmissionBlockReason =
@@ -59,12 +59,17 @@ export class ApplicationAdmissionService {
         createdAt: true,
         listingEvents: {
           where: {
-            type: ListingEventType.REJECTED_BY_PROVIDER,
+            type: {
+              in: [
+                ListingEventType.REJECTED_BY_PROVIDER,
+                ListingEventType.RESTORED_BY_PROVIDER,
+              ],
+            },
             source: ListingEventSource.PROVIDER,
             reason: ApplicationRejectionReason.NOT_SELECTED,
           },
-          select: { occurredAt: true },
-          orderBy: { occurredAt: 'desc' },
+          select: { type: true, occurredAt: true },
+          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
           take: 1,
         },
       },
@@ -94,10 +99,13 @@ export class ApplicationAdmissionService {
     for (const row of history) {
       const event = row.listingEvents[0];
       const rejection =
-        event?.occurredAt ??
-        (row.publicReason === ApplicationRejectionReason.NOT_SELECTED
-          ? row.rejectedAt
-          : null);
+        event !== undefined
+          ? event.type === ListingEventType.REJECTED_BY_PROVIDER
+            ? event.occurredAt
+            : null
+          : row.publicReason === ApplicationRejectionReason.NOT_SELECTED
+            ? row.rejectedAt
+            : null;
       if (rejection && (!latestRejection || rejection > latestRejection)) {
         latestRejection = rejection;
       }
