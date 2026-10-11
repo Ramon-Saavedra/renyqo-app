@@ -62,3 +62,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 prisma.config.js
 prisma.config.js.map
 prisma.config.d.ts
+
+# Local agent and automation instructions
+AGENTS.md
+CLAUDE.md
+.opencode/
+.automation/

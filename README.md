@@ -1,28 +1,57 @@
 # Renyqo Backend
 
-Application-scoped viewings support immutable proposal rounds, applicant change requests, attendance outcomes with audited correction, and final post-viewing interest. Group viewings may overlap across applications. Safe capabilities and derived next actions are documented in [Application Viewings](docs/application-viewings.md).
+Renyqo is a rental platform for the German market. This repository is its HTTP API.
 
-Backend API for Renyqo, a smart rental platform for the German rental market.
+Providers publish listings. Applicants discover published listings, compare them with their profile, and apply. The API then controls admission, a bounded active queue, provider decisions, one text conversation per application, requested documents, and viewings.
 
-Application re-submission distinguishes automatic eligibility rejection from manual provider rejection. Eligibility recovery permits a fresh attempt; manual `NOT_SELECTED` rejection imposes a 720-hour applicant cooldown. Successful provider restoration cancels that attempt's rejection cooldown; a later provider rejection starts a new cooldown. Provider restoration retains its existing capacity rules and 60-second throttle. Listing admission and applicant workspace capabilities expose submission permission separately from historical application state. See [Application lifecycle](docs/application-lifecycle.md).
+## Architecture
 
-Application attention derives audience-specific pending actions and operational unread badges from existing domain state. Five dedicated read APIs provide application details and provider/listing/applicant totals without persisted badge state. See [Application Attention](docs/application-attention.md) for contracts, privacy and batch-query semantics.
+- NestJS modules, REST under `/api/v1`, TypeScript strict
+- PostgreSQL 16 through Prisma ORM 7 and `@prisma/adapter-pg`
+- Server-side sessions stored in PostgreSQL
+- One codebase, two processes: the HTTP API and a document-verdict worker
+- Node.js 22 production image; local PostgreSQL from Docker Compose
 
-Optimized application read models provide compact provider listing overviews, applicant application cards and audience-specific workspaces in one consistent database snapshot. Activity, document request history and file attempts remain separately paginated. See [Application read models](docs/application-read-models.md) for contracts, compatibility and measured query behavior.
+Document verdict path:
 
-Provider recent exits show the newest terminal attempt of each previously active applicant who is currently out of the process. Re-entry removes stale exits; later withdrawal is projected from retained lifecycle history, including restoration to WAITING. Legacy and overview reads share counts, five-card ordering, privacy checks and authoritative `canRestore`. Capacity and queue behavior remain unchanged. See [Application lifecycle](docs/application-lifecycle.md#provider-recent-exits).
+```text
+Applicant upload → S3 → GuardDuty → EventBridge → SQS → NestJS worker → PostgreSQL finalization
+```
 
-## Stack
+The worker does not scan files. GuardDuty does. EventBridge delivers the scan result, and tagging-failure events, to an encrypted queue. The worker publishes a file only after a clean verdict for that exact object version. A separate recovery pass rechecks overdue processing attempts. See [Application documents](docs/application-documents.md).
 
-- NestJS
-- TypeScript strict mode
-- REST API first
-- PostgreSQL 16
-- Prisma ORM v7 with `@prisma/adapter-pg`
-- Session authentication with `express-session`, `connect-pg-simple`, `passport`, and `passport-local`
-- Password hashing with `bcrypt`
-- Environment and DTO validation with `@nestjs/config`, `class-validator`, and `class-transformer`
-- Listing image uploads with Cloudinary
+## Decisions
+
+- Sessions use `express-session`, `connect-pg-simple`, `passport`, and `passport-local`. Passwords are hashed with `bcrypt`. Public registration accepts only `applicant` and `provider`.
+- State-changing requests require the session CSRF token and an `Origin` or `Referer` that matches `FRONTEND_URL`.
+- Lifecycle changes, conversations, documents, and viewings share listing-before-application locks and Serializable transactions. Activity and listing events are append-only.
+- Eligibility compares the applicant profile with the listing rules and returns reasons. It does not produce a score.
+- Listing assistance sends provider text, PDF, or audio to OpenAI and returns a structured listing draft. CI uses typed stubs. Live evals are a separate script.
+- Attention counts and workspace capabilities are derived from current domain rows. There is no stored badge table.
+
+## Infrastructure in this repository
+
+- `docker-compose.yml` runs PostgreSQL 16 for local development.
+- `docker-compose.e2e.yml` provides the database used by end-to-end tests.
+- `Dockerfile` builds an image that runs `node dist/main` as a non-root user.
+- GitHub Actions runs format, lint, typecheck, unit tests, build, production dependency audit, CodeQL, dependency review, Prisma checks, end-to-end tests, and an image smoke test of `/api/v1/health`. The image check does not deploy.
+- `infra/application-documents.yaml` defines the private document bucket, GuardDuty plan, EventBridge rule, encrypted SQS queues, and scoped policies in `eu-central-1`. It does not create API or worker compute. Production document uploads require the Prisma migration and the CloudFormation template at `infra/application-documents.yaml`. Files stay inaccessible until the worker finalizes a clean verdict. The API returns 503 when document storage configuration is incomplete.
+- Listing images use Cloudinary. Password-reset email uses Amazon SES.
+
+## Application process
+
+- Viewings use immutable proposal rounds, applicant change requests, audited attendance corrections, and final interest. Group viewings may overlap across applications. See [Application viewings](docs/application-viewings.md).
+- A manual `NOT_SELECTED` rejection imposes a 720-hour re-submission cooldown. Eligibility recovery allows a fresh attempt without that cooldown. Successful provider restoration cancels the cooldown for that attempt. See [Application lifecycle](docs/application-lifecycle.md).
+- Recent exits show the newest terminal attempt of each previously active applicant who is currently out of the process. See [Provider recent exits](docs/application-lifecycle.md#provider-recent-exits).
+- Attention APIs derive pending actions and unread counts per audience. See [Application attention](docs/application-attention.md).
+- Read models return listing overviews, applicant cards, and workspaces from one database snapshot. Activity and document history stay paginated. See [Application read models](docs/application-read-models.md).
+- Each application has one text conversation, opened by the provider's first message. See [Application conversations](docs/api.md#application-conversations).
+
+## Follow-ups documented in the repository
+
+- Document retention and deletion, including identity documents and SCHUFA files, is not implemented. See [Application documents](docs/application-documents.md).
+- Configured rate limits are stored in memory per process. They are not shared across replicas. See [Security](docs/security.md#rate-limits).
+- Listing-event history is retained for a later full listing timeline. That timeline is not a module here. See [Application lifecycle](docs/application-lifecycle.md).
 
 ## Requirements
 
@@ -92,10 +121,6 @@ The `test/tsconfig.json` configuration extends the shared test configuration so 
 
 ## Testing
 
-Application conversations are scoped to a single application and opened by the provider's first text message. The backend enforces alternating turns, ownership, WAITING privacy and terminal-state restrictions. See [Conversation API](docs/api.md#application-conversations) and [Lifecycle rules](docs/application-lifecycle.md#application-conversations).
-
-Application documents are requested by the provider for one application. Applicants upload only requested PDF/JPEG/PNG files into a dedicated private, versioned S3 bucket in Frankfurt. GuardDuty scans them; EventBridge and encrypted Standard SQS deliver verdicts to a separate NestJS worker. Documents become downloadable only after clean finalization. See [Application documents](docs/application-documents.md) for API contracts, infrastructure, worker deployment, recovery and retention follow-up.
-
 Unit tests:
 
 ```bash
@@ -125,8 +150,11 @@ src/
   applicant-listing-actions/    Applicant saved listings and reports
   applicant-listing-summaries/  Applicant-safe listing summaries
   applicant-profile/            Applicant profile used for eligibility
+  application-attention/        Derived pending actions and unread totals
   application-conversation/     Application text conversations and messages
+  application-documents/        Requested documents, S3 uploads and scan worker
   application-read-models/      Compact overviews and application workspaces
+  application-viewings/         Viewing proposals, outcomes and interest
   applications/                 Listing applications
   auth/                         Session-based auth
   common/                       Shared guards and types
@@ -154,7 +182,10 @@ docker-compose.e2e.yml
 
 - [API](docs/api.md)
 - [Application lifecycle](docs/application-lifecycle.md)
+- [Application viewings](docs/application-viewings.md)
+- [Application attention](docs/application-attention.md)
 - [Application read models](docs/application-read-models.md)
+- [Application documents](docs/application-documents.md)
 - [Security](docs/security.md)
 - [Database](docs/database.md)
 
