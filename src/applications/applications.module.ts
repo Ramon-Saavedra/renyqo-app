@@ -7,6 +7,7 @@ import { ApplicationActionThrottlerStorage } from './application-action-throttle
 import { ApplicationActivityService } from './application-activity.service';
 import { ApplicationLifecycleService } from './application-lifecycle.service';
 import { ApplicationProcessQueryService } from './application-process-query.service';
+import { ProviderRecentExitsQueryService } from './provider-recent-exits-query.service';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicantApplicationsController } from './applicant-applications.controller';
@@ -29,6 +30,7 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
     ApplicationActivityService,
     ApplicationLifecycleService,
     ApplicationProcessQueryService,
+    ProviderRecentExitsQueryService,
     ApplicationTransactionService,
     ApplicationWaitingPromotionService,
     ProviderApplicationCurationService,
@@ -37,6 +39,7 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
     ApplicationActionThrottlerStorage,
   ],
   exports: [
+    ProviderRecentExitsQueryService,
     ApplicationsService,
     ApplicationLifecycleService,
     ApplicationActivityService,

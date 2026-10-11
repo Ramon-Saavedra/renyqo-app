@@ -443,11 +443,21 @@ describe('Application read models E2E', () => {
       data: { status: ApplicationStatus.WITHDRAWN, withdrawnAt: now },
     });
     for (let i = 0; i < 8; i++) {
+      const owner = await prisma.user.create({
+        data: {
+          name: 'Exited applicant',
+          email: `${randomUUID()}@e2e.renyqo.test`,
+          passwordHash: 'unusable-test-hash',
+          acceptedTermsAt: now,
+          acceptedPrivacyAt: now,
+        },
+      });
       await prisma.application.create({
         data: {
           listingId,
-          applicantId: applicant.id,
+          applicantId: owner.id,
           status: ApplicationStatus.REJECTED,
+          publicReason: ApplicationRejectionReason.NOT_SELECTED,
           activeAt: now,
           rejectedAt: now,
         },
@@ -503,6 +513,7 @@ describe('Application read models E2E', () => {
       where: { id: applicationId },
       data: {
         status: ApplicationStatus.WITHDRAWN,
+        activeAt: new Date(now.getTime() - 10000),
         withdrawnAt: new Date(now.getTime() - 9000),
       },
     });
@@ -531,16 +542,30 @@ describe('Application read models E2E', () => {
     const exits: { id: string; at: Date }[] = [];
     for (const seconds of [4, 6, 2, 6, 1, 5, 3]) {
       const at = new Date(now.getTime() + seconds * 1000);
+      const owner = await prisma.user.create({
+        data: {
+          name: 'Ordered exited applicant',
+          email: `${randomUUID()}@e2e.renyqo.test`,
+          passwordHash: 'unusable-test-hash',
+          acceptedTermsAt: now,
+          acceptedPrivacyAt: now,
+        },
+      });
       const row = await prisma.application.create({
         data: {
           listingId,
-          applicantId: applicant.id,
+          applicantId: owner.id,
           status:
             seconds % 2
               ? ApplicationStatus.WITHDRAWN
               : ApplicationStatus.REJECTED,
           activeAt: now,
-          ...(seconds % 2 ? { withdrawnAt: at } : { rejectedAt: at }),
+          ...(seconds % 2
+            ? { withdrawnAt: at }
+            : {
+                rejectedAt: at,
+                publicReason: ApplicationRejectionReason.NOT_SELECTED,
+              }),
         },
       });
       exits.push({ id: row.id, at });
@@ -1340,7 +1365,7 @@ describe('Application read models E2E', () => {
     const providerQuery = app.get(ProviderApplicationOverviewQueryService);
     await prisma.application.update({
       where: { id: applicationId },
-      data: { status: ApplicationStatus.WITHDRAWN },
+      data: { status: ApplicationStatus.WITHDRAWN, withdrawnAt: now },
     });
     const applicationIds = [applicationId];
     const results: {
@@ -1358,6 +1383,7 @@ describe('Application read models E2E', () => {
                 applicantId: applicant.id,
                 status: ApplicationStatus.WITHDRAWN,
                 activeAt: now,
+                withdrawnAt: now,
               },
             })
           ).id,
@@ -1395,10 +1421,15 @@ describe('Application read models E2E', () => {
       });
       expect(cards.totalCount).toBe(count);
       expect(cards.items.length).toBe(Math.min(count, 100));
-      expect(listings.items[0].exitedApplicationsCount).toBe(count);
+      expect(listings.items[0].exitedApplicationsCount).toBe(1);
       expect(
         [...applicantStatements, ...providerStatements].join(' '),
-      ).not.toMatch(/"body"|storage_key|password_hash|application_activities/);
+      ).not.toMatch(/"body"|storage_key|password_hash/);
+      expect(
+        providerStatements.filter((text) =>
+          /application_activities/.test(text),
+        ),
+      ).toHaveLength(1);
       expect(applicantStatements.length).toBeGreaterThan(0);
       expect(applicantStatements.length).toBeLessThanOrEqual(18);
       expect(providerStatements.length).toBeLessThanOrEqual(18);

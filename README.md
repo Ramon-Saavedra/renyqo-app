@@ -10,6 +10,8 @@ Application attention derives audience-specific pending actions and operational 
 
 Optimized application read models provide compact provider listing overviews, applicant application cards and audience-specific workspaces in one consistent database snapshot. Activity, document request history and file attempts remain separately paginated. See [Application read models](docs/application-read-models.md) for contracts, compatibility and measured query behavior.
 
+Provider recent exits show the newest terminal attempt of each previously active applicant who is currently out of the process. Re-entry removes stale exits; later withdrawal is projected from retained lifecycle history, including restoration to WAITING. Legacy and overview reads share counts, five-card ordering, privacy checks and authoritative `canRestore`. Capacity and queue behavior remain unchanged. See [Application lifecycle](docs/application-lifecycle.md#provider-recent-exits).
+
 ## Stack
 
 - NestJS

@@ -2386,7 +2386,7 @@ describe('Application Lifecycle E2E', () => {
       expect(exitedRecord).not.toHaveProperty('eligibility');
       expect(exitedRecord).not.toHaveProperty('score');
       expect(new Date(exitedRecord['exitedAt'] as string).getTime()).toBe(
-        withdrawnPersisted!.withdrawnAt!.getTime(),
+        withdrawalActivity[0].occurredAt.getTime(),
       );
     });
 
@@ -2556,12 +2556,34 @@ describe('Application Lifecycle E2E', () => {
 
       const baseTime = new Date('2024-06-01T00:00:00.000Z').getTime();
       await Promise.all(
-        entries.map((entry, index) =>
-          getPrisma().application.update({
+        entries.map(async (entry, index) => {
+          await getPrisma().application.update({
             where: { id: entry['id'] as string },
-            data: { withdrawnAt: new Date(baseTime + index * 60000) },
-          }),
-        ),
+            data: {
+              activeAt: new Date(baseTime - 1000),
+              withdrawnAt: new Date(baseTime + index * 60000),
+            },
+          });
+          await getPrisma().applicationActivity.updateMany({
+            where: {
+              applicationId: entry['id'] as string,
+              type: ApplicationActivityType.APPLICATION_WITHDRAWN,
+            },
+            data: { occurredAt: new Date(baseTime + index * 60000) },
+          });
+          await getPrisma().applicationActivity.updateMany({
+            where: {
+              applicationId: entry['id'] as string,
+              type: {
+                in: [
+                  ApplicationActivityType.APPLICATION_SUBMITTED,
+                  ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+                ],
+              },
+            },
+            data: { occurredAt: new Date(baseTime - 1000) },
+          });
+        }),
       );
 
       const exitedResponse = await providerAgent

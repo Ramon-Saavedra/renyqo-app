@@ -64,6 +64,14 @@ Provider reject and restore transitions are recorded as append-only `ListingEven
 
 The applicant 720-hour cooldown does not apply to provider restoration. Restoring an obsolete attempt returns `409` with `APPLICATION_ATTEMPT_SUPERSEDED` when another attempt has a later submission timestamp, even if that newer attempt was withdrawn. Fresh submissions receive a timestamp strictly after their history to disambiguate rapidly repeated attempts. Provider workspace `canRestore` uses the same safeguard. Listing locks, Serializable retries and the live-only unique index protect concurrent fresh submission/restoration.
 
+## Provider recent exits
+
+Recent exits describe applicants currently out of the process who previously participated as ACTIVE for that listing. The shared applications-domain projection excludes a pair when any attempt is ACTIVE or WAITING, selects its newest attempt by `createdAt` then `id` before terminal filtering, and admits only REJECTED or WITHDRAWN attempts with verified prior ACTIVE participation and a reliable exit transition. Superseded attempts never reappear. Lifecycle activities and provider events supply entry/exit history when current row dates were cleared; status-specific row timestamps remain a legacy fallback when transition history is absent. Missing or contradictory evidence is omitted rather than inventing dates or revealing never-active identities.
+
+Re-entry by submission or restoration removes the applicant from recent exits; a later exit returns only the newest attempt and latest exit. This includes restoration to WAITING followed by withdrawal, without changing WAITING visibility elsewhere. The bounded preview may identify a previously active applicant after a terminal waiting exit, but never while a current waiting attempt exists. Counts represent qualifying applicant/listing pairs. Cards are sorted by projected exit time descending then ID descending and limited to five after all selection/privacy rules. Legacy exits and both provider overviews share this predicate in consistent RepeatableRead snapshots.
+
+Recent-exit DTOs expose authoritative `canRestore`. Only current provider NOT_SELECTED rejection can be restorable, subject to published listing, eligibility, no newer attempt and the 60-second throttle. Withdrawal and system rejection always return false. Restoration mutations, active capacity, the five-active limit, waiting placement/order and promotion behavior are unchanged. No new persisted state or migration is needed.
+
 ## Rent
 
 `PATCH /api/v1/provider/listings/:id/rent` requires `{ "selectedApplicationId": "uuid" }`. The listing must be `PUBLISHED` or `PAUSED`, and the selected application must be `ACTIVE` and belong to the listing. In one atomic Serializable transaction:
