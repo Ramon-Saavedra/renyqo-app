@@ -4,7 +4,7 @@ Application-scoped viewings support immutable proposal rounds, applicant change 
 
 Backend API for Renyqo, a smart rental platform for the German rental market.
 
-Application re-submission distinguishes automatic eligibility rejection from manual provider rejection. Eligibility recovery permits a fresh attempt; manual `NOT_SELECTED` rejection imposes a 720-hour applicant cooldown. Provider restoration retains its existing capacity rules and 60-second throttle. Listing admission and applicant workspace capabilities expose submission permission separately from historical application state. See [Application lifecycle](docs/application-lifecycle.md).
+Application re-submission distinguishes automatic eligibility rejection from manual provider rejection. Eligibility recovery permits a fresh attempt; manual `NOT_SELECTED` rejection imposes a 720-hour applicant cooldown. Successful provider restoration cancels that attempt's rejection cooldown; a later provider rejection starts a new cooldown. Provider restoration retains its existing capacity rules and 60-second throttle. Listing admission and applicant workspace capabilities expose submission permission separately from historical application state. See [Application lifecycle](docs/application-lifecycle.md).
 
 Application attention derives audience-specific pending actions and operational unread badges from existing domain state. Five dedicated read APIs provide application details and provider/listing/applicant totals without persisted badge state. See [Application Attention](docs/application-attention.md) for contracts, privacy and batch-query semantics.
 
