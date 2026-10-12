@@ -180,21 +180,30 @@ export class ProviderRecentExitsQueryService {
             },
           },
         },
-        listingEvents: {
-          where: {
-            type: {
-              in: [
-                ListingEventType.REJECTED_BY_PROVIDER,
-                ListingEventType.RESTORED_BY_PROVIDER,
-              ],
-            },
-          },
-          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-          take: 1,
-          select: { occurredAt: true },
-        },
       },
     });
+    const latestEventAt = new Map<string, Date>();
+    if (applications.length) {
+      const events = await tx.listingEvent.findMany({
+        where: {
+          applicationId: { in: applications.map((row) => row.id) },
+          type: {
+            in: [
+              ListingEventType.REJECTED_BY_PROVIDER,
+              ListingEventType.RESTORED_BY_PROVIDER,
+            ],
+          },
+        },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        select: { applicationId: true, occurredAt: true },
+      });
+      for (const event of events) {
+        if (!event.applicationId || latestEventAt.has(event.applicationId)) {
+          continue;
+        }
+        latestEventAt.set(event.applicationId, event.occurredAt);
+      }
+    }
     const byId = new Map(applications.map((row) => [row.id, row]));
     return projections.map((projection) => {
       const application = byId.get(projection.id);
@@ -206,7 +215,7 @@ export class ProviderRecentExitsQueryService {
         listing: { status: application.listing.status },
         canRestore: this.lifecycle.restoreAllowed(
           application,
-          application.listingEvents[0]?.occurredAt ?? null,
+          latestEventAt.get(application.id) ?? null,
           false,
           this.eligibility.evaluateCriteria(application.listing, profile)
             .canApply,

@@ -44,9 +44,14 @@ import {
   ApplicationActivityActorType,
   ApplicationActivityVisibility,
   ApplicationRejectionReason,
+  ListingEventSource,
   ListingEventType,
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  flushProcessWarnings,
+  pgClientQueryOverlapWarnings,
+} from './e2e-environment';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
@@ -254,6 +259,8 @@ describe('Application read models E2E', () => {
           rmSync(tlsDirectory, { recursive: true, force: true });
       }
     }
+    await flushProcessWarnings();
+    expect(pgClientQueryOverlapWarnings()).toEqual([]);
   });
 
   function createApplication(ownerId = applicant.id) {
@@ -408,6 +415,48 @@ describe('Application read models E2E', () => {
       },
     });
   }
+
+  it('loads non-empty recent exits for both provider reads without overlapping pg queries', async () => {
+    const exitedAt = new Date(now.getTime() + 1_000);
+    await prisma.application.update({
+      where: { id: applicationId },
+      data: {
+        status: ApplicationStatus.REJECTED,
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+        activeAt: now,
+        rejectedAt: exitedAt,
+      },
+    });
+    await prisma.listingEvent.create({
+      data: {
+        listingId,
+        applicationId,
+        type: ListingEventType.REJECTED_BY_PROVIDER,
+        source: ListingEventSource.PROVIDER,
+        occurredAt: exitedAt,
+        reason: 'NOT_SELECTED',
+        payload: { fromStatus: 'ACTIVE', toStatus: 'REJECTED' },
+      },
+    });
+
+    const exited = await get(
+      'provider',
+      `listings/${listingId}/exited-applications`,
+    );
+    const overview = await get(
+      'provider',
+      `listings/${listingId}/application-overview`,
+    );
+    await flushProcessWarnings();
+
+    expect(rows(exited).map((row) => row['id'])).toContain(applicationId);
+    expect(exited['totalCount']).toBeGreaterThanOrEqual(1);
+    expect(
+      rows(overview, 'recentExits').map((row) => row['applicationId']),
+    ).toContain(applicationId);
+    expect(overview['exitedApplicationsCount']).toBeGreaterThanOrEqual(1);
+    expect(pgClientQueryOverlapWarnings()).toEqual([]);
+  });
 
   it('returns compact provider listing overview', async () => {
     const waitingApplicant = await register('applicant');
