@@ -32,7 +32,7 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./test/jest-e2e.json --passWithNoTests --runInBand",
+    "test:e2e": "node --require ./test/pg-client-query-overlap-warnings.cjs --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./test/jest-e2e.json --passWithNoTests --runInBand",
     "test:e2e:listing-assistance": "npm run test:e2e -- --runTestsByPath test/listing-assistance.e2e-spec.ts",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "eval:listing-assistance": "ts-node --project tsconfig.evals.json evals/listing-assistance/run.ts"

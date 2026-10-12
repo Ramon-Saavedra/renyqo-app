@@ -6,6 +6,7 @@ import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.
 import {
   ApplicationStatus,
   ApplicationRejectionReason,
+  ListingEventType,
   ListingStatus,
 } from '../generated/prisma/enums';
 import { ApplicationAdmissionService } from './application-admission.service';
@@ -63,6 +64,12 @@ describe('ProviderRecentExitsQueryService', () => {
     >();
   const findMany =
     jest.fn<(...args: unknown[]) => Promise<(typeof application)[]>>();
+  const eventFindMany =
+    jest.fn<
+      (
+        ...args: unknown[]
+      ) => Promise<{ applicationId: string | null; occurredAt: Date }[]>
+    >();
   const evaluate = jest.fn<EligibilityService['evaluateCriteria']>();
   let service: ProviderRecentExitsQueryService;
   let lifecycle: ApplicationLifecycleReadService;
@@ -71,6 +78,7 @@ describe('ProviderRecentExitsQueryService', () => {
   beforeEach(async () => {
     query.mockReset();
     findMany.mockReset();
+    eventFindMany.mockReset();
     evaluate.mockReset();
     evaluate.mockReturnValue(new EligibilityResponseDto(true, [], [], asOf));
     const module = await Test.createTestingModule({
@@ -84,7 +92,11 @@ describe('ProviderRecentExitsQueryService', () => {
         },
         {
           provide: PrismaService,
-          useValue: { $queryRaw: query, application: { findMany } },
+          useValue: {
+            $queryRaw: query,
+            application: { findMany },
+            listingEvent: { findMany: eventFindMany },
+          },
         },
       ],
     }).compile();
@@ -112,10 +124,14 @@ describe('ProviderRecentExitsQueryService', () => {
     expect(await service.cards(tx, 'provider-1', [], asOf)).toEqual([]);
     expect(query).not.toHaveBeenCalled();
     expect(findMany).not.toHaveBeenCalled();
+    expect(eventFindMany).not.toHaveBeenCalled();
   });
 
   it('batches hydration, preserves projection order and exposes only preview profile fields', async () => {
     findMany.mockResolvedValue([application]);
+    eventFindMany.mockResolvedValue([
+      { applicationId: projection.id, occurredAt: projection.exitedAt },
+    ]);
     const result = await service.cards(tx, 'provider-1', [projection], asOf);
     expect(result[0]).toMatchObject({
       ...projection,
@@ -138,6 +154,47 @@ describe('ProviderRecentExitsQueryService', () => {
         },
       }),
     );
+    const select = (
+      findMany.mock.calls[0]?.[0] as { select?: Record<string, unknown> }
+    ).select;
+    expect(select).toHaveProperty('listing');
+    expect(select).toHaveProperty('applicant');
+    expect(select).not.toHaveProperty('listingEvents');
+    expect(eventFindMany).toHaveBeenCalledTimes(1);
+    expect(eventFindMany).toHaveBeenCalledWith({
+      where: {
+        applicationId: { in: [projection.id] },
+        type: {
+          in: [
+            ListingEventType.REJECTED_BY_PROVIDER,
+            ListingEventType.RESTORED_BY_PROVIDER,
+          ],
+        },
+      },
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      select: { applicationId: true, occurredAt: true },
+    });
+  });
+
+  it('uses the first listing event in query order for restoration timing', async () => {
+    const insideWindow = new Date(asOf.getTime() - 59_999);
+    const atBoundary = new Date(asOf.getTime() - 60_000);
+    findMany.mockResolvedValue([application]);
+    eventFindMany.mockResolvedValue([
+      { applicationId: projection.id, occurredAt: insideWindow },
+      { applicationId: projection.id, occurredAt: atBoundary },
+    ]);
+    await expect(
+      service.cards(tx, 'provider-1', [projection], asOf),
+    ).resolves.toMatchObject([{ canRestore: false }]);
+
+    eventFindMany.mockResolvedValue([
+      { applicationId: projection.id, occurredAt: atBoundary },
+      { applicationId: projection.id, occurredAt: insideWindow },
+    ]);
+    await expect(
+      service.cards(tx, 'provider-1', [projection], asOf),
+    ).resolves.toMatchObject([{ canRestore: true }]);
   });
 
   it.each([-1, 0, 1])(
