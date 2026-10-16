@@ -15,6 +15,11 @@ import {
   UserStatus,
 } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
+import { ProviderActiveApplicationAttentionEnricher } from '../application-attention/provider-active-application-attention.enricher';
+import {
+  ApplicationAttentionSummaryDto,
+  AttentionCategoryTotalsDto,
+} from '../application-attention/dto/attention-response.dto';
 import { ApplicationsService } from './applications.service';
 import { ProviderApplicationsController } from './provider-applications.controller';
 import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
@@ -77,6 +82,16 @@ const makeApplication = (): Application => ({
   updatedAt: new Date('2024-01-01'),
 });
 
+const emptyAttention = () =>
+  new ApplicationAttentionSummaryDto(
+    0,
+    0,
+    new AttentionCategoryTotalsDto(0, 0, 0),
+    [],
+    [],
+    null,
+  );
+
 const makeActiveApplicationRecord = (): ProviderActiveApplicationRecord => ({
   id: APPLICATION_ID,
   listingId: LISTING_ID,
@@ -114,6 +129,9 @@ const getRouteArgMetadata = (
 describe('ProviderApplicationsController', () => {
   let controller: ProviderApplicationsController;
   let applicationsService: jest.Mocked<ApplicationsService>;
+  let activeAttention: jest.Mocked<
+    Pick<ProviderActiveApplicationAttentionEnricher, 'forApplications'>
+  >;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -131,6 +149,10 @@ describe('ProviderApplicationsController', () => {
             restore: jest.fn(),
           },
         },
+        {
+          provide: ProviderActiveApplicationAttentionEnricher,
+          useValue: { forApplications: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -138,6 +160,7 @@ describe('ProviderApplicationsController', () => {
       ProviderApplicationsController,
     );
     applicationsService = module.get(ApplicationsService);
+    activeAttention = module.get(ProviderActiveApplicationAttentionEnricher);
   });
 
   describe('findAll', () => {
@@ -190,7 +213,11 @@ describe('ProviderApplicationsController', () => {
   describe('findActiveByListing', () => {
     it('calls applicationsService.findActiveByListing with listing id and provider id', async () => {
       const applications = [makeActiveApplicationRecord()];
+      const attention = emptyAttention();
       applicationsService.findActiveByListing.mockResolvedValue(applications);
+      activeAttention.forApplications.mockResolvedValue(
+        new Map([[APPLICATION_ID, attention]]),
+      );
 
       const result = await controller.findActiveByListing(
         LISTING_ID,
@@ -201,10 +228,14 @@ describe('ProviderApplicationsController', () => {
         LISTING_ID,
         PROVIDER_ID,
       );
+      expect(activeAttention.forApplications).toHaveBeenCalledWith(
+        PROVIDER_ID,
+        [APPLICATION_ID],
+      );
       expect(result).toEqual(
         applications.map(
           (application) =>
-            new ProviderActiveApplicationResponseDto(application),
+            new ProviderActiveApplicationResponseDto(application, attention),
         ),
       );
     });

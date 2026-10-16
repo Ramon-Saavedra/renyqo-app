@@ -138,6 +138,36 @@ describe('ApplicationViewingPolicy', () => {
     expect(policy.nextAction(row(Status.COMPLETED), true, false, now)).toBe(
       'APPLICANT_CONFIRM_POST_VIEWING_INTEREST',
     );
+    expect(policy.attentionRevalidatesAt(row(), true, true, now)).toEqual(
+      row().startsAt,
+    );
+    expect(
+      policy.attentionRevalidatesAt(row(), true, true, row().startsAt),
+    ).toBeNull();
+    expect(
+      policy.attentionRevalidatesAt(row(Status.ACCEPTED), true, true, now),
+    ).toEqual(row().endsAt);
+    expect(
+      policy.attentionRevalidatesAt(
+        row(Status.ACCEPTED),
+        true,
+        true,
+        row().endsAt,
+      ),
+    ).toBeNull();
+    expect(
+      policy.attentionRevalidatesAt(
+        row(Status.CHANGE_REQUESTED),
+        true,
+        true,
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      policy.attentionRevalidatesAt(row(Status.COMPLETED), true, true, now),
+    ).toBeNull();
+    expect(policy.attentionRevalidatesAt(row(), false, true, now)).toBeNull();
+    expect(policy.attentionRevalidatesAt(row(), true, false, now)).toBeNull();
     for (const status of Object.values(Status))
       expect(policy.nextAction(row(status), false, true, now)).toBe('NONE');
     for (const status of [

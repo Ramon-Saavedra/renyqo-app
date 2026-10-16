@@ -1,5 +1,14 @@
 import { CompactConversationSummaryDto } from '../../application-conversation/dto/compact-conversation-summary.dto';
+import type { ApplicationDocumentType } from '../../generated/prisma/enums';
 import { ApplicationPendingActionType as Action } from '../application-pending-action';
+
+export enum AttentionSection {
+  MESSAGES = 'MESSAGES',
+  DOCUMENTS = 'DOCUMENTS',
+  VIEWING = 'VIEWING',
+}
+
+export type DocumentAttentionStatus = 'UPLOAD_REQUIRED' | 'RECEIVED';
 
 export class DocumentUploadTargetDto {
   constructor(readonly requestId: string) {}
@@ -46,11 +55,56 @@ export type PendingActionDto =
   | DocumentReviewPendingActionDto
   | ViewingPendingActionDto;
 
+export class AttentionCategoryTotalsDto {
+  constructor(
+    readonly documentUploadCount: number,
+    readonly documentReviewCount: number,
+    readonly viewingActionCount: number,
+  ) {}
+}
+
+export class AttentionTargetDto {
+  readonly requestId?: string;
+  readonly documentId?: string;
+  readonly viewingId?: string;
+  constructor(
+    readonly applicationId: string,
+    readonly listingId: string,
+    readonly section: AttentionSection,
+    ids?: {
+      requestId?: string;
+      documentId?: string;
+      viewingId?: string;
+    },
+  ) {
+    if (ids?.requestId !== undefined) this.requestId = ids.requestId;
+    if (ids?.documentId !== undefined) this.documentId = ids.documentId;
+    if (ids?.viewingId !== undefined) this.viewingId = ids.viewingId;
+  }
+}
+
+export class DocumentAttentionIndicatorDto {
+  readonly documentId?: string;
+  constructor(
+    readonly requestId: string,
+    readonly type: ApplicationDocumentType,
+    readonly customLabel: string | null,
+    readonly status: DocumentAttentionStatus,
+    documentId?: string,
+  ) {
+    if (documentId !== undefined) this.documentId = documentId;
+  }
+}
+
 export class ApplicationAttentionSummaryDto {
   readonly hasPendingAction: boolean;
   constructor(
     readonly pendingActionCount: number,
     readonly actionableUnreadMessageCount: number,
+    readonly categories: AttentionCategoryTotalsDto,
+    readonly targets: readonly AttentionTargetDto[],
+    readonly documentIndicators: readonly DocumentAttentionIndicatorDto[],
+    readonly nextRevalidateAt: Date | null,
   ) {
     this.hasPendingAction = pendingActionCount > 0;
   }
@@ -64,8 +118,19 @@ export class ApplicationAttentionResponseDto extends ApplicationAttentionSummary
     actionableUnreadMessageCount: number,
     readonly conversation: CompactConversationSummaryDto,
     readonly asOf: Date,
+    categories: AttentionCategoryTotalsDto,
+    targets: readonly AttentionTargetDto[],
+    documentIndicators: readonly DocumentAttentionIndicatorDto[],
+    nextRevalidateAt: Date | null,
   ) {
-    super(pendingActions.length, actionableUnreadMessageCount);
+    super(
+      pendingActions.length,
+      actionableUnreadMessageCount,
+      categories,
+      targets,
+      documentIndicators,
+      nextRevalidateAt,
+    );
   }
 }
 
@@ -75,7 +140,30 @@ export class ApplicationAttentionListItemDto extends ApplicationAttentionSummary
     readonly listingId: string,
     summary: ApplicationAttentionSummaryDto,
   ) {
-    super(summary.pendingActionCount, summary.actionableUnreadMessageCount);
+    super(
+      summary.pendingActionCount,
+      summary.actionableUnreadMessageCount,
+      summary.categories,
+      summary.targets,
+      summary.documentIndicators,
+      summary.nextRevalidateAt,
+    );
+  }
+}
+
+export class ApplicantListingAttentionDto extends ApplicationAttentionSummaryDto {
+  constructor(
+    readonly applicationId: string,
+    summary: ApplicationAttentionSummaryDto,
+  ) {
+    super(
+      summary.pendingActionCount,
+      summary.actionableUnreadMessageCount,
+      summary.categories,
+      summary.targets,
+      summary.documentIndicators,
+      summary.nextRevalidateAt,
+    );
   }
 }
 
@@ -84,6 +172,8 @@ export class AttentionTotalsDto {
     readonly applicationsWithPendingActions: number,
     readonly totalPendingActions: number,
     readonly actionableUnreadMessageCount: number,
+    readonly categories: AttentionCategoryTotalsDto,
+    readonly nextRevalidateAt: Date | null,
   ) {}
 }
 
@@ -96,6 +186,8 @@ export class ListingAttentionTotalsDto extends AttentionTotalsDto {
       totals.applicationsWithPendingActions,
       totals.totalPendingActions,
       totals.actionableUnreadMessageCount,
+      totals.categories,
+      totals.nextRevalidateAt,
     );
   }
 }

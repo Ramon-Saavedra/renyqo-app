@@ -4,6 +4,7 @@ import { ApplicationStatus } from '../../generated/prisma/enums';
 import type { ApplicantListingApplicationStateFields } from '../../applications/applicant-listing-application-state';
 import { ApplicantListingImageDto } from './applicant-listing-image.dto';
 import { ProfileMatch } from './applicant-listing-profile-match.enum';
+import type { ApplicantListingAttentionDto } from '../../application-attention/dto/attention-response.dto';
 import { ApplicationAdmissionResponseDto } from '../../applications/dto/application-admission-response.dto';
 
 type ApplicantListingDetailSource = Pick<
@@ -62,6 +63,7 @@ export class ApplicantListingDetailDto {
   readonly publicReason!: ApplicationRejectionReason | null;
   readonly isSaved!: boolean;
   readonly admission: ApplicationAdmissionResponseDto;
+  readonly applicationAttention: ApplicantListingAttentionDto | null;
   readonly requirements!: {
     readonly minimumHouseholdNetIncome: number | null;
     readonly schufaRequired: boolean;
@@ -78,6 +80,7 @@ export class ApplicantListingDetailDto {
     applicationState: ApplicantListingApplicationStateFields,
     isSaved: boolean,
     admission = new ApplicationAdmissionResponseDto(),
+    applicationAttention: ApplicantListingAttentionDto | null = null,
   ) {
     this.id = listing.id;
     this.title = listing.title;
@@ -106,6 +109,7 @@ export class ApplicantListingDetailDto {
     this.publicReason = applicationState.publicReason;
     this.isSaved = isSaved;
     this.admission = admission;
+    this.applicationAttention = applicationAttention;
     this.requirements = {
       minimumHouseholdNetIncome: listing.minimumHouseholdNetIncome,
       schufaRequired: listing.schufaRequired,

@@ -163,7 +163,17 @@ export class ApplicationViewingReadService {
               : nextAction === 'APPLICANT_CONFIRM_POST_VIEWING_INTEREST'
                 ? (row.outcomes.at(-1)?.recordedAt ?? row.createdAt)
                 : row.createdAt;
-      return { viewingId: row.id, nextAction, pendingSince };
+      return {
+        viewingId: row.id,
+        nextAction,
+        pendingSince,
+        revalidatesAt: this.policy.attentionRevalidatesAt(
+          row,
+          mutable,
+          row.round === latestRound,
+          asOf,
+        ),
+      };
     });
   }
 }

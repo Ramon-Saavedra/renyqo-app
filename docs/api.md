@@ -6,11 +6,11 @@ The additive overview, workspace and bounded history endpoints are documented in
 
 ## Application attention
 
-GET /api/v1/provider/applications/:applicationId/attention and GET /api/v1/applicant/applications/:applicationId/attention return audience-specific pendingActions, pendingActionCount, hasPendingAction, historicalUnreadMessageCount, actionableUnreadMessageCount, conversation capabilities and asOf.
+GET /api/v1/provider/applications/:applicationId/attention and GET /api/v1/applicant/applications/:applicationId/attention return audience-specific pendingActions, pendingActionCount, hasPendingAction, category totals, frontend-neutral navigation targets, document obligation indicators, historicalUnreadMessageCount, actionableUnreadMessageCount, nextRevalidateAt, conversation capabilities and asOf.
 
-GET /api/v1/provider/attention, GET /api/v1/provider/listings/:listingId/attention and GET /api/v1/applicant/attention return full-scope totals, per-listing totals and compact application summaries. Pagination uses offset (default 0) and limit (default 20, maximum 100); pagination does not reduce totals. Operational summaries use actionableUnreadMessageCount exclusively.
+GET /api/v1/provider/attention, GET /api/v1/provider/listings/:listingId/attention and GET /api/v1/applicant/attention return full-scope totals, per-listing totals and compact application summaries. Totals include the same category counts and the earliest nextRevalidateAt. Pagination uses offset (default 0) and limit (default 20, maximum 100); pagination does not reduce totals. Operational summaries use actionableUnreadMessageCount exclusively. Unread messages are not included in pending-action categories.
 
-See [Application attention](application-attention.md) for action targets, deterministic ordering, lifecycle/privacy rules and query boundaries. Existing application/listing routes retain their response shapes.
+See [Application attention](application-attention.md) for action targets, deterministic ordering, lifecycle/privacy rules and query boundaries. Authenticated applicant listing summaries and details, saved listing cards, provider active-application rows and provider overview cards include the same attention projection. Anonymous listing results set applicationAttention to null. No response contains a frontend URL.
 
 ## Application viewings
 

@@ -11,7 +11,6 @@ import {
   type AttentionAudience,
 } from './application-pending-action';
 import {
-  ApplicationAttentionResponseDto,
   DocumentUploadPendingActionDto,
   DocumentUploadTargetDto,
   DocumentReviewPendingActionDto,
@@ -21,6 +20,16 @@ import {
   type PendingActionDto,
   type ViewingPendingActionType,
 } from './dto/attention-response.dto';
+
+export type DerivedApplicationAttention = {
+  pendingActions: PendingActionDto[];
+  pendingActionCount: number;
+  hasPendingAction: boolean;
+  historicalUnreadMessageCount: number;
+  actionableUnreadMessageCount: number;
+  conversation: CompactConversationSummaryDto;
+  asOf: Date;
+};
 
 export type DocumentAttentionFact = {
   requestId: string;
@@ -76,7 +85,7 @@ export class ApplicationPendingActionService {
     documents: readonly DocumentAttentionFact[],
     viewings: readonly ViewingAttentionFact[],
     asOf: Date,
-  ): ApplicationAttentionResponseDto {
+  ): DerivedApplicationAttention {
     const side =
       audience === 'provider'
         ? ConversationSide.PROVIDER
@@ -139,16 +148,23 @@ export class ApplicationPendingActionService {
       const key = `${audience}:${application.id}:${candidate.dto.type}:${candidate.target}`;
       if (!unique.has(key)) unique.set(key, candidate.dto);
     }
-    return new ApplicationAttentionResponseDto(
-      application.id,
-      [...unique.values()],
-      conversation.historicalUnreadMessageCount,
-      applicationProcessAllowsMutation(application)
+    const pendingActions = [...unique.values()];
+    return {
+      pendingActions,
+      pendingActionCount: pendingActions.length,
+      hasPendingAction: pendingActions.length > 0,
+      historicalUnreadMessageCount: conversation.historicalUnreadMessageCount,
+      actionableUnreadMessageCount: applicationProcessAllowsMutation(
+        application,
+      )
         ? conversation.historicalUnreadMessageCount
         : 0,
-      new CompactConversationSummaryDto(conversation.hasMessages, capabilities),
+      conversation: new CompactConversationSummaryDto(
+        conversation.hasMessages,
+        capabilities,
+      ),
       asOf,
-    );
+    };
   }
 
   private compare(a: string, b: string): number {

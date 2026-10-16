@@ -24,8 +24,14 @@ function noApplicationState() {
   return toApplicantListingApplicationStateFields(undefined);
 }
 
-function applicationState(blocking: BlockingApplicationState) {
-  return toApplicantListingApplicationStateFields(blocking);
+function applicationState(
+  blocking: Omit<BlockingApplicationState, 'id'> & { readonly id?: string },
+) {
+  return toApplicantListingApplicationStateFields({
+    id: blocking.id ?? '00000000-0000-4000-8000-000000000010',
+    status: blocking.status,
+    publicReason: blocking.publicReason,
+  });
 }
 
 describe('ApplicantListingImageDto', () => {

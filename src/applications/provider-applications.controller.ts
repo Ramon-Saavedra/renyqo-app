@@ -3,6 +3,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -13,6 +14,7 @@ import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import type { SafeUser } from '../users/types/safe-user.type';
+import { ProviderActiveApplicationAttentionEnricher } from '../application-attention/provider-active-application-attention.enricher';
 import { ApplicationsService } from './applications.service';
 import { ApplicationResponseDto } from './dto/application-response.dto';
 import { ProviderActiveApplicationResponseDto } from './dto/provider-active-application-response.dto';
@@ -22,7 +24,10 @@ import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
 @UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
 @Controller('provider')
 export class ProviderApplicationsController {
-  constructor(private readonly applicationsService: ApplicationsService) {}
+  constructor(
+    private readonly applicationsService: ApplicationsService,
+    private readonly activeAttention: ProviderActiveApplicationAttentionEnricher,
+  ) {}
 
   @Get('applications')
   async findAll(
@@ -59,9 +64,15 @@ export class ProviderApplicationsController {
       listingId,
       user.id,
     );
-    return applications.map(
-      (application) => new ProviderActiveApplicationResponseDto(application),
+    const attention = await this.activeAttention.forApplications(
+      user.id,
+      applications.map((application) => application.id),
     );
+    return applications.map((application) => {
+      const summary = attention.get(application.id);
+      if (!summary) throw new NotFoundException('Application not found');
+      return new ProviderActiveApplicationResponseDto(application, summary);
+    });
   }
 
   @Get('listings/:id/exited-applications')

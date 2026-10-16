@@ -124,8 +124,8 @@ export class ApplicationProcessQueryService {
         listingId: { in: [...listingIds] },
         status: { in: [...BLOCKING_APPLICATION_STATUSES] },
       },
-      select: { listingId: true, status: true, publicReason: true },
-      orderBy: { createdAt: 'desc' },
+      select: { id: true, listingId: true, status: true, publicReason: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
     const applicationsByListingId = new Map<string, BlockingApplicationState>();
 
@@ -135,6 +135,7 @@ export class ApplicationProcessQueryService {
       }
 
       applicationsByListingId.set(application.listingId, {
+        id: application.id,
         status: application.status,
         publicReason: application.publicReason,
       });

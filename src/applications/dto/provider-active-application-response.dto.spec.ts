@@ -2,9 +2,22 @@ import { describe, expect, it } from '@jest/globals';
 
 import { ApplicationStatus } from '../../generated/prisma/enums';
 import {
+  ApplicationAttentionSummaryDto,
+  AttentionCategoryTotalsDto,
+} from '../../application-attention/dto/attention-response.dto';
+import {
   ProviderActiveApplicationResponseDto,
   type ProviderActiveApplicationRecord,
 } from './provider-active-application-response.dto';
+
+const attention = new ApplicationAttentionSummaryDto(
+  0,
+  0,
+  new AttentionCategoryTotalsDto(0, 0, 0),
+  [],
+  [],
+  null,
+);
 
 const APPLICATION_ID = '00000000-0000-4000-8000-000000000010';
 const LISTING_ID = '00000000-0000-4000-8000-000000000011';
@@ -31,13 +44,17 @@ function makeRecord(
 
 describe('ProviderActiveApplicationResponseDto', () => {
   it('maps only the minimal provider application summary', () => {
-    const dto = new ProviderActiveApplicationResponseDto(makeRecord());
+    const dto = new ProviderActiveApplicationResponseDto(
+      makeRecord(),
+      attention,
+    );
 
     expect(dto).toEqual({
       id: APPLICATION_ID,
       listingId: LISTING_ID,
       status: ApplicationStatus.ACTIVE,
       activeAt: new Date('2024-06-01T10:00:00.000Z'),
+      attention,
       applicant: {
         name: 'Anna Applicant',
         peopleCount: 3,
@@ -69,6 +86,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
   it('returns warnings from the service record', () => {
     const dto = new ProviderActiveApplicationResponseDto(
       makeRecord({ warnings: ['pets_by_arrangement'] }),
+      attention,
     );
 
     expect(dto.applicant.warnings).toEqual(['pets_by_arrangement']);
@@ -82,6 +100,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
           profile: null,
         },
       }),
+      attention,
     );
 
     expect(dto.applicant).toEqual({
@@ -100,6 +119,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
           profile: { peopleCount: 2, introduction: null },
         },
       }),
+      attention,
     );
 
     expect(dto.applicant).toEqual({

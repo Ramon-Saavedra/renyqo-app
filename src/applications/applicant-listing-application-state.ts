@@ -4,6 +4,7 @@ import {
 } from '../generated/prisma/enums';
 
 export type BlockingApplicationState = {
+  readonly id: string;
   readonly status: ApplicationStatus;
   readonly publicReason: ApplicationRejectionReason | null;
 };

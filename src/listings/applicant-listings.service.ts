@@ -3,7 +3,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ApplicantProfile } from '../generated/prisma/client';
 import { Role, UserStatus } from '../generated/prisma/enums';
 import { ApplicationsService } from '../applications/applications.service';
-import { toApplicantListingApplicationStateFields } from '../applications/applicant-listing-application-state';
+import {
+  toApplicantListingApplicationStateFields,
+  type BlockingApplicationState,
+} from '../applications/applicant-listing-application-state';
 import { ApplicantListingSummaryService } from '../applicant-listing-summaries/applicant-listing-summary.service';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -159,6 +162,7 @@ export class ApplicantListingsService {
       applicantUser.status === UserStatus.ACTIVE;
     let profileMatch = ProfileMatch.UNKNOWN;
     let applicationState = toApplicantListingApplicationStateFields(undefined);
+    let blockingApplication: BlockingApplicationState | undefined;
     let isSaved = false;
     let admission = new ApplicationAdmissionResponseDto();
 
@@ -179,7 +183,7 @@ export class ApplicantListingsService {
           : ProfileMatch.NO_MATCH;
       }
 
-      const blockingApplication =
+      blockingApplication =
         await this.applicationsService.findBlockingApplicationForListing(
           applicantUser.id,
           listing.id,
@@ -214,6 +218,16 @@ export class ApplicantListingsService {
       res.setHeader('Cache-Control', 'private, no-store, must-revalidate');
     }
 
+    const applicationAttention =
+      (
+        await this.applicantListingSummaryService.applicationAttentionFor(
+          applicantUser,
+          blockingApplication
+            ? new Map([[listing.id, blockingApplication]])
+            : new Map(),
+        )
+      ).get(listing.id) ?? null;
+
     return new ApplicantListingDetailDto(
       listing,
       profileMatch,
@@ -221,6 +235,7 @@ export class ApplicantListingsService {
       applicationState,
       isSaved,
       admission,
+      applicationAttention,
     );
   }
 }

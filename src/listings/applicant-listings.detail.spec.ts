@@ -19,6 +19,7 @@ import {
   SmokingPolicy,
   UserStatus,
 } from '../generated/prisma/enums';
+import { ApplicantListingAttentionEnricher } from '../application-attention/applicant-listing-attention.enricher';
 import { ApplicantListingSummaryService } from '../applicant-listing-summaries/applicant-listing-summary.service';
 import { SavedListingsService } from '../saved-listings/saved-listings.service';
 import { PublishedListingsService } from '../published-listings/published-listings.service';
@@ -344,6 +345,14 @@ describe('ApplicantListingsService', () => {
           useValue: publishedListingsMock,
         },
         ApplicantListingSummaryService,
+        {
+          provide: ApplicantListingAttentionEnricher,
+          useValue: {
+            forApplications: jest
+              .fn<ApplicantListingAttentionEnricher['forApplications']>()
+              .mockResolvedValue(new Map()),
+          },
+        },
         ListingInputRules,
         ListingResponseMapper,
         ApplicantListingDiscoveryQuery,
@@ -616,6 +625,7 @@ describe('ApplicantListingsService', () => {
       ])('maps %s with null publicReason', async (status) => {
         prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail);
         applicationsMock.findBlockingApplicationForListing.mockResolvedValue({
+          id: '00000000-0000-4000-8000-000000000010',
           status,
           publicReason: null,
         });
@@ -633,6 +643,7 @@ describe('ApplicantListingsService', () => {
       it('maps REJECTED with NOT_SELECTED publicReason', async () => {
         prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail);
         applicationsMock.findBlockingApplicationForListing.mockResolvedValue({
+          id: '00000000-0000-4000-8000-000000000010',
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.NOT_SELECTED,
         });
@@ -652,6 +663,7 @@ describe('ApplicantListingsService', () => {
       it('maps REJECTED with other publicReason values', async () => {
         prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail);
         applicationsMock.findBlockingApplicationForListing.mockResolvedValue({
+          id: '00000000-0000-4000-8000-000000000010',
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.LISTING_RENTED,
         });

@@ -21,6 +21,7 @@ describe('toApplicantListingApplicationStateFields', () => {
   ])('maps %s without publicReason', (status) => {
     expect(
       toApplicantListingApplicationStateFields({
+        id: '00000000-0000-4000-8000-000000000010',
         status,
         publicReason: null,
       }),
@@ -34,6 +35,7 @@ describe('toApplicantListingApplicationStateFields', () => {
   it('maps REJECTED with authoritative publicReason', () => {
     expect(
       toApplicantListingApplicationStateFields({
+        id: '00000000-0000-4000-8000-000000000010',
         status: ApplicationStatus.REJECTED,
         publicReason: ApplicationRejectionReason.NOT_SELECTED,
       }),
@@ -47,6 +49,7 @@ describe('toApplicantListingApplicationStateFields', () => {
   it('maps REJECTED with other rejection reasons', () => {
     expect(
       toApplicantListingApplicationStateFields({
+        id: '00000000-0000-4000-8000-000000000010',
         status: ApplicationStatus.REJECTED,
         publicReason: ApplicationRejectionReason.LISTING_RENTED,
       }),

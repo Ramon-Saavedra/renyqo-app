@@ -5,6 +5,8 @@ import { ApplicationDocumentReadModule } from '../application-documents/applicat
 import { ApplicationViewingReadModule } from '../application-viewings/application-viewing-read.module';
 import { ApplicationPendingActionService } from './application-pending-action.service';
 import { ApplicationAttentionQueryService } from './application-attention-query.service';
+import { ApplicantListingAttentionEnricher } from './applicant-listing-attention.enricher';
+import { ProviderActiveApplicationAttentionEnricher } from './provider-active-application-attention.enricher';
 import { ProviderAttentionController } from './provider-attention.controller';
 import { ApplicantAttentionController } from './applicant-attention.controller';
 
@@ -19,7 +21,13 @@ import { ApplicantAttentionController } from './applicant-attention.controller';
   providers: [
     ApplicationPendingActionService,
     ApplicationAttentionQueryService,
+    ApplicantListingAttentionEnricher,
+    ProviderActiveApplicationAttentionEnricher,
   ],
-  exports: [ApplicationAttentionQueryService],
+  exports: [
+    ApplicationAttentionQueryService,
+    ApplicantListingAttentionEnricher,
+    ProviderActiveApplicationAttentionEnricher,
+  ],
 })
 export class ApplicationAttentionModule {}

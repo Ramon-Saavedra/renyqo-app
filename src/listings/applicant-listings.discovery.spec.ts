@@ -18,6 +18,7 @@ import {
   Role,
   UserStatus,
 } from '../generated/prisma/enums';
+import { ApplicantListingAttentionEnricher } from '../application-attention/applicant-listing-attention.enricher';
 import { ApplicantListingSummaryService } from '../applicant-listing-summaries/applicant-listing-summary.service';
 import { SavedListingsService } from '../saved-listings/saved-listings.service';
 import { PublishedListingsService } from '../published-listings/published-listings.service';
@@ -335,6 +336,14 @@ describe('ApplicantListingsService', () => {
           useValue: publishedListingsMock,
         },
         ApplicantListingSummaryService,
+        {
+          provide: ApplicantListingAttentionEnricher,
+          useValue: {
+            forApplications: jest
+              .fn<ApplicantListingAttentionEnricher['forApplications']>()
+              .mockResolvedValue(new Map()),
+          },
+        },
         ListingInputRules,
         ListingResponseMapper,
         ApplicantListingDiscoveryQuery,
@@ -872,7 +881,16 @@ describe('ApplicantListingsService', () => {
       ])('maps %s with null publicReason', async (status) => {
         prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
         applicationsMock.findBlockingApplicationsForListings.mockResolvedValue(
-          new Map([[LISTING_ID, { status, publicReason: null }]]),
+          new Map([
+            [
+              LISTING_ID,
+              {
+                id: '00000000-0000-4000-8000-000000000010',
+                status,
+                publicReason: null,
+              },
+            ],
+          ]),
         );
 
         const result = await service.findPublishedForApplicant(
@@ -892,6 +910,7 @@ describe('ApplicantListingsService', () => {
             [
               LISTING_ID,
               {
+                id: '00000000-0000-4000-8000-000000000010',
                 status: ApplicationStatus.REJECTED,
                 publicReason: ApplicationRejectionReason.NOT_SELECTED,
               },
@@ -920,6 +939,7 @@ describe('ApplicantListingsService', () => {
             [
               LISTING_ID,
               {
+                id: '00000000-0000-4000-8000-000000000010',
                 status: ApplicationStatus.REJECTED,
                 publicReason: ApplicationRejectionReason.LISTING_RENTED,
               },
@@ -962,6 +982,7 @@ describe('ApplicantListingsService', () => {
             [
               LISTING_ID_2,
               {
+                id: '00000000-0000-4000-8000-000000000010',
                 status: ApplicationStatus.ACTIVE,
                 publicReason: null,
               },

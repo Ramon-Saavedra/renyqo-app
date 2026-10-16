@@ -11,6 +11,8 @@ import { ApplicantListingSummaryDto } from '../listings/dto/applicant-listing-su
 import type { ApplicantListingSummaryBuildSource } from './applicant-listing-summary-listing.select';
 import { ProfileMatch } from '../listings/dto/applicant-listing-profile-match.enum';
 import type { SafeUser } from '../users/types/safe-user.type';
+import { ApplicantListingAttentionEnricher } from '../application-attention/applicant-listing-attention.enricher';
+import type { ApplicantListingAttentionDto } from '../application-attention/dto/attention-response.dto';
 import { ApplicationAdmissionResponseDto } from '../applications/dto/application-admission-response.dto';
 import type { ApplicationAdmission } from '../applications/application-admission.service';
 
@@ -19,13 +21,31 @@ export type BuildApplicantListingSummariesOptions = {
   readonly applicantProfile?: ApplicantProfile | null;
 };
 
+function isActiveApplicant(user: SafeUser | null): user is SafeUser {
+  return user?.role === Role.APPLICANT && user.status === UserStatus.ACTIVE;
+}
+
 @Injectable()
 export class ApplicantListingSummaryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly applicationsService: ApplicationsService,
     private readonly eligibilityService: EligibilityService,
+    private readonly listingAttention: ApplicantListingAttentionEnricher,
   ) {}
+
+  applicationAttentionFor(
+    applicantUser: SafeUser | null,
+    blockingByListingId: ReadonlyMap<string, BlockingApplicationState>,
+  ): Promise<ReadonlyMap<string, ApplicantListingAttentionDto>> {
+    if (!isActiveApplicant(applicantUser) || blockingByListingId.size === 0) {
+      return Promise.resolve(new Map());
+    }
+    return this.listingAttention.forApplications(
+      applicantUser.id,
+      blockingByListingId,
+    );
+  }
 
   async buildSummaries(
     applicantUser: SafeUser | null,
@@ -38,9 +58,7 @@ export class ApplicantListingSummaryService {
 
     const evaluationTimestamp = new Date();
 
-    const isApplicant =
-      applicantUser?.role === Role.APPLICANT &&
-      applicantUser.status === UserStatus.ACTIVE;
+    const isApplicant = isActiveApplicant(applicantUser);
 
     let profile: ApplicantProfile | null = null;
     let blockingApplicationsByListingId: ReadonlyMap<
@@ -73,6 +91,11 @@ export class ApplicantListingSummaryService {
       );
     }
 
+    const attentionByListingId = await this.applicationAttentionFor(
+      applicantUser,
+      blockingApplicationsByListingId,
+    );
+
     return listings.map((listing) =>
       this.buildSummary(
         listing,
@@ -82,6 +105,7 @@ export class ApplicantListingSummaryService {
         evaluationTimestamp,
         options.isSavedByListingId.has(listing.id),
         new ApplicationAdmissionResponseDto(admissions.get(listing.id)),
+        attentionByListingId.get(listing.id) ?? null,
       ),
     );
   }
@@ -97,10 +121,9 @@ export class ApplicantListingSummaryService {
     evaluationTimestamp: Date,
     isSaved: boolean,
     admission: ApplicationAdmissionResponseDto,
+    applicationAttention: ApplicantListingAttentionDto | null,
   ): ApplicantListingSummaryDto {
-    const isApplicant =
-      applicantUser?.role === Role.APPLICANT &&
-      applicantUser.status === UserStatus.ACTIVE;
+    const isApplicant = isActiveApplicant(applicantUser);
 
     let profileMatch = ProfileMatch.UNKNOWN;
 
@@ -127,6 +150,7 @@ export class ApplicantListingSummaryService {
       ),
       isSaved,
       admission,
+      applicationAttention,
     );
   }
 }
