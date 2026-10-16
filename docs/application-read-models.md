@@ -25,14 +25,14 @@ Collections return `asOf`, `items`, `pagination { limit, hasMore, nextCursor }` 
 
 Query parameters are `cursor` and `limit`. Default limit is 20; maximum is 100. Unknown input fields, malformed cursors and invalid page sizes return 400. Cursor data is an opaque encoded boundary, validated by collection kind, UUID and timestamp/order value. It cannot change authorization scope.
 
-| Collection               | Order                                                                      |
-| ------------------------ | -------------------------------------------------------------------------- |
-| Provider listings        | `displayOrder ASC, id ASC`                                                 |
-| Applicant applications   | `createdAt DESC, id DESC`                                                  |
-| Activity                 | `occurredAt DESC, id DESC`                                                 |
-| Document request history | `requestedAt DESC, id DESC`                                                |
-| File attempts            | `createdAt DESC, id DESC`                                                  |
-| ACTIVE applicant preview | `activeAt ASC, id ASC`, maximum five                                       |
+| Collection               | Order                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------------- |
+| Provider listings        | `displayOrder ASC, id ASC`                                                         |
+| Applicant applications   | `createdAt DESC, id DESC`                                                          |
+| Activity                 | `occurredAt DESC, id DESC`                                                         |
+| Document request history | `requestedAt DESC, id DESC`                                                        |
+| File attempts            | `createdAt DESC, id DESC`                                                          |
+| ACTIVE applicant preview | `activeAt ASC, id ASC`, maximum five                                               |
 | Recent exit preview      | Projected `exitedAt DESC, application ID DESC`, maximum five qualifying applicants |
 
 Applicant ordering uses submission time. There is no applicant quality ranking. Each response has its own consistent snapshot; cursors do not freeze the database across subsequent requests. Moving listing positions or new records can affect later pages.
@@ -45,7 +45,7 @@ Provider applicant rows contain `applicationId`, `status`, `submittedAt`, `activ
 
 Recent-exit cards additionally expose authoritative `canRestore`. The applications-domain recent-exit projection is shared by legacy exits, application overview cards and listing overview counts. It selects the newest attempt per applicant/listing before terminal filtering, excludes any current ACTIVE/WAITING attempt, and requires verified previous ACTIVE participation. Counts represent applicants rather than historical rows; the five-card limit follows selection and privacy checks. Exit dates follow the latest consistent lifecycle transition, with status-specific legacy row fallback only when transition history is absent. Superseded exits never reappear. Restored-to-WAITING withdrawal can be reconstructed from history without changing queue or mutation behavior.
 
-Applicant cards contain `applicationId`, `status`, `submittedAt`, `activeAt`, `listing`, compact `attention`, `conversation`, document counts and `viewing`. Conversation exposes `isOpen`, `isReadOnly`, `expectedResponder` and `canCurrentUserSend`; it contains no message preview. Document counts distinguish requested, upload-required, review-required, processing and reviewed requests. Action counts are audience-specific and become zero when the application process disallows those actions.
+Applicant cards contain `applicationId`, `status`, `submittedAt`, `activeAt`, `listing`, compact `attention`, `conversation`, document counts and `viewing`. Conversation exposes `hasMessages`, `applicantRepliesEnabled`, `canCurrentUserSend`, `canCurrentUserManageApplicantReplies` and nullable `sendBlockReason`; it contains no message preview. Document counts distinguish requested, upload-required, review-required, processing and reviewed requests. Action counts are audience-specific and become zero when the application process disallows those actions.
 
 Viewing summaries expose current/latest/latest-completed viewing state, change-request state, pending interest, authoritative `nextAction`, `canPropose`, schedules, effective outcome, submitted interest and per-viewing capabilities. At most one row per summary category is serialized; full viewing history is separate. Outstanding interest obligations remain part of the authoritative attention derivation even for older completed rounds.
 

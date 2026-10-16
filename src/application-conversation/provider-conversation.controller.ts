@@ -1,3 +1,5 @@
+import { ApplicationConversationPermissionService } from './application-conversation-permission.service';
+import { SetApplicantRepliesDto } from './dto/set-applicant-replies.dto';
 import {
   Body,
   Controller,
@@ -28,7 +30,23 @@ import {
 @UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
 @Controller('provider/applications/:applicationId/conversation')
 export class ProviderConversationController {
-  constructor(private readonly conversations: ApplicationConversationService) {}
+  constructor(
+    private readonly conversations: ApplicationConversationService,
+    private readonly permissions: ApplicationConversationPermissionService,
+  ) {}
+
+  @Patch('applicant-replies')
+  setApplicantReplies(
+    @Param() params: ApplicationConversationParamsDto,
+    @CurrentUser() user: SafeUser,
+    @Body() dto: SetApplicantRepliesDto,
+  ) {
+    return this.permissions.setApplicantReplies(
+      params.applicationId,
+      user.id,
+      dto.applicantRepliesEnabled,
+    );
+  }
 
   @Get('summary')
   summary(

@@ -474,7 +474,7 @@ describe('Application read models E2E', () => {
     expect(item).toMatchObject({
       activeApplicationsCount: 1,
       waitingCount: 1,
-      attention: { totalPendingActions: 1, actionableUnreadMessageCount: 1 },
+      attention: { totalPendingActions: 0, actionableUnreadMessageCount: 1 },
     });
     expect(Object.keys(nested(item, 'listing')).sort()).toEqual([
       'city',
@@ -648,8 +648,8 @@ describe('Application read models E2E', () => {
     const item = rows(response)[0];
     expect(item).toMatchObject({
       applicationId,
-      attention: { pendingActionCount: 3, actionableUnreadMessageCount: 1 },
-      conversation: { isOpen: true, expectedResponder: 'APPLICANT' },
+      attention: { pendingActionCount: 2, actionableUnreadMessageCount: 1 },
+      conversation: { hasMessages: true, applicantRepliesEnabled: false },
       documents: { uploadRequiredCount: 1 },
       viewing: { nextAction: 'APPLICANT_RESPOND_TO_VIEWING' },
     });
@@ -871,8 +871,8 @@ describe('Application read models E2E', () => {
           actionableUnreadMessageCount: 0,
           historicalUnreadMessageCount: side === 'applicant' ? 1 : 0,
         });
-        expect(nested(response, 'conversationSummary')['isReadOnly']).toBe(
-          true,
+        expect(nested(response, 'conversationSummary')['sendBlockReason']).toBe(
+          'LIFECYCLE_READ_ONLY',
         );
         expect(nested(response, 'viewingSummary')['nextAction']).toBe('NONE');
         expect(
@@ -1170,8 +1170,12 @@ describe('Application read models E2E', () => {
         true,
       );
       expect(
-        nested(applicantWorkspace, 'conversationSummary')['isReadOnly'],
-      ).toBe(status !== ListingStatus.PAUSED);
+        nested(applicantWorkspace, 'conversationSummary')['sendBlockReason'],
+      ).toBe(
+        status === ListingStatus.PAUSED
+          ? 'APPLICANT_REPLIES_DISABLED'
+          : 'LIFECYCLE_READ_ONLY',
+      );
       await provider.agent
         .patch(`/api/v1/provider/applications/${applicationId}/reject`)
         .expect(200);
@@ -1317,7 +1321,7 @@ describe('Application read models E2E', () => {
       .get(ApplicationWorkspaceQueryService)
       .workspace(applicationId, applicant.id, 'applicant');
     expect(workspace.application.status).toBe(ApplicationStatus.ACTIVE);
-    expect(workspace.attention.pendingActionCount).toBe(1);
+    expect(workspace.attention.pendingActionCount).toBe(0);
     expect(workspace.documentsSummary.currentRequests).toHaveLength(0);
     const subsequent = await get(
       'applicant',

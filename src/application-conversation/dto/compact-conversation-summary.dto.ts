@@ -1,10 +1,20 @@
-import type { ConversationSide } from '../../generated/prisma/enums';
-
+import type { conversationCapabilities } from '../application-conversation.policy';
+export type ConversationCapabilities = ReturnType<
+  typeof conversationCapabilities
+>;
 export class CompactConversationSummaryDto {
+  readonly applicantRepliesEnabled: boolean;
+  readonly canCurrentUserSend: boolean;
+  readonly canCurrentUserManageApplicantReplies: boolean;
+  readonly sendBlockReason: ConversationCapabilities['sendBlockReason'];
   constructor(
-    readonly isOpen: boolean,
-    readonly isReadOnly: boolean,
-    readonly expectedResponder: ConversationSide | null,
-    readonly canCurrentUserSend: boolean,
-  ) {}
+    readonly hasMessages: boolean,
+    capabilities: ConversationCapabilities,
+  ) {
+    this.applicantRepliesEnabled = capabilities.applicantRepliesEnabled;
+    this.canCurrentUserSend = capabilities.canCurrentUserSend;
+    this.canCurrentUserManageApplicantReplies =
+      capabilities.canCurrentUserManageApplicantReplies;
+    this.sendBlockReason = capabilities.sendBlockReason;
+  }
 }

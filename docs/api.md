@@ -6,7 +6,7 @@ The additive overview, workspace and bounded history endpoints are documented in
 
 ## Application attention
 
-GET /api/v1/provider/applications/:applicationId/attention and GET /api/v1/applicant/applications/:applicationId/attention return audience-specific pendingActions, pendingActionCount, hasPendingAction, historicalUnreadMessageCount, actionableUnreadMessageCount, conversation responsibility/read-only state and asOf.
+GET /api/v1/provider/applications/:applicationId/attention and GET /api/v1/applicant/applications/:applicationId/attention return audience-specific pendingActions, pendingActionCount, hasPendingAction, historicalUnreadMessageCount, actionableUnreadMessageCount, conversation capabilities and asOf.
 
 GET /api/v1/provider/attention, GET /api/v1/provider/listings/:listingId/attention and GET /api/v1/applicant/attention return full-scope totals, per-listing totals and compact application summaries. Pagination uses offset (default 0) and limit (default 20, maximum 100); pagination does not reduce totals. Operational summaries use actionableUnreadMessageCount exclusively.
 
@@ -142,14 +142,14 @@ Required property fields to publish: `street`, `zip`, `city`, `livingArea`, `roo
 
 Listing lifecycle transitions are guarded. A caller who does not own the listing receives `404`. Any other source state receives `409`. Publish still returns `422` with `missingFields` when a draft is incomplete.
 
-| Action  | Allowed sources                  | Effect on `publishedAt`                                      |
-| ------- | -------------------------------- | ------------------------------------------------------------ |
-| Publish | `DRAFT`                          | Set only when it is null. A later publish keeps the original |
-| Draft   | `PUBLISHED`, `PAUSED`            | Preserved                                                    |
-| Pause   | `PUBLISHED`                      | Preserved                                                    |
-| Resume  | `PAUSED`                         | Preserved                                                    |
-| Archive | `DRAFT`, `PUBLISHED`, `PAUSED`   | Preserved                                                    |
-| Rent    | `PUBLISHED`, `PAUSED`            | Preserved                                                    |
+| Action  | Allowed sources                | Effect on `publishedAt`                                      |
+| ------- | ------------------------------ | ------------------------------------------------------------ |
+| Publish | `DRAFT`                        | Set only when it is null. A later publish keeps the original |
+| Draft   | `PUBLISHED`, `PAUSED`          | Preserved                                                    |
+| Pause   | `PUBLISHED`                    | Preserved                                                    |
+| Resume  | `PAUSED`                       | Preserved                                                    |
+| Archive | `DRAFT`, `PUBLISHED`, `PAUSED` | Preserved                                                    |
+| Rent    | `PUBLISHED`, `PAUSED`          | Preserved                                                    |
 
 `ARCHIVED` and `RENTED` are terminal. Repeating an action, including a second archive, returns `409`. Pause hides the listing from applicant discovery and blocks new applications. Existing applications, conversations, documents, and viewings stay in place and follow their current state rules. Resume returns the same listing to `PUBLISHED` without refreshing `publishedAt`.
 
@@ -346,14 +346,16 @@ During the Phase 1 migration, `introduction` may be `null` for legacy profiles. 
 
 All routes below use the `/api/v1` prefix, session authentication, the corresponding role guard and application ownership checks. Replace `{audience}` with `provider` or `applicant`. There is no global conversation list or standalone conversation creation endpoint.
 
-| Method | Route | Input | Response |
-| --- | --- | --- | --- |
-| GET | `/{audience}/applications/:applicationId/conversation/summary` | UUID v4 application ID | Conversation summary |
-| GET | `/{audience}/applications/:applicationId/conversation` | `afterSequence` (default 0), `limit` (default 50, maximum 100) | Summary plus ordered message page |
-| POST | `/{audience}/applications/:applicationId/conversation/messages` | `{ "body": "Plain text" }` | Created message, HTTP 201 |
-| PATCH | `/{audience}/applications/:applicationId/conversation/read` | `{ "throughSequence": 3 }` | `{ "markedCount": 1 }` |
+| Method | Route                                                           | Input                                                          | Response                          |
+| ------ | --------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------- |
+| GET    | `/{audience}/applications/:applicationId/conversation/summary`  | UUID v4 application ID                                         | Conversation summary              |
+| GET    | `/{audience}/applications/:applicationId/conversation`          | `afterSequence` (default 0), `limit` (default 50, maximum 100) | Summary plus ordered message page |
+| POST   | `/{audience}/applications/:applicationId/conversation/messages` | `{ "body": "Plain text" }`                                     | Created message, HTTP 201         |
+| PATCH  | `/{audience}/applications/:applicationId/conversation/read`     | `{ "throughSequence": 3 }`                                     | `{ "markedCount": 1 }`            |
 
-Summary fields are `applicationId`, nullable `conversationId` and `openedAt`, `isOpen`, `canCurrentUserSend`, nullable `expectedResponder` (`PROVIDER` or `APPLICANT`), `unreadCount`, and nullable `lastMessage`. `isOpen` means a first message exists; it does not mean sending is currently allowed. Before opening, only the provider can send. When sending is disabled by application/listing state, `expectedResponder` is null.
+Summary fields are `applicationId`, nullable `conversationId` and `openedAt`, `hasMessages`, `applicantRepliesEnabled`, `canCurrentUserSend`, `canCurrentUserManageApplicantReplies`, nullable `sendBlockReason`, `unreadCount`, and nullable `lastMessage`. `hasMessages` describes history only. The shared policy returns `LIFECYCLE_READ_ONLY` before `APPLICANT_REPLIES_DISABLED` when sending is blocked.
+
+`PATCH /provider/applications/:applicationId/conversation/applicant-replies` accepts a strict boolean `{ "applicantRepliesEnabled": true }` and returns authoritative capabilities. Repeating a desired state is idempotent and produces no duplicate activity. Only an owning provider in an ACTIVE application with a PUBLISHED or PAUSED listing may change it. Provider sending is independent of this permission; applicant sending requires it. Permission changes create activities only on actual transitions. Conversation creation may occur before any message. Existing conversations migrate disabled, preserving all messages and reads. Same-application restoration preserves permission; new attempts start disabled.
 
 Detail adds `messages`, `hasMore`, and nullable `nextAfterSequence`. Messages are ordered by per-conversation `sequence`, independent of timestamp ties. Use `nextAfterSequence` as `afterSequence` for the next page. Reading a page does not mark messages as read.
 
@@ -363,6 +365,6 @@ Bodies are trimmed and limited to 1–4000 characters. Angle brackets and contro
 
 Mark-as-read updates only unread incoming messages through the supplied positive sequence. A cutoff beyond the latest message is HTTP 400. Repeating a cutoff is idempotent. A closed conversation returns `markedCount: 0`. The cutoff prevents a read acknowledgement from marking messages that arrive after the client-observed sequence.
 
-Unauthorized sessions receive HTTP 401, wrong roles HTTP 403, and ownership failures/hidden WAITING applications HTTP 404. Wrong-turn or inactive-process sends receive HTTP 409. Provider reads require an owned listing and an application that is ACTIVE or was previously active; WAITING always returns HTTP 404, including restored WAITING applications with old conversation history. Applicants can read only their own application history.
+Unauthorized sessions receive HTTP 401, wrong roles HTTP 403, and ownership failures/hidden WAITING applications HTTP 404. Permission-disabled or inactive-process sends receive HTTP 409. Provider reads require an owned listing and an application that is ACTIVE or was previously active; WAITING always returns HTTP 404, including restored WAITING applications with old conversation history. Applicants can read only their own application history.
 
-The first provider message, conversation creation, `CONVERSATION_OPENED`, and `MESSAGE_SENT` activities commit atomically. Later messages each record `MESSAGE_SENT`. Activity payloads contain no message bodies. Neither uploads nor notifications are part of this phase.
+If a provider message creates the conversation, creation, `CONVERSATION_OPENED`, and `MESSAGE_SENT` commit atomically. Enabling replies may create an empty conversation first. Later messages each record `MESSAGE_SENT`. Activity payloads contain no message bodies. Neither uploads nor notifications are part of this phase.

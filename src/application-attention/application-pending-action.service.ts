@@ -1,6 +1,8 @@
+import { CompactConversationSummaryDto } from '../application-conversation/dto/compact-conversation-summary.dto';
+import { applicationProcessAllowsMutation } from '../applications/application-process.policy';
 import { Injectable } from '@nestjs/common';
 import { ConversationSide } from '../generated/prisma/enums';
-import { conversationResponsibility } from '../application-conversation/application-conversation.policy';
+import { conversationCapabilities } from '../application-conversation/application-conversation.policy';
 import type { ConversationAttentionFacts } from '../application-conversation/application-conversation-read.service';
 import type { ApplicationProcessState } from '../applications/application-process.policy';
 import type { ViewingNextAction } from '../application-viewings/application-viewing.policy';
@@ -10,8 +12,6 @@ import {
 } from './application-pending-action';
 import {
   ApplicationAttentionResponseDto,
-  AttentionConversationDto,
-  ConversationPendingActionDto,
   DocumentUploadPendingActionDto,
   DocumentUploadTargetDto,
   DocumentReviewPendingActionDto,
@@ -81,23 +81,12 @@ export class ApplicationPendingActionService {
       audience === 'provider'
         ? ConversationSide.PROVIDER
         : ConversationSide.APPLICANT;
-    const responsibility = conversationResponsibility(
+    const capabilities = conversationCapabilities(
       application,
-      conversation.lastSender,
+      conversation.applicantRepliesEnabled,
+      side,
     );
-    const isOpen = conversation.lastSender !== null;
     const candidates: Candidate[] = [];
-    if (
-      isOpen &&
-      responsibility.expectedResponder === side &&
-      conversation.lastMessageAt
-    ) {
-      candidates.push({
-        dto: new ConversationPendingActionDto(),
-        pendingSince: conversation.lastMessageAt,
-        target: application.id,
-      });
-    }
     for (const document of documents) {
       if (audience === 'applicant' && document.canUpload) {
         candidates.push({
@@ -154,12 +143,10 @@ export class ApplicationPendingActionService {
       application.id,
       [...unique.values()],
       conversation.historicalUnreadMessageCount,
-      responsibility.isReadOnly ? 0 : conversation.historicalUnreadMessageCount,
-      new AttentionConversationDto(
-        isOpen,
-        responsibility.isReadOnly,
-        responsibility.expectedResponder,
-      ),
+      applicationProcessAllowsMutation(application)
+        ? conversation.historicalUnreadMessageCount
+        : 0,
+      new CompactConversationSummaryDto(conversation.hasMessages, capabilities),
       asOf,
     );
   }

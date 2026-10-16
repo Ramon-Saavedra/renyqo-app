@@ -1,3 +1,5 @@
+import { ApplicationConversationAccessService } from './application-conversation-access.service';
+import { ApplicationConversationPermissionService } from './application-conversation-permission.service';
 import { Module } from '@nestjs/common';
 import { ApplicationsModule } from '../applications/applications.module';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -12,6 +14,11 @@ import { ProviderConversationController } from './provider-conversation.controll
     ProviderConversationController,
     ApplicantConversationController,
   ],
-  providers: [ApplicationConversationService, ApplicationMessageService],
+  providers: [
+    ApplicationConversationService,
+    ApplicationMessageService,
+    ApplicationConversationAccessService,
+    ApplicationConversationPermissionService,
+  ],
 })
 export class ApplicationConversationModule {}
