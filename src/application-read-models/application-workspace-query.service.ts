@@ -6,7 +6,7 @@ import { ApplicationConversationReadService } from '../application-conversation/
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplicationAttentionQueryService } from '../application-attention/application-attention-query.service';
 import type { AttentionAudience } from '../application-attention/application-pending-action';
-import { ApplicationAttentionSummaryDto } from '../application-attention/dto/attention-response.dto';
+import { compactAttentionSummary } from '../application-attention/attention-projection';
 import { ApplicationDocumentReadService } from '../application-documents/application-document-read.service';
 import { ApplicationViewingReadService } from '../application-viewings/application-viewing-read.service';
 import { ViewingClock } from '../application-viewings/application-viewing.policy';
@@ -99,10 +99,7 @@ export class ApplicationWorkspaceQueryService {
           application.id,
           {
             attention,
-            compactAttention: new ApplicationAttentionSummaryDto(
-              attention.pendingActionCount,
-              attention.actionableUnreadMessageCount,
-            ),
+            compactAttention: compactAttentionSummary(attention),
             conversation: this.conversations.summary(
               application,
               facts.conversations.get(application.id) ?? emptyConversationFacts,

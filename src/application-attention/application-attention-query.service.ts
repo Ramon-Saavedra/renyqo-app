@@ -15,6 +15,10 @@ import type { AttentionAudience } from './application-pending-action';
 import { ApplicationPendingActionService } from './application-pending-action.service';
 import { AttentionQueryDto } from './dto/attention-input.dto';
 import {
+  projectApplicationAttention,
+  summarizeAttentionTotals,
+} from './attention-projection';
+import {
   ApplicationAttentionResponseDto,
   ApplicationAttentionListItemDto,
   AttentionAggregateResponseDto,
@@ -242,24 +246,36 @@ export class ApplicationAttentionQueryService {
     }
     for (const application of applications) {
       const mutable = applicationProcessAllowsMutation(application);
+      const documentRows = documentGroups.get(application.id) ?? [];
+      const viewingFacts = this.viewings.facts(
+        viewingGroups.get(application.id) ?? [],
+        mutable,
+        viewings.rounds.get(application.id),
+        asOf,
+      );
+      const derived = this.pending.derive(
+        application,
+        audience,
+        conversations.get(application.id) ?? emptyConversationFacts,
+        this.documents.facts(documentRows, mutable),
+        viewingFacts,
+        asOf,
+      );
       result.set(
         application.id,
-        this.pending.derive(
-          application,
-          audience,
-          conversations.get(application.id) ?? emptyConversationFacts,
-          this.documents.facts(
-            documentGroups.get(application.id) ?? [],
-            mutable,
-          ),
-          this.viewings.facts(
-            viewingGroups.get(application.id) ?? [],
-            mutable,
-            viewings.rounds.get(application.id),
-            asOf,
-          ),
+        projectApplicationAttention({
+          applicationId: application.id,
+          listingId: application.listingId,
+          pendingActions: derived.pendingActions,
+          actionableUnreadMessageCount: derived.actionableUnreadMessageCount,
+          historicalUnreadMessageCount: derived.historicalUnreadMessageCount,
+          conversation: derived.conversation,
           asOf,
-        ),
+          documents: documentRows,
+          revalidatesAt: viewingFacts.flatMap((fact) =>
+            fact.revalidatesAt ? [fact.revalidatesAt] : [],
+          ),
+        }),
       );
     }
     return { attention: result, conversations, documents, viewings };
@@ -268,10 +284,6 @@ export class ApplicationAttentionQueryService {
   private totals(
     items: readonly ApplicationAttentionListItemDto[],
   ): AttentionTotalsDto {
-    return new AttentionTotalsDto(
-      items.filter((item) => item.hasPendingAction).length,
-      items.reduce((sum, item) => sum + item.pendingActionCount, 0),
-      items.reduce((sum, item) => sum + item.actionableUnreadMessageCount, 0),
-    );
+    return summarizeAttentionTotals(items);
   }
 }

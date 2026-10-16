@@ -57,6 +57,7 @@ type ProviderActiveApplicationBody = {
     introduction: string | null;
     warnings: Array<'pets_by_arrangement' | 'smoking_by_arrangement'>;
   };
+  attention: Record<string, unknown>;
 };
 
 const sessionSecret = 'e2e-session-secret-at-least-thirty-two-characters';
@@ -222,7 +223,8 @@ function isProviderActiveApplicationBody(
     value.applicant.warnings.every((warning: string) =>
       ['pets_by_arrangement', 'smoking_by_arrangement'].includes(warning),
     ) &&
-    Object.keys(value).length === 5 &&
+    isRecord(value.attention) &&
+    Object.keys(value).length === 6 &&
     Object.keys(value.applicant).length === 4
   );
 }
@@ -582,6 +584,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
     expect(Object.keys(bodies[0]).sort()).toEqual([
       'activeAt',
       'applicant',
+      'attention',
       'id',
       'listingId',
       'status',

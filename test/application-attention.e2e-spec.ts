@@ -658,6 +658,12 @@ describe('Application attention E2E', () => {
         applicationsWithPendingActions: 0,
         totalPendingActions: 0,
         actionableUnreadMessageCount: 0,
+        categories: {
+          documentUploadCount: 0,
+          documentReviewCount: 0,
+          viewingActionCount: 0,
+        },
+        nextRevalidateAt: null,
       });
       if (status === ApplicationStatus.WAITING) {
         await provider.agent
@@ -705,6 +711,12 @@ describe('Application attention E2E', () => {
       applicationsWithPendingActions: 0,
       totalPendingActions: 0,
       actionableUnreadMessageCount: 0,
+      categories: {
+        documentUploadCount: 0,
+        documentReviewCount: 0,
+        viewingActionCount: 0,
+      },
+      nextRevalidateAt: null,
     });
     await prisma.application.update({
       where: { id: applicationId },
@@ -802,6 +814,12 @@ describe('Application attention E2E', () => {
       applicationsWithPendingActions: 2,
       totalPendingActions: 3,
       actionableUnreadMessageCount: 1,
+      categories: {
+        documentUploadCount: 0,
+        documentReviewCount: 2,
+        viewingActionCount: 1,
+      },
+      nextRevalidateAt: null,
     });
     expect(items(response)).toHaveLength(1);
     expect(response['pagination']).toMatchObject({
@@ -824,6 +842,12 @@ describe('Application attention E2E', () => {
       applicationsWithPendingActions: 0,
       totalPendingActions: 0,
       actionableUnreadMessageCount: 0,
+      categories: {
+        documentUploadCount: 0,
+        documentReviewCount: 0,
+        viewingActionCount: 0,
+      },
+      nextRevalidateAt: null,
     });
     expect(items(applicantResponse)).toHaveLength(1);
     const batch = await queries.batch(provider.id, 'provider', [
@@ -887,6 +911,12 @@ describe('Application attention E2E', () => {
       applicationsWithPendingActions: 201,
       totalPendingActions: 201,
       actionableUnreadMessageCount: 0,
+      categories: {
+        documentUploadCount: 201,
+        documentReviewCount: 0,
+        viewingActionCount: 0,
+      },
+      nextRevalidateAt: null,
     });
     expect(response.pagination).toMatchObject({
       totalApplications: 201,

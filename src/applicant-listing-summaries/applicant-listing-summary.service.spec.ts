@@ -16,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProfileMatch } from '../listings/dto/applicant-listing-profile-match.enum';
 import type { ApplicantListingSummaryBuildSource } from './applicant-listing-summary-listing.select';
 import type { SafeUser } from '../users/types/safe-user.type';
+import { ApplicantListingAttentionEnricher } from '../application-attention/applicant-listing-attention.enricher';
 import { ApplicantListingSummaryService } from './applicant-listing-summary.service';
 
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000099';
@@ -99,6 +100,7 @@ describe('ApplicantListingSummaryService', () => {
     >
   >;
   let eligibilityMock: jest.Mocked<EligibilityService>;
+  let listingAttention: { forApplications: jest.Mock };
 
   beforeEach(async () => {
     prismaMock = {
@@ -134,6 +136,14 @@ describe('ApplicantListingSummaryService', () => {
         { provide: PrismaService, useValue: prismaMock },
         { provide: ApplicationsService, useValue: applicationsMock },
         {
+          provide: ApplicantListingAttentionEnricher,
+          useValue: {
+            forApplications: jest
+              .fn<ApplicantListingAttentionEnricher['forApplications']>()
+              .mockResolvedValue(new Map()),
+          },
+        },
+        {
           provide: EligibilityService,
           useValue: {
             isProfileComplete: jest.fn().mockReturnValue(false),
@@ -150,6 +160,7 @@ describe('ApplicantListingSummaryService', () => {
 
     service = module.get(ApplicantListingSummaryService);
     eligibilityMock = module.get(EligibilityService);
+    listingAttention = module.get(ApplicantListingAttentionEnricher);
   });
 
   it('returns an empty array for no listings', async () => {
@@ -182,6 +193,8 @@ describe('ApplicantListingSummaryService', () => {
 
     expect(result[0].profileMatch).toBe(ProfileMatch.UNKNOWN);
     expect(result[0].hasApplied).toBe(false);
+    expect(result[0].applicationAttention).toBeNull();
+    expect(listingAttention.forApplications).not.toHaveBeenCalled();
     expect(
       applicationsMock.findBlockingApplicationsForListings,
     ).not.toHaveBeenCalled();
@@ -283,6 +296,7 @@ describe('ApplicantListingSummaryService', () => {
         [
           LISTING_ID,
           {
+            id: '00000000-0000-4000-8000-000000000010',
             status: ApplicationStatus.ACTIVE,
             publicReason: null,
           },

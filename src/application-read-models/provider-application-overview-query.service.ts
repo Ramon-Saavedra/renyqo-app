@@ -2,9 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { ApplicationStatus } from '../generated/prisma/enums';
 import {
-  ApplicationAttentionSummaryDto,
-  AttentionTotalsDto,
-} from '../application-attention/dto/attention-response.dto';
+  AttentionTotalAccumulator,
+  compactAttentionSummary,
+} from '../application-attention/attention-projection';
+import { ApplicationAttentionSummaryDto } from '../application-attention/dto/attention-response.dto';
 import { providerApplicationVisibility } from '../applications/application-process.policy';
 import {
   ProviderRecentExitsQueryService,
@@ -54,9 +55,7 @@ export class ProviderApplicationOverviewQueryService {
           active: 0,
           waiting: 0,
           exited: 0,
-          actions: 0,
-          actionable: 0,
-          unread: 0,
+          attention: new AttentionTotalAccumulator(),
         },
       ]),
     );
@@ -109,19 +108,9 @@ export class ProviderApplicationOverviewQueryService {
       for (const row of applications) {
         const summary = facts.attention.get(row.id);
         const total = totals.get(row.listingId);
-        if (summary && total) {
-          total.actions += summary.pendingActionCount;
-          total.actionable += Number(summary.hasPendingAction);
-          total.unread += summary.actionableUnreadMessageCount;
-        }
+        if (summary && total) total.attention.add(summary);
         if (summary && retained.has(row.id))
-          attention.set(
-            row.id,
-            new ApplicationAttentionSummaryDto(
-              summary.pendingActionCount,
-              summary.actionableUnreadMessageCount,
-            ),
-          );
+          attention.set(row.id, compactAttentionSummary(summary));
       }
       if (applications.length < 200) break;
       cursor = applications.at(-1)?.id;
@@ -166,11 +155,7 @@ export class ProviderApplicationOverviewQueryService {
             total.active,
             total.waiting,
             total.exited,
-            new AttentionTotalsDto(
-              total.actionable,
-              total.actions,
-              total.unread,
-            ),
+            total.attention.toDto(),
           );
         });
         const hasMore = rows.length > query.limit;
@@ -250,11 +235,7 @@ export class ProviderApplicationOverviewQueryService {
             totals.active,
             totals.waiting,
             totals.exited,
-            new AttentionTotalsDto(
-              totals.actionable,
-              totals.actions,
-              totals.unread,
-            ),
+            totals.attention.toDto(),
           ),
           cards(active),
           exited.map((row) => {
@@ -262,10 +243,7 @@ export class ProviderApplicationOverviewQueryService {
             if (!attention) throw new Error('Missing recent-exit attention');
             return new ProviderRecentExitCardDto(
               row,
-              new ApplicationAttentionSummaryDto(
-                attention.pendingActionCount,
-                attention.actionableUnreadMessageCount,
-              ),
+              compactAttentionSummary(attention),
             );
           }),
         );

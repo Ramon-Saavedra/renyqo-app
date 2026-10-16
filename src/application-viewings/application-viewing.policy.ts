@@ -189,4 +189,18 @@ export class ApplicationViewingPolicy {
       return 'APPLICANT_CONFIRM_POST_VIEWING_INTEREST';
     return 'NONE';
   }
+
+  attentionRevalidatesAt(
+    viewing: Pick<ViewingRecord, 'status' | 'startsAt' | 'endsAt'>,
+    mutable: boolean,
+    latest: boolean,
+    now: Date,
+  ): Date | null {
+    if (!mutable || !latest) return null;
+    if (viewing.status === Status.PROPOSED && now < viewing.startsAt)
+      return viewing.startsAt;
+    if (viewing.status === Status.ACCEPTED && now < viewing.endsAt)
+      return viewing.endsAt;
+    return null;
+  }
 }

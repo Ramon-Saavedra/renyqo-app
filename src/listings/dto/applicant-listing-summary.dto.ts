@@ -3,6 +3,7 @@ import type { ApplicationRejectionReason } from '../../generated/prisma/enums';
 import { ApplicationStatus } from '../../generated/prisma/enums';
 import type { ApplicantListingApplicationStateFields } from '../../applications/applicant-listing-application-state';
 import { ProfileMatch } from './applicant-listing-profile-match.enum';
+import type { ApplicantListingAttentionDto } from '../../application-attention/dto/attention-response.dto';
 import { ApplicationAdmissionResponseDto } from '../../applications/dto/application-admission-response.dto';
 
 export type ApplicantListingSummarySource = Pick<
@@ -55,6 +56,7 @@ export class ApplicantListingSummaryDto {
   readonly publicReason!: ApplicationRejectionReason | null;
   readonly isSaved!: boolean;
   readonly admission: ApplicationAdmissionResponseDto;
+  readonly applicationAttention: ApplicantListingAttentionDto | null;
 
   constructor(
     listing: ApplicantListingSummarySource,
@@ -63,6 +65,7 @@ export class ApplicantListingSummaryDto {
     applicationState: ApplicantListingApplicationStateFields,
     isSaved: boolean,
     admission = new ApplicationAdmissionResponseDto(),
+    applicationAttention: ApplicantListingAttentionDto | null = null,
   ) {
     const coverImage = listing.images.find((image) => image.isCover);
 
@@ -91,6 +94,7 @@ export class ApplicantListingSummaryDto {
     this.publicReason = applicationState.publicReason;
     this.isSaved = isSaved;
     this.admission = admission;
+    this.applicationAttention = applicationAttention;
   }
 
   private computeIsNew(publishedAt: Date | null, now: Date): boolean {

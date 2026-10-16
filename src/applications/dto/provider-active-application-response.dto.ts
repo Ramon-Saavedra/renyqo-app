@@ -3,6 +3,7 @@ import type {
   Application,
   User,
 } from '../../generated/prisma/client';
+import type { ApplicationAttentionSummaryDto } from '../../application-attention/dto/attention-response.dto';
 import type { EligibilityWarning } from '../../eligibility/dto/eligibility-response.dto';
 
 export type ProviderActiveApplicationRecord = Pick<
@@ -40,7 +41,10 @@ export class ProviderActiveApplicationResponseDto {
   readonly activeAt: Date | null;
   readonly applicant: ProviderActiveApplicantSummaryDto;
 
-  constructor(application: ProviderActiveApplicationRecord) {
+  constructor(
+    application: ProviderActiveApplicationRecord,
+    readonly attention: ApplicationAttentionSummaryDto,
+  ) {
     this.id = application.id;
     this.listingId = application.listingId;
     this.status = application.status;

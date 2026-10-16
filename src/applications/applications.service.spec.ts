@@ -1905,6 +1905,7 @@ describe('ApplicationsService', () => {
     ])('maps %s with publicReason from persistence', async (status) => {
       prismaMock.application.findMany.mockResolvedValue([
         {
+          id: APPLICATION_ID,
           listingId: LISTING_ID,
           status,
           publicReason: null,
@@ -1917,6 +1918,7 @@ describe('ApplicationsService', () => {
       );
 
       expect(result.get(LISTING_ID)).toEqual({
+        id: APPLICATION_ID,
         status,
         publicReason: null,
       });
@@ -1925,6 +1927,7 @@ describe('ApplicationsService', () => {
     it('maps REJECTED with authoritative publicReason', async () => {
       prismaMock.application.findMany.mockResolvedValue([
         {
+          id: APPLICATION_ID,
           listingId: LISTING_ID,
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.NOT_SELECTED,
@@ -1937,6 +1940,7 @@ describe('ApplicationsService', () => {
       );
 
       expect(result.get(LISTING_ID)).toEqual({
+        id: APPLICATION_ID,
         status: ApplicationStatus.REJECTED,
         publicReason: ApplicationRejectionReason.NOT_SELECTED,
       });
@@ -1945,6 +1949,7 @@ describe('ApplicationsService', () => {
     it('maps REJECTED with other publicReason values', async () => {
       prismaMock.application.findMany.mockResolvedValue([
         {
+          id: APPLICATION_ID,
           listingId: LISTING_ID,
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.LISTING_RENTED,
@@ -1964,11 +1969,13 @@ describe('ApplicationsService', () => {
     it('keeps the newest blocking application per listing', async () => {
       prismaMock.application.findMany.mockResolvedValue([
         {
+          id: APPLICATION_ID,
           listingId: LISTING_ID,
           status: ApplicationStatus.REJECTED,
           publicReason: ApplicationRejectionReason.NOT_SELECTED,
         },
         {
+          id: '00000000-0000-4000-8000-000000000003',
           listingId: LISTING_ID,
           status: ApplicationStatus.ACTIVE,
           publicReason: null,
@@ -1981,12 +1988,13 @@ describe('ApplicationsService', () => {
       );
 
       expect(result.get(LISTING_ID)).toEqual({
+        id: APPLICATION_ID,
         status: ApplicationStatus.REJECTED,
         publicReason: ApplicationRejectionReason.NOT_SELECTED,
       });
       expect(prismaMock.application.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         }),
       );
     });
@@ -1996,6 +2004,7 @@ describe('ApplicationsService', () => {
     it('delegates to the batched lookup for a single listing id', async () => {
       prismaMock.application.findMany.mockResolvedValue([
         {
+          id: APPLICATION_ID,
           listingId: LISTING_ID,
           status: ApplicationStatus.ACTIVE,
           publicReason: null,
@@ -2008,6 +2017,7 @@ describe('ApplicationsService', () => {
       );
 
       expect(result).toEqual({
+        id: APPLICATION_ID,
         status: ApplicationStatus.ACTIVE,
         publicReason: null,
       });
