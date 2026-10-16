@@ -1,10 +1,5 @@
-import type { ConversationSide } from '../../generated/prisma/enums';
+import { CompactConversationSummaryDto } from '../../application-conversation/dto/compact-conversation-summary.dto';
 import { ApplicationPendingActionType as Action } from '../application-pending-action';
-
-export class ConversationPendingActionDto {
-  readonly type = Action.RESPOND_TO_MESSAGE;
-  readonly source = 'CONVERSATION';
-}
 
 export class DocumentUploadTargetDto {
   constructor(readonly requestId: string) {}
@@ -35,9 +30,7 @@ export class DocumentReviewPendingActionDto {
 
 export type ViewingPendingActionType = Exclude<
   Action,
-  | Action.RESPOND_TO_MESSAGE
-  | Action.UPLOAD_REQUESTED_DOCUMENT
-  | Action.REVIEW_DOCUMENT
+  Action.UPLOAD_REQUESTED_DOCUMENT | Action.REVIEW_DOCUMENT
 >;
 
 export class ViewingPendingActionDto {
@@ -49,18 +42,9 @@ export class ViewingPendingActionDto {
 }
 
 export type PendingActionDto =
-  | ConversationPendingActionDto
   | DocumentUploadPendingActionDto
   | DocumentReviewPendingActionDto
   | ViewingPendingActionDto;
-
-export class AttentionConversationDto {
-  constructor(
-    readonly isOpen: boolean,
-    readonly isReadOnly: boolean,
-    readonly expectedResponder: ConversationSide | null,
-  ) {}
-}
 
 export class ApplicationAttentionSummaryDto {
   readonly hasPendingAction: boolean;
@@ -78,7 +62,7 @@ export class ApplicationAttentionResponseDto extends ApplicationAttentionSummary
     readonly pendingActions: PendingActionDto[],
     readonly historicalUnreadMessageCount: number,
     actionableUnreadMessageCount: number,
-    readonly conversation: AttentionConversationDto,
+    readonly conversation: CompactConversationSummaryDto,
     readonly asOf: Date,
   ) {
     super(pendingActions.length, actionableUnreadMessageCount);

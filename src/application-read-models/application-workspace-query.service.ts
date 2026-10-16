@@ -1,3 +1,4 @@
+import { emptyConversationFacts } from '../application-conversation/application-conversation-read.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { ConversationSide } from '../generated/prisma/enums';
@@ -104,7 +105,7 @@ export class ApplicationWorkspaceQueryService {
             ),
             conversation: this.conversations.summary(
               application,
-              facts.conversations.get(application.id)?.lastSender ?? null,
+              facts.conversations.get(application.id) ?? emptyConversationFacts,
               audience === 'provider'
                 ? ConversationSide.PROVIDER
                 : ConversationSide.APPLICANT,

@@ -1,3 +1,4 @@
+import { emptyConversationFacts } from '../application-conversation/application-conversation-read.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import { ConversationSide } from '../generated/prisma/enums';
@@ -246,11 +247,7 @@ export class ApplicationAttentionQueryService {
         this.pending.derive(
           application,
           audience,
-          conversations.get(application.id) ?? {
-            lastSender: null,
-            lastMessageAt: null,
-            historicalUnreadMessageCount: 0,
-          },
+          conversations.get(application.id) ?? emptyConversationFacts,
           this.documents.facts(
             documentGroups.get(application.id) ?? [],
             mutable,

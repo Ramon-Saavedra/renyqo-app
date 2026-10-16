@@ -398,18 +398,18 @@ describe('Application attention E2E', () => {
         pendingActionCount: 0,
         historicalUnreadMessageCount: 0,
         actionableUnreadMessageCount: 0,
-        conversation: { isOpen: false, isReadOnly: false },
+        conversation: { hasMessages: false, applicantRepliesEnabled: false },
         asOf: now.toISOString(),
       });
     }
   });
 
-  it('counts unread independently of reply responsibility and read acknowledgement', async () => {
+  it('counts unread independently of write permission and read acknowledgement', async () => {
     await message();
     expect(await attention('applicant')).toMatchObject({
       historicalUnreadMessageCount: 1,
       actionableUnreadMessageCount: 1,
-      pendingActions: [{ type: Action.RESPOND_TO_MESSAGE }],
+      pendingActions: [],
     });
     await applicant.agent
       .patch(
@@ -420,11 +420,11 @@ describe('Application attention E2E', () => {
     expect(await attention('applicant')).toMatchObject({
       historicalUnreadMessageCount: 0,
       actionableUnreadMessageCount: 0,
-      pendingActions: [{ type: Action.RESPOND_TO_MESSAGE }],
+      pendingActions: [],
     });
   });
 
-  it('keeps unread without a reply action when the latest message is already from this audience', async () => {
+  it('keeps unread independent from subsequent messages', async () => {
     await message();
     await message(ConversationSide.APPLICANT, 2);
     expect(await attention('applicant')).toMatchObject({
@@ -433,22 +433,18 @@ describe('Application attention E2E', () => {
       pendingActions: [],
     });
     expect(await attention('provider')).toMatchObject({
-      pendingActions: [{ type: Action.RESPOND_TO_MESSAGE }],
+      pendingActions: [],
     });
   });
 
-  it('combines three obligations without leaking messages or sorting fields', async () => {
+  it('combines two obligations without leaking messages or sorting fields', async () => {
     await message();
     await document();
     await viewing();
     const response = await attention('applicant');
-    expect(response['pendingActionCount']).toBe(3);
+    expect(response['pendingActionCount']).toBe(2);
     expect(new Set(actions(response).map((row) => row['type']))).toEqual(
-      new Set([
-        Action.RESPOND_TO_MESSAGE,
-        Action.UPLOAD_REQUESTED_DOCUMENT,
-        Action.RESPOND_TO_VIEWING,
-      ]),
+      new Set([Action.UPLOAD_REQUESTED_DOCUMENT, Action.RESPOND_TO_VIEWING]),
     );
     const json = JSON.stringify(response);
     for (const forbidden of [
@@ -656,7 +652,7 @@ describe('Application attention E2E', () => {
         pendingActions: [],
         historicalUnreadMessageCount: 1,
         actionableUnreadMessageCount: 0,
-        conversation: { isReadOnly: true, expectedResponder: null },
+        conversation: { sendBlockReason: 'LIFECYCLE_READ_ONLY' },
       });
       expect((await aggregate('applicant'))['totals']).toEqual({
         applicationsWithPendingActions: 0,
@@ -687,7 +683,7 @@ describe('Application attention E2E', () => {
       const mutable =
         status === ListingStatus.PUBLISHED || status === ListingStatus.PAUSED;
       const result = await attention('applicant');
-      expect(result['pendingActionCount']).toBe(mutable ? 3 : 0);
+      expect(result['pendingActionCount']).toBe(mutable ? 2 : 0);
       expect(result['actionableUnreadMessageCount']).toBe(mutable ? 1 : 0);
     },
   );
@@ -804,7 +800,7 @@ describe('Application attention E2E', () => {
     const response = await aggregate('provider', '?limit=1');
     expect(response['totals']).toEqual({
       applicationsWithPendingActions: 2,
-      totalPendingActions: 4,
+      totalPendingActions: 3,
       actionableUnreadMessageCount: 1,
     });
     expect(items(response)).toHaveLength(1);
@@ -923,7 +919,6 @@ describe('Application attention E2E', () => {
     expect(
       actions(await attention('applicant')).map((row) => row['type']),
     ).toEqual([
-      Action.RESPOND_TO_MESSAGE,
       Action.RESPOND_TO_VIEWING,
       Action.UPLOAD_REQUESTED_DOCUMENT,
       Action.UPLOAD_REQUESTED_DOCUMENT,
@@ -939,9 +934,9 @@ describe('Application attention E2E', () => {
         await message(ConversationSide.APPLICANT, 2);
         return original(tx, ids, side);
       });
-    expect(actions(await attention('applicant'))).toMatchObject([
-      { type: Action.RESPOND_TO_MESSAGE },
-    ]);
+    expect((await attention('applicant'))['historicalUnreadMessageCount']).toBe(
+      1,
+    );
     expect(actions(await attention('applicant'))).toEqual([]);
   });
 
@@ -986,7 +981,7 @@ describe('Application attention E2E', () => {
       new AttentionQueryDto(),
     );
     const many = statements();
-    expect(result.totals.totalPendingActions).toBe(75);
+    expect(result.totals.totalPendingActions).toBe(50);
     expect(result.totals.applicationsWithPendingActions).toBe(25);
     expect(many.length).toBe(single);
     expect(many.length).toBeLessThanOrEqual(15);

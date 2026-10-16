@@ -5,21 +5,30 @@ import {
 } from '../applications/application-process.policy';
 import type { Prisma } from '../generated/prisma/client';
 
+export type ConversationSendBlockReason =
+  | 'LIFECYCLE_READ_ONLY'
+  | 'APPLICANT_REPLIES_DISABLED';
 export function incomingUnreadMessages(
   side: ConversationSide,
 ): Prisma.ApplicationMessageWhereInput {
   return { senderType: { not: side }, readAt: null };
 }
-
-export function conversationResponsibility(
+export function conversationCapabilities(
   application: ApplicationProcessState,
-  sender: ConversationSide | null,
+  applicantRepliesEnabled: boolean,
+  side: ConversationSide,
 ) {
-  const isReadOnly = !applicationProcessAllowsMutation(application);
-  const expectedResponder = isReadOnly
-    ? null
-    : sender === ConversationSide.PROVIDER
-      ? ConversationSide.APPLICANT
-      : ConversationSide.PROVIDER;
-  return { isReadOnly, expectedResponder };
+  const mutable = applicationProcessAllowsMutation(application);
+  const sendBlockReason: ConversationSendBlockReason | null = !mutable
+    ? 'LIFECYCLE_READ_ONLY'
+    : side === ConversationSide.APPLICANT && !applicantRepliesEnabled
+      ? 'APPLICANT_REPLIES_DISABLED'
+      : null;
+  return {
+    applicantRepliesEnabled,
+    canCurrentUserSend: sendBlockReason === null,
+    canCurrentUserManageApplicantReplies:
+      mutable && side === ConversationSide.PROVIDER,
+    sendBlockReason,
+  };
 }

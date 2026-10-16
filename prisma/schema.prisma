@@ -92,6 +92,8 @@ enum ApplicationActivityType {
   APPLICATION_ACCEPTED           @map("application_accepted")
   CONVERSATION_OPENED            @map("conversation_opened")
   MESSAGE_SENT                   @map("message_sent")
+  APPLICANT_REPLIES_ENABLED @map("applicant_replies_enabled")
+  APPLICANT_REPLIES_DISABLED @map("applicant_replies_disabled")
   DOCUMENT_REQUESTED             @map("document_requested")
   DOCUMENT_REQUEST_CANCELLED       @map("document_request_cancelled")
   DOCUMENT_UPLOADED              @map("document_uploaded")
@@ -395,6 +397,7 @@ model ApplicationConversation {
   id            String   @id @default(uuid()) @db.Uuid
   applicationId String   @unique @map("application_id") @db.Uuid
   openedAt      DateTime @default(now()) @map("opened_at")
+  applicantRepliesEnabled Boolean @default(false) @map("applicant_replies_enabled")
 
   application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   messages ApplicationMessage[]

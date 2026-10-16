@@ -1,3 +1,7 @@
+import {
+  CompactConversationSummaryDto,
+  type ConversationCapabilities,
+} from './compact-conversation-summary.dto';
 import type { ApplicationMessage } from '../../generated/prisma/client';
 import type { ConversationSide } from '../../generated/prisma/enums';
 
@@ -19,17 +23,18 @@ export class ApplicationMessageResponseDto {
   }
 }
 
-export class ConversationSummaryResponseDto {
+export class ConversationSummaryResponseDto extends CompactConversationSummaryDto {
   constructor(
     readonly applicationId: string,
     readonly conversationId: string | null,
     readonly openedAt: Date | null,
-    readonly isOpen: boolean,
-    readonly canCurrentUserSend: boolean,
-    readonly expectedResponder: ConversationSide | null,
+    hasMessages: boolean,
+    capabilities: ConversationCapabilities,
     readonly unreadCount: number,
     readonly lastMessage: ApplicationMessageResponseDto | null,
-  ) {}
+  ) {
+    super(hasMessages, capabilities);
+  }
 }
 
 export class ConversationDetailResponseDto extends ConversationSummaryResponseDto {
@@ -46,9 +51,8 @@ export class ConversationDetailResponseDto extends ConversationSummaryResponseDt
       summary.applicationId,
       summary.conversationId,
       summary.openedAt,
-      summary.isOpen,
-      summary.canCurrentUserSend,
-      summary.expectedResponder,
+      summary.hasMessages,
+      summary,
       summary.unreadCount,
       summary.lastMessage,
     );

@@ -45,7 +45,7 @@ The worker does not scan files. GuardDuty does. EventBridge delivers the scan re
 - Recent exits show the newest terminal attempt of each previously active applicant who is currently out of the process. See [Provider recent exits](docs/application-lifecycle.md#provider-recent-exits).
 - Attention APIs derive pending actions and unread counts per audience. See [Application attention](docs/application-attention.md).
 - Read models return listing overviews, applicant cards, and workspaces from one database snapshot. Activity and document history stay paginated. See [Application read models](docs/application-read-models.md).
-- Each application has one text conversation, opened by the provider's first message. See [Application conversations](docs/api.md#application-conversations).
+- Each application has at most one text conversation with provider-controlled `applicantRepliesEnabled` (default `false`). Providers send independently of this flag while lifecycle rules allow; applicants require enabled replies, which may be enabled before any message. Restoration preserves permission; new attempts start disabled. See [Application conversations](docs/api.md#application-conversations).
 
 ## Follow-ups documented in the repository
 

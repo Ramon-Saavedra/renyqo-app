@@ -34,49 +34,26 @@ const viewingRead = new ApplicationViewingReadService(
 
 describe('Read model domain projections', () => {
   it.each([ConversationSide.APPLICANT, ConversationSide.PROVIDER])(
-    'keeps turn-taking authoritative for %s',
+    'projects authoritative capabilities for %s',
     (side) => {
       const service = new ApplicationConversationReadService();
-      const summary = service.summary(active, ConversationSide.PROVIDER, side);
-      expect(summary).toMatchObject({
-        isOpen: true,
-        isReadOnly: false,
-        expectedResponder: ConversationSide.APPLICANT,
-        canCurrentUserSend: side === ConversationSide.APPLICANT,
+      expect(
+        service.summary(
+          active,
+          {
+            hasMessages: true,
+            applicantRepliesEnabled: true,
+            historicalUnreadMessageCount: 1,
+          },
+          side,
+        ),
+      ).toMatchObject({
+        hasMessages: true,
+        canCurrentUserSend: true,
+        sendBlockReason: null,
       });
     },
   );
-
-  it('allows only the provider to initiate an unopened conversation', () => {
-    const service = new ApplicationConversationReadService();
-    expect(
-      service.summary(active, null, ConversationSide.PROVIDER),
-    ).toMatchObject({ isOpen: false, canCurrentUserSend: true });
-    expect(
-      service.summary(active, null, ConversationSide.APPLICANT)
-        .canCurrentUserSend,
-    ).toBe(false);
-  });
-
-  it.each([
-    ApplicationStatus.WAITING,
-    ApplicationStatus.REJECTED,
-    ApplicationStatus.WITHDRAWN,
-    ApplicationStatus.ACCEPTED,
-  ])('makes %s conversation history read-only', (status) => {
-    expect(
-      new ApplicationConversationReadService().summary(
-        { ...active, status },
-        ConversationSide.PROVIDER,
-        ConversationSide.APPLICANT,
-      ),
-    ).toMatchObject({
-      isReadOnly: true,
-      expectedResponder: null,
-      canCurrentUserSend: false,
-    });
-  });
-
   function request(state?: ApplicationDocumentState, reviewed = false) {
     return {
       id: 'request',

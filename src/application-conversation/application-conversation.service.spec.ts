@@ -1,3 +1,4 @@
+import { ApplicationConversationAccessService } from './application-conversation-access.service';
 import { Test } from '@nestjs/testing';
 import { ApplicationActivityService } from '../applications/application-activity.service';
 import {
@@ -17,7 +18,11 @@ describe('ApplicationConversationService workflow state', () => {
     status: ApplicationStatus.ACTIVE,
     activeAt: new Date(),
     listing: { providerId: 'provider', status: ListingStatus.PUBLISHED },
-    conversation: { id: 'conversation', openedAt: new Date() },
+    conversation: {
+      id: 'conversation',
+      openedAt: new Date(),
+      applicantRepliesEnabled: true,
+    },
   };
   const lastMessage = {
     id: 'message',
@@ -42,6 +47,7 @@ describe('ApplicationConversationService workflow state', () => {
     const module = await Test.createTestingModule({
       providers: [
         ApplicationConversationService,
+        ApplicationConversationAccessService,
         {
           provide: PrismaService,
           useValue: {
@@ -56,31 +62,35 @@ describe('ApplicationConversationService workflow state', () => {
     service = module.get(ApplicationConversationService);
   });
 
-  it('reports the applicant turn after a provider message', async () => {
-    await expect(
-      service.summary('application', 'applicant', ConversationSide.APPLICANT),
-    ).resolves.toMatchObject({
-      isOpen: true,
-      canCurrentUserSend: true,
-      expectedResponder: ConversationSide.APPLICANT,
-      unreadCount: 1,
-    });
-    await expect(
-      service.summary('application', 'provider', ConversationSide.PROVIDER),
-    ).resolves.toHaveProperty('canCurrentUserSend', false);
+  it('allows both participants independently of the last sender when replies are enabled', async () => {
+    for (const sender of [
+      ConversationSide.PROVIDER,
+      ConversationSide.APPLICANT,
+    ]) {
+      messages.snapshot.mockResolvedValue({
+        lastMessage: { ...lastMessage, senderType: sender },
+        unreadCount: 1,
+      });
+      for (const side of [
+        ConversationSide.PROVIDER,
+        ConversationSide.APPLICANT,
+      ]) {
+        await expect(
+          service.summary(
+            'application',
+            side === ConversationSide.PROVIDER ? 'provider' : 'applicant',
+            side,
+          ),
+        ).resolves.toMatchObject({
+          hasMessages: true,
+          applicantRepliesEnabled: true,
+          canCurrentUserSend: true,
+          sendBlockReason: null,
+        });
+      }
+    }
   });
-
-  it('reports the provider turn after an applicant message', async () => {
-    messages.snapshot.mockResolvedValue({
-      lastMessage: { ...lastMessage, senderType: ConversationSide.APPLICANT },
-      unreadCount: 1,
-    });
-    await expect(
-      service.summary('application', 'provider', ConversationSide.PROVIDER),
-    ).resolves.toHaveProperty('canCurrentUserSend', true);
-  });
-
-  it('only allows the provider to initiate a closed conversation', async () => {
+  it('blocks applicant replies by default without blocking the provider', async () => {
     tx.application.findUnique.mockResolvedValue({
       ...application,
       conversation: null,
@@ -88,16 +98,17 @@ describe('ApplicationConversationService workflow state', () => {
     await expect(
       service.summary('application', 'provider', ConversationSide.PROVIDER),
     ).resolves.toMatchObject({
-      isOpen: false,
+      hasMessages: false,
       canCurrentUserSend: true,
-      conversationId: null,
-      expectedResponder: ConversationSide.PROVIDER,
+      applicantRepliesEnabled: false,
     });
     await expect(
       service.summary('application', 'applicant', ConversationSide.APPLICANT),
-    ).resolves.toHaveProperty('canCurrentUserSend', false);
+    ).resolves.toMatchObject({
+      canCurrentUserSend: false,
+      sendBlockReason: 'APPLICANT_REPLIES_DISABLED',
+    });
   });
-
   it.each([
     ApplicationStatus.REJECTED,
     ApplicationStatus.WITHDRAWN,
@@ -107,9 +118,9 @@ describe('ApplicationConversationService workflow state', () => {
     await expect(
       service.summary('application', 'provider', ConversationSide.PROVIDER),
     ).resolves.toMatchObject({
-      isOpen: true,
+      hasMessages: true,
       canCurrentUserSend: false,
-      expectedResponder: null,
+      sendBlockReason: 'LIFECYCLE_READ_ONLY',
     });
   });
 

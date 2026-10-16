@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import {
@@ -12,11 +11,14 @@ import {
   ConversationSide,
 } from '../generated/prisma/enums';
 import { ApplicationActivityService } from '../applications/application-activity.service';
-import { providerApplicationIsVisible } from '../applications/application-process.policy';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationMessageService } from './application-message.service';
-import { conversationResponsibility } from './application-conversation.policy';
+import { conversationCapabilities } from './application-conversation.policy';
+import {
+  ApplicationConversationAccessService,
+  type ConversationApplication,
+} from './application-conversation-access.service';
 import { ConversationQueryDto } from './dto/conversation-query.dto';
 import {
   ApplicationMessageResponseDto,
@@ -25,26 +27,13 @@ import {
   MarkConversationReadResponseDto,
 } from './dto/conversation-response.dto';
 
-const conversationApplicationSelect = {
-  id: true,
-  listingId: true,
-  applicantId: true,
-  status: true,
-  activeAt: true,
-  listing: { select: { providerId: true, status: true } },
-  conversation: { select: { id: true, openedAt: true } },
-} satisfies Prisma.ApplicationSelect;
-
-type ConversationApplication = Prisma.ApplicationGetPayload<{
-  select: typeof conversationApplicationSelect;
-}>;
-
 @Injectable()
 export class ApplicationConversationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly messages: ApplicationMessageService,
     private readonly activity: ApplicationActivityService,
+    private readonly access: ApplicationConversationAccessService,
   ) {}
 
   summary(
@@ -54,7 +43,7 @@ export class ApplicationConversationService {
   ): Promise<ConversationSummaryResponseDto> {
     return this.prisma.$transaction(
       async (tx) => {
-        const application = await this.authorize(
+        const application = await this.access.authorize(
           tx,
           applicationId,
           userId,
@@ -74,7 +63,7 @@ export class ApplicationConversationService {
   ): Promise<ConversationDetailResponseDto> {
     return this.prisma.$transaction(
       async (tx) => {
-        const application = await this.authorize(
+        const application = await this.access.authorize(
           tx,
           applicationId,
           userId,
@@ -101,7 +90,7 @@ export class ApplicationConversationService {
     body: string,
   ): Promise<ApplicationMessageResponseDto> {
     return runSerializableTransaction(this.prisma, async (tx) => {
-      const application = await this.lockAndAuthorize(
+      const application = await this.access.lockAndAuthorize(
         tx,
         applicationId,
         userId,
@@ -158,7 +147,7 @@ export class ApplicationConversationService {
     throughSequence: number,
   ): Promise<MarkConversationReadResponseDto> {
     return runSerializableTransaction(this.prisma, async (tx) => {
-      const application = await this.lockAndAuthorize(
+      const application = await this.access.lockAndAuthorize(
         tx,
         applicationId,
         userId,
@@ -187,40 +176,6 @@ export class ApplicationConversationService {
     });
   }
 
-  private async authorize(
-    tx: Prisma.TransactionClient,
-    applicationId: string,
-    userId: string,
-    side: ConversationSide,
-  ): Promise<ConversationApplication> {
-    const application = await tx.application.findUnique({
-      where: { id: applicationId },
-      select: conversationApplicationSelect,
-    });
-    const authorized =
-      application &&
-      (side === ConversationSide.PROVIDER
-        ? application.listing.providerId === userId &&
-          providerApplicationIsVisible(application)
-        : application.applicantId === userId);
-    if (!authorized || !application) {
-      throw new NotFoundException('Application not found');
-    }
-    return application;
-  }
-
-  private async lockAndAuthorize(
-    tx: Prisma.TransactionClient,
-    applicationId: string,
-    userId: string,
-    side: ConversationSide,
-  ): Promise<ConversationApplication> {
-    const reference = await this.authorize(tx, applicationId, userId, side);
-    await tx.$queryRaw`SELECT id FROM "listings" WHERE id = ${reference.listingId}::uuid FOR UPDATE`;
-    await tx.$queryRaw`SELECT id FROM "applications" WHERE id = ${applicationId}::uuid FOR UPDATE`;
-    return this.authorize(tx, applicationId, userId, side);
-  }
-
   private async toSummary(
     tx: Prisma.TransactionClient,
     application: ConversationApplication,
@@ -229,18 +184,17 @@ export class ApplicationConversationService {
     const snapshot = application.conversation
       ? await this.messages.snapshot(tx, application.conversation.id, side)
       : { lastMessage: null, unreadCount: 0 };
-    const isOpen = snapshot.lastMessage !== null;
-    const { expectedResponder } = conversationResponsibility(
+    const capabilities = conversationCapabilities(
       application,
-      snapshot.lastMessage?.senderType ?? null,
+      application.conversation?.applicantRepliesEnabled ?? false,
+      side,
     );
     return new ConversationSummaryResponseDto(
       application.id,
       application.conversation?.id ?? null,
       application.conversation?.openedAt ?? null,
-      isOpen,
-      expectedResponder === side,
-      expectedResponder,
+      snapshot.lastMessage !== null,
+      capabilities,
       snapshot.unreadCount,
       snapshot.lastMessage ? this.messages.toDto(snapshot.lastMessage) : null,
     );

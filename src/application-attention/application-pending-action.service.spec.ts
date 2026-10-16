@@ -6,11 +6,10 @@ import {
 import { ApplicationPendingActionType as Action } from './application-pending-action';
 import {
   ApplicationStatus,
-  ConversationSide,
   ListingStatus,
   ApplicationDocumentState,
 } from '../generated/prisma/enums';
-import { conversationResponsibility } from '../application-conversation/application-conversation.policy';
+
 import { documentRequestCapabilities } from '../application-documents/application-document.policy';
 import {
   applicationProcessAllowsMutation,
@@ -51,8 +50,8 @@ describe('Application attention derivation', () => {
     listing: { status: ListingStatus.PUBLISHED },
   };
   const conversation = {
-    lastSender: ConversationSide.PROVIDER,
-    lastMessageAt: asOf,
+    hasMessages: true,
+    applicantRepliesEnabled: false,
     historicalUnreadMessageCount: 2,
   };
   const document: DocumentAttentionFact = {
@@ -69,7 +68,7 @@ describe('Application attention derivation', () => {
     pendingSince: asOf,
   };
 
-  it('keeps unread and reply responsibility separate after reading', () => {
+  it('does not create a pending action after messages are read', () => {
     const result = service.derive(
       application,
       'applicant',
@@ -78,17 +77,15 @@ describe('Application attention derivation', () => {
       [],
       asOf,
     );
-    expect(result.pendingActions.map((row) => row.type)).toEqual([
-      Action.RESPOND_TO_MESSAGE,
-    ]);
+    expect(result.pendingActions.map((row) => row.type)).toEqual([]);
     expect(result.actionableUnreadMessageCount).toBe(0);
   });
 
-  it('retains unread without inventing a reply when latest sender is this audience', () => {
+  it('retains unread independently of reply permission', () => {
     const result = service.derive(
       application,
       'applicant',
-      { ...conversation, lastSender: ConversationSide.APPLICANT },
+      { ...conversation, applicantRepliesEnabled: true },
       [],
       [],
       asOf,
@@ -104,8 +101,7 @@ describe('Application attention derivation', () => {
         'provider',
         {
           ...conversation,
-          lastSender: null,
-          lastMessageAt: null,
+          hasMessages: false,
           historicalUnreadMessageCount: 0,
         },
         [],
@@ -124,10 +120,9 @@ describe('Application attention derivation', () => {
       [viewing, viewing],
       asOf,
     );
-    expect(result.pendingActionCount).toBe(3);
+    expect(result.pendingActionCount).toBe(2);
     expect(result.hasPendingAction).toBe(true);
     expect(result.pendingActions.map((row) => row.type)).toEqual([
-      Action.RESPOND_TO_MESSAGE,
       Action.RESPOND_TO_VIEWING,
       Action.UPLOAD_REQUESTED_DOCUMENT,
     ]);
@@ -189,8 +184,7 @@ describe('Application attention derivation', () => {
       const facts = [{ ...viewing, nextAction }];
       const empty = {
         ...conversation,
-        lastSender: null,
-        lastMessageAt: null,
+        hasMessages: false,
         historicalUnreadMessageCount: 0,
       };
       expect(
@@ -250,13 +244,9 @@ describe('Application attention derivation', () => {
           [],
           asOf,
         );
-        expect(result.pendingActionCount).toBe(mutable ? 1 : 0);
+        expect(result.pendingActionCount).toBe(0);
         expect(result.historicalUnreadMessageCount).toBe(2);
         expect(result.actionableUnreadMessageCount).toBe(mutable ? 2 : 0);
-        expect(
-          conversationResponsibility(state, ConversationSide.PROVIDER)
-            .isReadOnly,
-        ).toBe(!mutable);
       });
     }
   }

@@ -88,7 +88,9 @@ describe('Application conversation E2E', () => {
   async function open() {
     return provider.agent
       .post(path('provider', '/messages'))
-      .send({ body: '  Hallo\nGrüße  ' })
+      .send({
+        body: '  Hallo\nGrüße  ',
+      })
       .expect(201);
   }
 
@@ -241,16 +243,17 @@ describe('Application conversation E2E', () => {
     }
   });
 
-  it('starts closed, denies applicant initiation and opens atomically with the first provider message', async () => {
+  it('starts with replies disabled and preserves that permission after a provider message', async () => {
     const closed = body(
       await applicant.agent.get(path('applicant')).expect(200),
     );
     expect(closed).toMatchObject({
       applicationId,
       conversationId: null,
-      isOpen: false,
+      hasMessages: false,
       canCurrentUserSend: false,
-      expectedResponder: 'PROVIDER',
+      applicantRepliesEnabled: false,
+      sendBlockReason: 'APPLICANT_REPLIES_DISABLED',
       unreadCount: 0,
       messages: [],
     });
@@ -285,66 +288,112 @@ describe('Application conversation E2E', () => {
     ).toBe(true);
   });
 
-  it('enforces alternating turns and separates unread counts from own sent messages', async () => {
+  async function setReplies(enabled: boolean) {
+    return provider.agent
+      .patch(path('provider', '/applicant-replies'))
+      .send({ applicantRepliesEnabled: enabled })
+      .expect(200);
+  }
+  it('supports repeated permission changes, consecutive sends, and idempotent audit', async () => {
     await open();
     await provider.agent
       .post(path('provider', '/messages'))
       .send({ body: 'Again' })
+      .expect(201);
+    await applicant.agent
+      .post(path('applicant', '/messages'))
+      .send({ body: 'Blocked' })
       .expect(409);
+    for (const enabled of [true, false, true, false]) {
+      await setReplies(enabled);
+      await setReplies(enabled);
+      await provider.agent
+        .post(path('provider', '/messages'))
+        .send({ body: 'Provider' })
+        .expect(201);
+      for (let n = 0; n < 2; n++)
+        await applicant.agent
+          .post(path('applicant', '/messages'))
+          .send({ body: 'Applicant' })
+          .expect(enabled ? 201 : 409);
+      expect(
+        body(
+          await applicant.agent.get(path('applicant', '/summary')).expect(200),
+        ),
+      ).toMatchObject({
+        applicantRepliesEnabled: enabled,
+        canCurrentUserSend: enabled,
+      });
+    }
     expect(
-      body(await provider.agent.get(path('provider', '/summary')).expect(200)),
-    ).toMatchObject({ unreadCount: 0, canCurrentUserSend: false });
+      await prisma.applicationActivity.count({
+        where: {
+          applicationId,
+          type: ApplicationActivityType.APPLICANT_REPLIES_ENABLED,
+        },
+      }),
+    ).toBe(2);
+    expect(
+      await prisma.applicationActivity.count({
+        where: {
+          applicationId,
+          type: ApplicationActivityType.APPLICANT_REPLIES_DISABLED,
+        },
+      }),
+    ).toBe(2);
+    expect(
+      body(
+        await applicant.agent.get(path('applicant', '/summary')).expect(200),
+      )['unreadCount'],
+    ).toBe(6);
+  });
+  it('enables an empty conversation without a first message', async () => {
+    await setReplies(true);
     expect(
       body(
         await applicant.agent.get(path('applicant', '/summary')).expect(200),
       ),
     ).toMatchObject({
-      unreadCount: 1,
+      hasMessages: false,
+      applicantRepliesEnabled: true,
       canCurrentUserSend: true,
-      expectedResponder: 'APPLICANT',
     });
     await applicant.agent
       .post(path('applicant', '/messages'))
-      .send({ body: 'Reply' })
+      .send({ body: 'First' })
       .expect(201);
-    await applicant.agent
-      .post(path('applicant', '/messages'))
-      .send({ body: 'Again' })
-      .expect(409);
-    await provider.agent
-      .post(path('provider', '/messages'))
-      .send({ body: 'Next' })
-      .expect(201);
-    const summary = body(
-      await applicant.agent.get(path('applicant', '/summary')).expect(200),
-    );
-    expect(summary).toMatchObject({
-      unreadCount: 2,
-      lastMessage: { sequence: 3, senderType: 'PROVIDER', body: 'Next' },
-    });
   });
-
+  it('does not create a conversation or audit for repeated default-disabled requests', async () => {
+    await setReplies(false);
+    await setReplies(false);
+    expect(await prisma.applicationConversation.count()).toBe(0);
+    expect(await prisma.applicationActivity.count()).toBe(0);
+  });
   it.each(['provider', 'applicant'] as const)(
     'serializes simultaneous %s sends in PostgreSQL',
     async (side) => {
-      if (side === 'applicant') await open();
+      if (side === 'applicant') {
+        await open();
+        await setReplies(true);
+      }
       const agent = side === 'provider' ? provider.agent : applicant.agent;
       const responses = await Promise.all([
         agent.post(path(side, '/messages')).send({ body: 'First race' }),
         agent.post(path(side, '/messages')).send({ body: 'Second race' }),
       ]);
       expect(responses.map((response) => response.status).sort()).toEqual([
-        201, 409,
+        201, 201,
       ]);
       expect(await prisma.applicationConversation.count()).toBe(1);
       expect(await prisma.applicationMessage.count()).toBe(
-        side === 'provider' ? 1 : 2,
+        side === 'provider' ? 2 : 3,
       );
     },
   );
 
   it('marks only incoming messages through the observed cutoff and preserves later unread messages', async () => {
     await open();
+    await setReplies(true);
     await applicant.agent
       .post(path('applicant', '/messages'))
       .send({ body: 'Reply' })
@@ -396,6 +445,7 @@ describe('Application conversation E2E', () => {
 
   it('orders tied timestamps by sequence and paginates without leaking internal fields', async () => {
     await open();
+    await setReplies(true);
     await applicant.agent
       .post(path('applicant', '/messages'))
       .send({ body: 'Reply' })
@@ -495,6 +545,7 @@ describe('Application conversation E2E', () => {
       data: { status: ListingStatus.PAUSED },
     });
     await open();
+    await setReplies(true);
     await applicant.agent
       .post(path('applicant', '/messages'))
       .send({ body: 'Paused reply' })
@@ -509,7 +560,7 @@ describe('Application conversation E2E', () => {
       .expect(409);
     expect(
       body(await applicant.agent.get(path('applicant')).expect(200)),
-    ).toMatchObject({ isOpen: true, canCurrentUserSend: false });
+    ).toMatchObject({ hasMessages: true, canCurrentUserSend: false });
   });
 
   it.each([
@@ -518,6 +569,7 @@ describe('Application conversation E2E', () => {
     ApplicationStatus.ACCEPTED,
   ])('keeps history readable and rejects sending when %s', async (status) => {
     await open();
+    await setReplies(true);
     await prisma.application.update({
       where: { id: applicationId },
       data: { status },
@@ -525,9 +577,9 @@ describe('Application conversation E2E', () => {
     for (const side of ['provider', 'applicant'] as const) {
       const agent = side === 'provider' ? provider.agent : applicant.agent;
       expect(body(await agent.get(path(side)).expect(200))).toMatchObject({
-        isOpen: true,
+        hasMessages: true,
         canCurrentUserSend: false,
-        expectedResponder: null,
+        sendBlockReason: 'LIFECYCLE_READ_ONLY',
         messages: [{ sequence: 1 }],
       });
       await agent
@@ -556,36 +608,40 @@ describe('Application conversation E2E', () => {
     ).toMatchObject({ canCurrentUserSend: false, messages: [{ sequence: 1 }] });
   });
 
-  it('resumes the same conversation and turn after restoration to ACTIVE', async () => {
-    await open();
-    const before = await prisma.applicationConversation.findFirstOrThrow();
-    await provider.agent
-      .patch(`/api/v1/provider/applications/${applicationId}/reject`)
-      .expect(200);
-    await prisma.listingEvent.updateMany({
-      where: { applicationId },
-      data: { occurredAt: new Date(0) },
-    });
-    await provider.agent
-      .patch(`/api/v1/provider/applications/${applicationId}/restore`)
-      .expect(200);
-    await provider.agent
-      .post(path('provider', '/messages'))
-      .send({ body: 'Wrong turn' })
-      .expect(409);
-    await applicant.agent
-      .post(path('applicant', '/messages'))
-      .send({ body: 'Restored reply' })
-      .expect(201);
-    expect((await prisma.applicationConversation.findFirstOrThrow()).id).toBe(
-      before.id,
-    );
-    expect(
-      await prisma.applicationActivity.count({
-        where: { type: ApplicationActivityType.CONVERSATION_OPENED },
-      }),
-    ).toBe(1);
-  });
+  it.each([true, false])(
+    'preserves reply permission %s after restoration to ACTIVE',
+    async (enabled) => {
+      await open();
+      await setReplies(enabled);
+      const before = await prisma.applicationConversation.findFirstOrThrow();
+      await provider.agent
+        .patch(`/api/v1/provider/applications/${applicationId}/reject`)
+        .expect(200);
+      await prisma.listingEvent.updateMany({
+        where: { applicationId },
+        data: { occurredAt: new Date(0) },
+      });
+      await provider.agent
+        .patch(`/api/v1/provider/applications/${applicationId}/restore`)
+        .expect(200);
+      await provider.agent
+        .post(path('provider', '/messages'))
+        .send({ body: 'Restored provider message' })
+        .expect(201);
+      await applicant.agent
+        .post(path('applicant', '/messages'))
+        .send({ body: 'Restored reply' })
+        .expect(enabled ? 201 : 409);
+      expect((await prisma.applicationConversation.findFirstOrThrow()).id).toBe(
+        before.id,
+      );
+      expect(
+        await prisma.applicationActivity.count({
+          where: { type: ApplicationActivityType.CONVERSATION_OPENED },
+        }),
+      ).toBe(1);
+    },
+  );
 
   it('denies WAITING surfaces even for a previously opened conversation', async () => {
     await open();
@@ -691,7 +747,7 @@ describe('Application conversation E2E', () => {
           .get(`/api/v1/applicant/applications/${ownOther.id}/conversation`)
           .expect(200),
       ),
-    ).toMatchObject({ isOpen: false, messages: [] });
+    ).toMatchObject({ hasMessages: false, messages: [] });
     await prisma.user.update({
       where: { id: otherProvider.id },
       data: { role: Role.ADMIN },
@@ -718,6 +774,203 @@ describe('Application conversation E2E', () => {
     expect(await prisma.applicationActivity.count()).toBe(0);
   });
 
+  it('isolates permission changes by authentication, role, ownership and lifecycle', async () => {
+    const foreign = await register('provider');
+    await foreign.agent
+      .patch(path('provider', '/applicant-replies'))
+      .send({ applicantRepliesEnabled: true })
+      .expect(404);
+    await applicant.agent
+      .patch(path('provider', '/applicant-replies'))
+      .send({ applicantRepliesEnabled: true })
+      .expect(403);
+    await request
+      .agent(server)
+      .ca(certificate)
+      .patch(path('provider', '/applicant-replies'))
+      .send({ applicantRepliesEnabled: true })
+      .expect(401);
+    for (const value of ['false', 'true', 0, 1, null])
+      await provider.agent
+        .patch(path('provider', '/applicant-replies'))
+        .send({ applicantRepliesEnabled: value })
+        .expect(400);
+    await provider.agent
+      .patch(path('provider', '/applicant-replies'))
+      .send({})
+      .expect(400);
+    await setReplies(true);
+    await prisma.application.update({
+      where: { id: applicationId },
+      data: { status: ApplicationStatus.REJECTED },
+    });
+    await provider.agent
+      .patch(path('provider', '/applicant-replies'))
+      .send({ applicantRepliesEnabled: false })
+      .expect(409);
+    expect(
+      (await prisma.applicationConversation.findFirstOrThrow())
+        .applicantRepliesEnabled,
+    ).toBe(true);
+  });
+  it.each([true, false])(
+    'serializes permission change to %s against applicant sending',
+    async (enabled) => {
+      await setReplies(!enabled);
+      const [toggle, send] = await Promise.all([
+        provider.agent
+          .patch(path('provider', '/applicant-replies'))
+          .send({ applicantRepliesEnabled: enabled }),
+        applicant.agent
+          .post(path('applicant', '/messages'))
+          .send({ body: 'Racing reply' }),
+      ]);
+      expect(toggle.status).toBe(200);
+      expect([201, 409]).toContain(send.status);
+      const summary = body(
+        await applicant.agent.get(path('applicant', '/summary')).expect(200),
+      );
+      expect(summary).toMatchObject({
+        applicantRepliesEnabled: enabled,
+        canCurrentUserSend: enabled,
+      });
+      await applicant.agent
+        .post(path('applicant', '/messages'))
+        .send({ body: 'After commit' })
+        .expect(enabled ? 201 : 409);
+    },
+  );
+  it('serializes opposite permission requests and produces matching audit state', async () => {
+    await setReplies(true);
+    const results = await Promise.all(
+      [true, false].map((applicantRepliesEnabled) =>
+        provider.agent
+          .patch(path('provider', '/applicant-replies'))
+          .send({ applicantRepliesEnabled }),
+      ),
+    );
+    expect(results.map((result) => result.status)).toEqual([200, 200]);
+    const conversation =
+      await prisma.applicationConversation.findFirstOrThrow();
+    const enabledEvents = await prisma.applicationActivity.count({
+      where: { type: ApplicationActivityType.APPLICANT_REPLIES_ENABLED },
+    });
+    const disabledEvents = await prisma.applicationActivity.count({
+      where: { type: ApplicationActivityType.APPLICANT_REPLIES_DISABLED },
+    });
+    expect(disabledEvents).toBe(1);
+    expect(enabledEvents - disabledEvents).toBe(
+      conversation.applicantRepliesEnabled ? 1 : 0,
+    );
+    expect(
+      body(
+        await applicant.agent.get(path('applicant', '/summary')).expect(200),
+      ),
+    ).toMatchObject({
+      applicantRepliesEnabled: conversation.applicantRepliesEnabled,
+      canCurrentUserSend: conversation.applicantRepliesEnabled,
+    });
+  });
+  it('returns consistent capabilities in conversation, workspace, overview and attention', async () => {
+    for (const enabled of [true, false]) {
+      await setReplies(enabled);
+      for (const side of ['provider', 'applicant'] as const) {
+        const agent = side === 'provider' ? provider.agent : applicant.agent;
+        const summary = body(
+          await agent.get(path(side, '/summary')).expect(200),
+        );
+        const detail = body(await agent.get(path(side)).expect(200));
+        const workspace = body(
+          await agent
+            .get(`/api/v1/${side}/applications/${applicationId}/workspace`)
+            .expect(200),
+        );
+        const attention = body(
+          await agent
+            .get(`/api/v1/${side}/applications/${applicationId}/attention`)
+            .expect(200),
+        );
+        const capabilities = {
+          hasMessages: false,
+          applicantRepliesEnabled: enabled,
+          canCurrentUserSend: side === 'provider' || enabled,
+          canCurrentUserManageApplicantReplies: side === 'provider',
+          sendBlockReason:
+            side === 'applicant' && !enabled
+              ? 'APPLICANT_REPLIES_DISABLED'
+              : null,
+        };
+        expect(summary).toMatchObject(capabilities);
+        expect(detail).toMatchObject(capabilities);
+        expect(workspace['conversationSummary']).toEqual(capabilities);
+        expect(attention['conversation']).toEqual(capabilities);
+        const overview = body(
+          await agent
+            .get(
+              side === 'provider'
+                ? `/api/v1/provider/listings/${listingId}/application-overview`
+                : '/api/v1/applicant/applications/overview',
+            )
+            .expect(200),
+        );
+        const cards =
+          overview[side === 'provider' ? 'activeApplications' : 'items'];
+        if (!Array.isArray(cards))
+          throw new Error('Expected application cards');
+        const card: unknown = cards.find(
+          (row: unknown) =>
+            isRecord(row) && row['applicationId'] === applicationId,
+        );
+        if (!isRecord(card)) throw new Error('Missing application card');
+        if (side === 'applicant')
+          expect(card['conversation']).toEqual(capabilities);
+      }
+    }
+  });
+  it('rolls back permission and audit when transition activity fails', async () => {
+    await open();
+    const activity = app.get(ApplicationActivityService);
+    const original = activity.appendWithinTransaction.bind(activity);
+    jest
+      .spyOn(activity, 'appendWithinTransaction')
+      .mockImplementation((tx, input) => {
+        if (input.type === ApplicationActivityType.APPLICANT_REPLIES_ENABLED)
+          throw new Error('Injected permission activity failure');
+        return original(tx, input);
+      });
+    await provider.agent
+      .patch(path('provider', '/applicant-replies'))
+      .send({ applicantRepliesEnabled: true })
+      .expect(500);
+    expect(
+      (await prisma.applicationConversation.findFirstOrThrow())
+        .applicantRepliesEnabled,
+    ).toBe(false);
+    expect(
+      await prisma.applicationActivity.count({
+        where: { type: ApplicationActivityType.APPLICANT_REPLIES_ENABLED },
+      }),
+    ).toBe(0);
+  });
+  it('serializes lifecycle termination against permission changes', async () => {
+    await open();
+    const [toggle, withdrawal] = await Promise.all([
+      provider.agent
+        .patch(path('provider', '/applicant-replies'))
+        .send({ applicantRepliesEnabled: true }),
+      applicant.agent.delete(`/api/v1/applicant/applications/${applicationId}`),
+    ]);
+    expect([200, 409, 404]).toContain(toggle.status);
+    expect(withdrawal.status).toBe(200);
+    expect(
+      body(
+        await applicant.agent.get(path('applicant', '/summary')).expect(200),
+      ),
+    ).toMatchObject({
+      canCurrentUserSend: false,
+      sendBlockReason: 'LIFECYCLE_READ_ONLY',
+    });
+  });
   it('validates IDs, pagination and read input at HTTP boundaries', async () => {
     await provider.agent
       .get('/api/v1/provider/applications/not-a-uuid/conversation')
