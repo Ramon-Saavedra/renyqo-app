@@ -8,6 +8,7 @@ import {
   ApplicationActivityVisibility,
   ConversationSide,
 } from '../generated/prisma/enums';
+import { ConversationOutboxProducer } from '../outbox/conversation-outbox.producer';
 import { ApplicationConversationAccessService } from './application-conversation-access.service';
 import { conversationCapabilities } from './application-conversation.policy';
 
@@ -17,6 +18,7 @@ export class ApplicationConversationPermissionService {
     private readonly prisma: PrismaService,
     private readonly access: ApplicationConversationAccessService,
     private readonly activity: ApplicationActivityService,
+    private readonly outbox: ConversationOutboxProducer,
   ) {}
   setApplicantReplies(applicationId: string, userId: string, enabled: boolean) {
     return runSerializableTransaction(this.prisma, async (tx) => {
@@ -40,6 +42,8 @@ export class ApplicationConversationPermissionService {
         );
       }
       if (current !== enabled) {
+        const occurredAt = new Date();
+        let conversationId = application.conversation?.id;
         if (application.conversation) {
           await tx.applicationConversation.update({
             where: { id: application.conversation.id },
@@ -49,6 +53,7 @@ export class ApplicationConversationPermissionService {
           const conversation = await tx.applicationConversation.create({
             data: { applicationId, applicantRepliesEnabled: enabled },
           });
+          conversationId = conversation.id;
           await this.activity.appendWithinTransaction(tx, {
             applicationId,
             type: ApplicationActivityType.CONVERSATION_OPENED,
@@ -67,6 +72,14 @@ export class ApplicationConversationPermissionService {
           actorType: ApplicationActivityActorType.PROVIDER,
           visibility: ApplicationActivityVisibility.BOTH,
         });
+        if (conversationId) {
+          await this.outbox.replyPermissionChanged(tx, {
+            applicationId,
+            conversationId,
+            occurredAt,
+            enabled,
+          });
+        }
       }
       return conversationCapabilities(
         application,

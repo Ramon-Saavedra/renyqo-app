@@ -2,6 +2,7 @@ import { ApplicationConversationAccessService } from './application-conversation
 import { ApplicationConversationPermissionService } from './application-conversation-permission.service';
 import { Module } from '@nestjs/common';
 import { ApplicationsModule } from '../applications/applications.module';
+import { OutboxModule } from '../outbox/outbox.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ApplicationConversationService } from './application-conversation.service';
 import { ApplicationMessageService } from './application-message.service';
@@ -9,7 +10,7 @@ import { ApplicantConversationController } from './applicant-conversation.contro
 import { ProviderConversationController } from './provider-conversation.controller';
 
 @Module({
-  imports: [PrismaModule, ApplicationsModule],
+  imports: [PrismaModule, ApplicationsModule, OutboxModule],
   controllers: [
     ProviderConversationController,
     ApplicantConversationController,

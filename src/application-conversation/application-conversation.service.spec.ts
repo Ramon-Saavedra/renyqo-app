@@ -8,6 +8,7 @@ import {
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplicationConversationService } from './application-conversation.service';
+import { ConversationOutboxProducer } from '../outbox/conversation-outbox.producer';
 import { ApplicationMessageService } from './application-message.service';
 
 describe('ApplicationConversationService workflow state', () => {
@@ -57,6 +58,13 @@ describe('ApplicationConversationService workflow state', () => {
         },
         { provide: ApplicationMessageService, useValue: messages },
         { provide: ApplicationActivityService, useValue: {} },
+        {
+          provide: ConversationOutboxProducer,
+          useValue: {
+            messageCreated: jest.fn(),
+            readAdvanced: jest.fn(),
+          },
+        },
       ],
     }).compile();
     service = module.get(ApplicationConversationService);

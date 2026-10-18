@@ -524,3 +524,23 @@ model UserSession {
   @@index([expire], map: "IDX_user_sessions_expire")
   @@map("user_sessions")
 }
+
+model OutboxEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  type           String    @db.VarChar(120)
+  schemaVersion  Int       @default(1) @map("schema_version")
+  applicationId  String    @map("application_id") @db.Uuid
+  conversationId String    @map("conversation_id") @db.Uuid
+  payload        Json      @db.JsonB
+  occurredAt     DateTime  @map("occurred_at") @db.Timestamp(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
+  dispatchedAt   DateTime? @map("dispatched_at") @db.Timestamp(3)
+  nextAttemptAt  DateTime  @default(now()) @map("next_attempt_at") @db.Timestamp(3)
+  attemptCount   Int       @default(0) @map("attempt_count")
+  claimToken     String?   @map("claim_token") @db.Uuid
+  claimedUntil   DateTime? @map("claimed_until") @db.Timestamp(3)
+  lastError      String?   @map("last_error") @db.VarChar(500)
+
+  @@index([nextAttemptAt, createdAt], map: "outbox_events_dispatch_queue_idx")
+  @@map("outbox_events")
+}

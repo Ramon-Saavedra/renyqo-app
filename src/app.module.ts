@@ -4,6 +4,7 @@ import { ApplicationAttentionModule } from './application-attention/application-
 import { ApplicationViewingsModule } from './application-viewings/application-viewings.module';
 import { ApplicationDocumentsModule } from './application-documents/application-documents.module';
 import { ApplicationConversationModule } from './application-conversation/application-conversation.module';
+import { OutboxModule } from './outbox/outbox.module';
 import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env.validation';
 import { ApplicantListingActionsModule } from './applicant-listing-actions/applicant-listing-actions.module';
@@ -33,6 +34,7 @@ import { ListingAssistanceModule } from './listing-assistance/listing-assistance
     ListingImagesModule,
     ApplicationsModule,
     ApplicationConversationModule,
+    OutboxModule,
     ApplicationDocumentsModule,
     ApplicationViewingsModule,
     ApplicationAttentionModule,
