@@ -13,6 +13,7 @@ import {
 import { ApplicationActivityService } from '../applications/application-activity.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import { ConversationOutboxProducer } from '../outbox/conversation-outbox.producer';
 import { ApplicationMessageService } from './application-message.service';
 import { conversationCapabilities } from './application-conversation.policy';
 import {
@@ -34,6 +35,7 @@ export class ApplicationConversationService {
     private readonly messages: ApplicationMessageService,
     private readonly activity: ApplicationActivityService,
     private readonly access: ApplicationConversationAccessService,
+    private readonly outbox: ConversationOutboxProducer,
   ) {}
 
   summary(
@@ -136,6 +138,13 @@ export class ApplicationConversationService {
         visibility: ApplicationActivityVisibility.BOTH,
         occurredAt: message.createdAt,
       });
+      await this.outbox.messageCreated(tx, {
+        applicationId,
+        conversationId,
+        occurredAt: message.createdAt,
+        messageId: message.id,
+        messageSequence: message.sequence,
+      });
       return this.messages.toDto(message);
     });
   }
@@ -172,6 +181,16 @@ export class ApplicationConversationService {
         side,
         throughSequence,
       );
+      if (count > 0) {
+        await this.outbox.readAdvanced(tx, {
+          applicationId,
+          conversationId: application.conversation.id,
+          occurredAt: new Date(),
+          readerSide: side,
+          throughSequence,
+          markedCount: count,
+        });
+      }
       return new MarkConversationReadResponseDto(count);
     });
   }
