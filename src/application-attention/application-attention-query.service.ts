@@ -20,6 +20,7 @@ import {
 } from './attention-projection';
 import {
   ApplicationAttentionResponseDto,
+  ApplicationAttentionSummaryDto,
   ApplicationAttentionListItemDto,
   AttentionAggregateResponseDto,
   AttentionBatchResponseDto,
@@ -28,15 +29,24 @@ import {
   ListingAttentionTotalsDto,
 } from './dto/attention-response.dto';
 
-const applicationSelect = {
+const attentionCompositionApplicationSelect = {
   id: true,
   listingId: true,
   status: true,
   listing: { select: { status: true } },
 } satisfies Prisma.ApplicationSelect;
 
-type AttentionApplication = Prisma.ApplicationGetPayload<{
-  select: typeof applicationSelect;
+const attentionListItemApplicationSelect = {
+  ...attentionCompositionApplicationSelect,
+  listing: { select: { status: true, title: true, city: true } },
+} satisfies Prisma.ApplicationSelect;
+
+type AttentionCompositionApplication = Prisma.ApplicationGetPayload<{
+  select: typeof attentionCompositionApplicationSelect;
+}>;
+
+type AttentionListItemApplication = Prisma.ApplicationGetPayload<{
+  select: typeof attentionListItemApplicationSelect;
 }>;
 
 @Injectable()
@@ -60,7 +70,7 @@ export class ApplicationAttentionQueryService {
         const asOf = this.clock.now();
         const applications = await tx.application.findMany({
           where: { AND: [this.scope(userId, audience), { id: applicationId }] },
-          select: applicationSelect,
+          select: attentionCompositionApplicationSelect,
         });
         if (!applications.length)
           throw new NotFoundException('Application not found');
@@ -89,7 +99,7 @@ export class ApplicationAttentionQueryService {
             where: {
               AND: [this.scope(userId, audience), { id: { in: requested } }],
             },
-            select: applicationSelect,
+            select: attentionListItemApplicationSelect,
             orderBy: { id: 'asc' },
           });
           if (applications.length !== requested.length)
@@ -97,14 +107,7 @@ export class ApplicationAttentionQueryService {
           const rows = await this.deriveBatch(tx, applications, audience, asOf);
           for (const application of applications) {
             const summary = rows.get(application.id);
-            if (summary)
-              items.push(
-                new ApplicationAttentionListItemDto(
-                  application.id,
-                  application.listingId,
-                  summary,
-                ),
-              );
+            if (summary) items.push(this.toListItem(application, summary));
           }
         }
         items.sort((a, b) =>
@@ -146,6 +149,8 @@ export class ApplicationAttentionQueryService {
           listings.map((row) => [row.id, []]),
         );
         const all: ApplicationAttentionListItemDto[] = [];
+        let nextRevalidateAt: Date | null = null;
+        const listingRevalidations = new Map<string, Date>();
         let cursor: string | undefined;
         for (;;) {
           const applications = await tx.application.findMany({
@@ -155,7 +160,7 @@ export class ApplicationAttentionQueryService {
                 listingId ? { listingId } : {},
               ],
             },
-            select: applicationSelect,
+            select: attentionListItemApplicationSelect,
             orderBy: { id: 'asc' },
             take: 200,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -165,11 +170,25 @@ export class ApplicationAttentionQueryService {
           for (const application of applications) {
             const summary = rows.get(application.id);
             if (!summary) continue;
-            const item = new ApplicationAttentionListItemDto(
-              application.id,
-              application.listingId,
-              summary,
-            );
+            const item = this.toListItem(application, summary);
+            if (!listingItems.has(application.listingId))
+              listingItems.set(application.listingId, []);
+            // Quiet applications can acquire viewing obligations as time passes.
+            // Keep their refresh boundaries even when they are not menu entries.
+            const boundary = item.nextRevalidateAt;
+            if (boundary) {
+              if (!nextRevalidateAt || boundary < nextRevalidateAt)
+                nextRevalidateAt = boundary;
+              const previous = listingRevalidations.get(application.listingId);
+              if (!previous || boundary < previous)
+                listingRevalidations.set(application.listingId, boundary);
+            }
+            if (
+              query.filter === 'actionable' &&
+              !item.hasPendingAction &&
+              item.actionableUnreadMessageCount === 0
+            )
+              continue;
             all.push(item);
             const group = listingItems.get(application.listingId) ?? [];
             group.push(item);
@@ -178,14 +197,31 @@ export class ApplicationAttentionQueryService {
           if (applications.length < 200) break;
           cursor = applications.at(-1)?.id;
         }
+        if (query.filter === 'actionable') {
+          // Obligations precede message-only attention; IDs break all ties.
+          all.sort(
+            (a, b) =>
+              Number(b.hasPendingAction) - Number(a.hasPendingAction) ||
+              b.pendingActionCount - a.pendingActionCount ||
+              b.actionableUnreadMessageCount - a.actionableUnreadMessageCount ||
+              (a.applicationId < b.applicationId
+                ? -1
+                : a.applicationId > b.applicationId
+                  ? 1
+                  : 0),
+          );
+        }
         return new AttentionAggregateResponseDto(
           asOf,
-          this.totals(all),
+          this.totals(all, nextRevalidateAt),
           [...listingItems]
             .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
             .map(
               ([id, items]) =>
-                new ListingAttentionTotalsDto(id, this.totals(items)),
+                new ListingAttentionTotalsDto(
+                  id,
+                  this.totals(items, listingRevalidations.get(id) ?? null),
+                ),
             ),
           all.slice(query.offset, query.offset + query.limit),
           new AttentionPaginationDto(query.offset, query.limit, all.length),
@@ -206,7 +242,7 @@ export class ApplicationAttentionQueryService {
 
   private async deriveBatch(
     tx: Prisma.TransactionClient,
-    applications: readonly AttentionApplication[],
+    applications: readonly AttentionCompositionApplication[],
     audience: AttentionAudience,
     asOf: Date,
   ) {
@@ -217,7 +253,7 @@ export class ApplicationAttentionQueryService {
 
   async composeWithinTransaction(
     tx: Prisma.TransactionClient,
-    applications: readonly AttentionApplication[],
+    applications: readonly AttentionCompositionApplication[],
     audience: AttentionAudience,
     asOf: Date,
   ) {
@@ -283,7 +319,28 @@ export class ApplicationAttentionQueryService {
 
   private totals(
     items: readonly ApplicationAttentionListItemDto[],
+    nextRevalidateAt: Date | null,
   ): AttentionTotalsDto {
-    return summarizeAttentionTotals(items);
+    const totals = summarizeAttentionTotals(items);
+    return new AttentionTotalsDto(
+      totals.applicationsWithPendingActions,
+      totals.totalPendingActions,
+      totals.actionableUnreadMessageCount,
+      totals.categories,
+      nextRevalidateAt,
+    );
+  }
+
+  private toListItem(
+    application: AttentionListItemApplication,
+    summary: ApplicationAttentionSummaryDto,
+  ): ApplicationAttentionListItemDto {
+    return new ApplicationAttentionListItemDto(
+      application.id,
+      application.listingId,
+      application.listing.title,
+      application.listing.city,
+      summary,
+    );
   }
 }

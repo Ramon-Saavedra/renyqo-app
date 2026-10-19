@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsUUID, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 
 export class AttentionApplicationParamsDto {
   @IsUUID('4')
@@ -12,6 +12,10 @@ export class AttentionListingParamsDto {
 }
 
 export class AttentionQueryDto {
+  @IsOptional()
+  @IsIn(['all', 'actionable'])
+  filter?: 'all' | 'actionable';
+
   @Type(() => Number)
   @IsInt()
   @Min(0)

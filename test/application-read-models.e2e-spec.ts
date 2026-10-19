@@ -458,6 +458,102 @@ describe('Application read models E2E', () => {
     expect(pgClientQueryOverlapWarnings()).toEqual([]);
   });
 
+  it('keeps per-listing attention independent of selection and refreshes only after explicit read acknowledgement', async () => {
+    await prisma.listing.update({
+      where: { id: listingId },
+      data: { title: 'Zimmer in Nordhorn' },
+    });
+    const other = await prisma.listing.create({
+      data: {
+        providerId: provider.id,
+        displayOrder: 2,
+        status: ListingStatus.PUBLISHED,
+        title: 'Other property',
+      },
+    });
+    const unread = await message(applicationId, ConversationSide.APPLICANT);
+    await document(applicationId, ApplicationDocumentState.AVAILABLE);
+    await viewing(applicationId, ViewingStatus.CHANGE_REQUESTED);
+    const expected = {
+      applicationsWithPendingActions: 1,
+      totalPendingActions: 2,
+      actionableUnreadMessageCount: 1,
+      categories: {
+        documentUploadCount: 0,
+        documentReviewCount: 1,
+        viewingActionCount: 1,
+      },
+      nextRevalidateAt: null,
+    };
+    async function checkOverview(attention: typeof expected) {
+      const response = await get('provider', 'listings/overview');
+      expect(rows(response)).toHaveLength(2);
+      const nordhorn = rows(response).find(
+        (row) => nested(row, 'listing')['id'] === listingId,
+      );
+      const quiet = rows(response).find(
+        (row) => nested(row, 'listing')['id'] === other.id,
+      );
+      expect(nordhorn?.['attention']).toEqual(attention);
+      expect(quiet?.['attention']).toMatchObject({
+        totalPendingActions: 0,
+        actionableUnreadMessageCount: 0,
+      });
+      // A smaller listing page still summarizes every application of its listing.
+      expect(
+        rows(await get('provider', 'listings/overview?limit=1'))[0][
+          'attention'
+        ],
+      ).toEqual(attention);
+    }
+    await checkOverview(expected);
+    const selected = await get(
+      'provider',
+      `listings/${listingId}/application-overview`,
+    );
+    expect(selected['attention']).toEqual(expected);
+    const workspace = await get(
+      'provider',
+      `applications/${applicationId}/workspace`,
+    );
+    expect(nested(workspace, 'attention')).toMatchObject({
+      pendingActionCount: 2,
+      actionableUnreadMessageCount: 1,
+    });
+    await get('provider', `listings/${other.id}/application-overview`);
+    await checkOverview(expected);
+    expect(
+      (
+        await prisma.applicationMessage.findUniqueOrThrow({
+          where: { id: unread.id },
+        })
+      ).readAt,
+    ).toBeNull();
+    await provider.agent
+      .patch(`/api/v1/provider/applications/${applicationId}/conversation/read`)
+      .send({ throughSequence: 1 })
+      .expect(200);
+    await checkOverview({ ...expected, actionableUnreadMessageCount: 0 });
+    expect(
+      (await get('provider', `listings/${listingId}/application-overview`))[
+        'attention'
+      ],
+    ).toEqual({ ...expected, actionableUnreadMessageCount: 0 });
+    expect(
+      nested(
+        await get('provider', `applications/${applicationId}/workspace`),
+        'attention',
+      ),
+    ).toMatchObject({ pendingActionCount: 2, actionableUnreadMessageCount: 0 });
+    expect(
+      (
+        await prisma.applicationMessage.findUniqueOrThrow({
+          where: { id: unread.id },
+        })
+      ).readAt,
+    ).not.toBeNull();
+  });
+
   it('returns compact provider listing overview', async () => {
     const waitingApplicant = await register('applicant');
     await prisma.application.create({
@@ -656,6 +752,63 @@ describe('Application read models E2E', () => {
     expect(JSON.stringify(response)).not.toMatch(
       /Private message|passwordHash|storageKey|actorUserId|requestHash|queueOrder/,
     );
+  });
+
+  it('returns the current primary photo in both provider dashboard contracts', async () => {
+    async function expectImage(url: string | null) {
+      const overview = await get('provider', 'listings/overview');
+      const selected = await get(
+        'provider',
+        `listings/${listingId}/application-overview`,
+      );
+      expect(nested(rows(overview)[0], 'listing')['imageUrl']).toBe(url);
+      expect(nested(selected, 'listing')['imageUrl']).toBe(url);
+      expect(JSON.stringify([overview, selected])).not.toMatch(
+        /publicId|secureUrl|storageKey/,
+      );
+    }
+    await expectImage(null);
+    const firstId = randomUUID();
+    const coverId = randomUUID();
+    await prisma.listingImage.createMany({
+      data: [
+        {
+          id: firstId,
+          listingId,
+          publicId: 'internal/first',
+          secureUrl: 'https://images.example/first.jpg',
+          position: 0,
+          isCover: false,
+        },
+        {
+          id: coverId,
+          listingId,
+          publicId: 'internal/cover',
+          secureUrl: 'https://images.example/cover.jpg',
+          position: 10,
+          isCover: true,
+        },
+      ],
+    });
+    await expectImage('https://images.example/cover.jpg');
+    await prisma.$transaction(async (tx) => {
+      await tx.listingImage.update({
+        where: { id: coverId },
+        data: { isCover: false },
+      });
+      await tx.listingImage.update({
+        where: { id: firstId },
+        data: { isCover: true },
+      });
+    });
+    await expectImage('https://images.example/first.jpg');
+    await prisma.listingImage.updateMany({
+      where: { listingId },
+      data: { isCover: false },
+    });
+    await expectImage('https://images.example/first.jpg');
+    await prisma.listingImage.deleteMany({ where: { listingId } });
+    await expectImage(null);
   });
 
   it('selects only the authoritative cover image for applicant cards', async () => {

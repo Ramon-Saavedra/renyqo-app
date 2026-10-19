@@ -29,8 +29,20 @@ describe('ProviderActiveApplicationAttentionEnricher', () => {
   it('batches provider attention once and keeps summary fields', async () => {
     const batch = jest.fn().mockResolvedValue({
       items: [
-        new ApplicationAttentionListItemDto('first', 'listing', summary),
-        new ApplicationAttentionListItemDto('second', 'listing', summary),
+        new ApplicationAttentionListItemDto(
+          'first',
+          'listing',
+          'First listing',
+          'Munich',
+          summary,
+        ),
+        new ApplicationAttentionListItemDto(
+          'second',
+          'listing',
+          'Second listing',
+          'Hamburg',
+          summary,
+        ),
       ],
     });
     const module = await Test.createTestingModule({
