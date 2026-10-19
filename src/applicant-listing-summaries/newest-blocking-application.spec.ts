@@ -98,6 +98,8 @@ describe('newest blocking application selection', () => {
         new ApplicationAttentionListItemDto(
           HIGHER_APPLICATION_ID,
           LISTING_ID,
+          'Listing title',
+          'Leipzig',
           new ApplicationAttentionSummaryDto(
             0,
             0,

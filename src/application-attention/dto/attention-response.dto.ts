@@ -138,6 +138,8 @@ export class ApplicationAttentionListItemDto extends ApplicationAttentionSummary
   constructor(
     readonly applicationId: string,
     readonly listingId: string,
+    readonly listingTitle: string | null,
+    readonly listingCity: string | null,
     summary: ApplicationAttentionSummaryDto,
   ) {
     super(

@@ -147,11 +147,15 @@ export class ProviderApplicationOverviewQueryService {
           where: { providerId: userId },
         });
         const { totals } = await this.summaries(tx, userId, page, asOf);
+        const images = await this.workspace.coverImages(
+          tx,
+          page.map((row) => row.id),
+        );
         const items = page.map((row) => {
           const total = totals.get(row.id);
           if (!total) throw new Error('Missing listing summary');
           return new ProviderListingOverviewDto(
-            new CompactListingDto(row),
+            new CompactListingDto(row, images.get(row.id) ?? null),
             total.active,
             total.waiting,
             total.exited,
@@ -190,6 +194,7 @@ export class ProviderApplicationOverviewQueryService {
           select: compactListingSelect,
         });
         if (!listing) throw new NotFoundException('Listing not found');
+        const images = await this.workspace.coverImages(tx, [listing.id]);
         const active = await tx.application.findMany({
           where: { listingId, status: ApplicationStatus.ACTIVE },
           select: providerApplicationSelect,
@@ -231,7 +236,7 @@ export class ProviderApplicationOverviewQueryService {
         return new ProviderListingApplicationOverviewDto(
           asOf,
           new ProviderListingOverviewDto(
-            new CompactListingDto(listing),
+            new CompactListingDto(listing, images.get(listing.id) ?? null),
             totals.active,
             totals.waiting,
             totals.exited,

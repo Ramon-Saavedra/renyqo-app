@@ -23,6 +23,8 @@ describe('ApplicantListingAttentionEnricher', () => {
     return new ApplicationAttentionListItemDto(
       applicationId,
       listingId,
+      'Test listing',
+      'Berlin',
       summary,
     );
   }

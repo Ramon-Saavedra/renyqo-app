@@ -39,7 +39,11 @@ Applicant ordering uses submission time. There is no applicant quality ranking. 
 
 ## Compact contracts
 
-Listing identity contains `id`, `title`, `city`, `coldRent`, `status` and `imageUrl`. Applicant cards select one cover image, with fallback to the earliest position and an ID tie-breaker. They do not retrieve every image. Provider listing selection currently returns `imageUrl: null`, avoiding an unnecessary image read.
+Listing identity contains `id`, `title`, `city`, `coldRent`, `status` and `imageUrl`. Applicant cards and both provider dashboard summaries select one cover image, with fallback to the earliest position and an ID tie-breaker. They do not retrieve every image. `imageUrl` contains the stored browser-accessible `secureUrl`, never the Cloudinary `publicId` or a storage key; it is explicitly `null` when the listing has no photos.
+
+For “Meine Objekte”, use `items[i].listing.imageUrl` from `GET /api/v1/provider/listings/overview`. For “Ausgewähltes Objekt”, use `listing.imageUrl` from `GET /api/v1/provider/listings/:listingId/application-overview`. Both retain provider ownership checks and their existing response shape. Example listing identity: `{ "id": "11111111-1111-4111-8111-111111111111", "title": "Zimmer in Nordhorn", "city": "Nordhorn", "coldRent": 500, "status": "PUBLISHED", "imageUrl": "https://res.cloudinary.com/example/image/upload/cover.jpg" }`. Render a placeholder when `imageUrl` is null. Refresh both queries after changing the main photo. The provider frontend is not in this repository, so its actual request/mapping cannot be verified here.
+
+Previously both provider constructors omitted the image argument and therefore always serialized the DTO default `null`. Both now use the same batched image selector as applicant cards and workspaces, within the authorized read transaction. This does not change the legacy `/provider/listings` or `/provider/listings/:id` contracts: the legacy detail response exposes `images[].secureUrl` with `isCover`; its `photos` field is not the compact dashboard image field.
 
 Provider applicant rows contain `applicationId`, `status`, `submittedAt`, `activeAt`, `exitedAt`, `publicReason`, `applicant { name, peopleCount, introduction }` and compact `attention`. Attention adds category totals, navigation targets, document obligation indicators and `nextRevalidateAt` beside the existing counts. Unread stays outside the pending-action categories. Legacy `GET /provider/listings/:id/active-applications` now includes the same compact attention object.
 
@@ -89,7 +93,35 @@ Provider full-listing attention totals scan authorized application facts in batc
 
 ## Performance validation and indexes
 
-PostgreSQL-backed tests instrument actual driver SELECTs at 1, 25 and 101 applications, independently of HTTP/session queries. Applicant overviews use 14 SELECTs and provider listing overviews use 16 at each tested size. Selected-listing/workspace/history instrumentation also checks fixed query groups and database LIMITs or primary-key-bounded current-file reads as history grows.
+### Provider per-listing attention indicators
+
+`GET /api/v1/provider/listings/overview` returns attention for **each listing on the returned listing page**, independently of the selected listing. Follow `pagination.nextCursor` while `pagination.hasMore` to display additional listings (default limit 20, maximum 100). Listing pagination does not limit the applications summarized for each returned listing. Each `items[i]` contains:
+
+```json
+{
+  "listing": { "id": "11111111-1111-4111-8111-111111111111", "title": "Zimmer in Nordhorn", "city": "Nordhorn", "coldRent": 500, "status": "PUBLISHED", "imageUrl": null },
+  "activeApplicationsCount": 1,
+  "waitingCount": 0,
+  "exitedApplicationsCount": 0,
+  "attention": {
+    "applicationsWithPendingActions": 0,
+    "totalPendingActions": 0,
+    "actionableUnreadMessageCount": 1,
+    "categories": { "documentUploadCount": 0, "documentReviewCount": 0, "viewingActionCount": 0 },
+    "nextRevalidateAt": null
+  }
+}
+```
+
+This example illustrates a message-only listing; it is not a live account measurement. For ListingMatrix, match `items[i].listing.id` to DashboardObject and render `items[i].attention.actionableUnreadMessageCount` and `items[i].attention.totalPendingActions`, or the document/viewing category counts. Unread messages are separate from pending-action totals. A zero pending-action count does not mean there are no unread messages. `applicationsWithPendingActions` counts grouped applications with document/viewing obligations, not messages.
+
+Selected-listing `GET /api/v1/provider/listings/:listingId/application-overview` exposes the same totals at `attention`; application workspace exposes the same derivation for one application at `attention.actionableUnreadMessageCount` and `attention.pendingActionCount`. The listing summary aggregates every provider-visible application, not only the five applicant previews. Counts exclude historical unread on non-actionable application/listing states and incoming messages already acknowledged as read.
+
+These GETs do not mark messages as read. Only explicit `PATCH /api/v1/provider/applications/:applicationId/conversation/read` with `{ "throughSequence": 1 }` acknowledges incoming unread messages through that sequence. Subsequent GETs derive current counts from the database; no persisted badge cache is used. The frontend must invalidate/refetch the listing overview as well as selected-listing/workspace/conversation queries after successful acknowledgement, and refresh on incoming messages. Selecting a listing or loading the dashboard must not trigger the read PATCH. Refresh at `attention.nextRevalidateAt` for time-based viewing changes.
+
+Regression coverage uses two properties with an unread applicant message plus document and viewing obligations on Nordhorn. It checks listing-page totals, parity with selected-listing/workspace, unchanged unread state after selecting the other property, and refreshed counts after the actual read PATCH while document/viewing obligations remain.
+
+PostgreSQL-backed tests instrument actual driver SELECTs at 1, 25 and 101 applications, independently of HTTP/session queries. The current run measured 13 SELECTs for applicant overviews and 16 for provider listing overviews at each tested size; the provider path adds one batched image SELECT. Selected-listing/workspace/history instrumentation also checks fixed query groups and database LIMITs or primary-key-bounded current-file reads as history grows. Dashboard image regression coverage verifies a cover at a later position, a changed cover, fallback without a designated cover, and no photos in both HTTP responses.
 
 Representative EXPLAIN ANALYZE fixtures include 151 listings, 1001 applications and 1000 activity rows. Existing listing ordering and activity indexes support bounded preview reads. Applicant application ordering uses a small top-N sort at this tested scope. These measurements do not establish production-scale latency guarantees; no new index is justified by the current evidence. Reassess the applicant ordering query at materially larger real scopes.
 

@@ -194,6 +194,8 @@ describe('Application attention E2E', () => {
         providerId: provider.id,
         displayOrder: 1,
         status: ListingStatus.PUBLISHED,
+        title: '3-Zimmer-Wohnung in Santiago',
+        city: 'Santiago',
       },
     });
     listingId = listing.id;
@@ -803,6 +805,163 @@ describe('Application attention E2E', () => {
       .expect(400);
   });
 
+  it('retains quiet viewing refresh boundaries in actionable totals until an outcome becomes due', async () => {
+    const row = await viewing(ViewingStatus.ACCEPTED);
+    const readScoped = async () =>
+      body(
+        await provider.agent
+          .get(
+            `/api/v1/provider/listings/${listingId}/attention?filter=actionable`,
+          )
+          .expect(200),
+      );
+    for (const response of [
+      await aggregate('provider', '?filter=actionable'),
+      await readScoped(),
+      await aggregate('applicant', '?filter=actionable'),
+    ]) {
+      expect(items(response)).toEqual([]);
+      expect(response['pagination']).toMatchObject({ totalApplications: 0 });
+      expect(response['totals']).toMatchObject({
+        totalPendingActions: 0,
+        actionableUnreadMessageCount: 0,
+        nextRevalidateAt: row.endsAt.toISOString(),
+      });
+      expect(response['listings']).toEqual([
+        expect.objectContaining({
+          listingId,
+          totalPendingActions: 0,
+          nextRevalidateAt: row.endsAt.toISOString(),
+        }),
+      ]);
+    }
+    now = row.endsAt;
+    for (const response of [
+      await aggregate('provider', '?filter=actionable'),
+      await readScoped(),
+    ]) {
+      expect(items(response)).toEqual([
+        expect.objectContaining({ applicationId, pendingActionCount: 1 }),
+      ]);
+      expect(response['pagination']).toMatchObject({ totalApplications: 1 });
+      expect(response['totals']).toMatchObject({
+        totalPendingActions: 1,
+        nextRevalidateAt: null,
+      });
+      expect(response['listings']).toEqual([
+        expect.objectContaining({
+          listingId,
+          totalPendingActions: 1,
+          nextRevalidateAt: null,
+        }),
+      ]);
+    }
+  });
+
+  it.each(['applicant', 'provider'] as const)(
+    'filters %s attention before pagination beyond twenty quiet applications',
+    async (side) => {
+      const fixtures = Array.from({ length: 31 }, (_, index) => ({
+        listingId: randomUUID(),
+        applicationId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        displayOrder: index + 2,
+      }));
+      await prisma.listing.createMany({
+        data: fixtures.map((row) => ({
+          id: row.listingId,
+          providerId: provider.id,
+          displayOrder: row.displayOrder,
+          status: ListingStatus.PUBLISHED,
+          title: 'Zimmer in Nordhorn',
+        })),
+      });
+      await prisma.application.createMany({
+        data: fixtures.map((row) => ({
+          id: row.applicationId,
+          listingId: row.listingId,
+          applicantId: applicant.id,
+          status: ApplicationStatus.ACTIVE,
+          activeAt: now,
+        })),
+      });
+      const target = fixtures[20];
+      const doc = await document(
+        side === 'provider' ? ApplicationDocumentState.AVAILABLE : undefined,
+        1,
+        target.applicationId,
+      );
+      await prisma.applicationDocumentRequest.update({
+        where: { id: doc.request.id },
+        data: { type: ApplicationDocumentType.SCHUFA },
+      });
+      const legacy = await aggregate(side, '?limit=20');
+      expect(items(legacy)).toHaveLength(20);
+      expect(
+        items(legacy).every((item) => item['pendingActionCount'] === 0),
+      ).toBe(true);
+      const filtered = await aggregate(side, '?filter=actionable&limit=20');
+      expect(items(filtered)).toHaveLength(1);
+      expect(items(filtered)[0]).toMatchObject({
+        applicationId: target.applicationId,
+        listingTitle: 'Zimmer in Nordhorn',
+        pendingActionCount: 1,
+        documentIndicators: [expect.objectContaining({ type: 'SCHUFA' })],
+      });
+      expect(filtered['pagination']).toMatchObject({
+        totalApplications: 1,
+        hasMore: false,
+      });
+      const next = await aggregate(
+        side,
+        '?filter=actionable&limit=20&offset=20',
+      );
+      expect(items(next)).toEqual([]);
+      expect(next['totals']).toEqual(filtered['totals']);
+      if (side === 'provider') {
+        const scoped = body(
+          await provider.agent
+            .get(
+              `/api/v1/provider/listings/${target.listingId}/attention?filter=actionable`,
+            )
+            .expect(200),
+        );
+        expect(items(scoped)).toEqual(items(filtered));
+      }
+      await message(
+        side === 'provider'
+          ? ConversationSide.APPLICANT
+          : ConversationSide.PROVIDER,
+        1,
+        null,
+        fixtures[21].applicationId,
+      );
+      await viewing(
+        side === 'provider'
+          ? ViewingStatus.CHANGE_REQUESTED
+          : ViewingStatus.PROPOSED,
+        1,
+        fixtures[22].applicationId,
+      );
+      const mixed = await aggregate(side, '?filter=actionable&limit=2');
+      expect(mixed['pagination']).toMatchObject({
+        totalApplications: 3,
+        hasMore: true,
+      });
+      expect(
+        items(mixed).every((item) => Number(item['pendingActionCount']) > 0),
+      ).toBe(true);
+      const last = await aggregate(side, '?filter=actionable&limit=2&offset=2');
+      expect(items(last)[0]).toMatchObject({
+        applicationId: fixtures[21].applicationId,
+        actionableUnreadMessageCount: 1,
+      });
+      expect(last['totals']).toEqual(mixed['totals']);
+      await (side === 'provider' ? provider : applicant).agent
+        .get(`/api/v1/${side}/attention?filter=invalid`)
+        .expect(400);
+    },
+  );
+
   it('computes exact totals across pagination and listing/application scopes', async () => {
     await message(ConversationSide.APPLICANT);
     await document(ApplicationDocumentState.AVAILABLE);
@@ -822,6 +981,10 @@ describe('Application attention E2E', () => {
       nextRevalidateAt: null,
     });
     expect(items(response)).toHaveLength(1);
+    expect(items(response)[0]).toMatchObject({
+      listingTitle: '3-Zimmer-Wohnung in Santiago',
+      listingCity: 'Santiago',
+    });
     expect(response['pagination']).toMatchObject({
       totalApplications: 2,
       hasMore: true,
@@ -862,6 +1025,14 @@ describe('Application attention E2E', () => {
       expect(item.actionableUnreadMessageCount).toBe(
         detail['actionableUnreadMessageCount'],
       );
+      expect(item.listingTitle).toBe('3-Zimmer-Wohnung in Santiago');
+      expect(item.listingCity).toBe('Santiago');
+    }
+    for (const item of items(applicantResponse)) {
+      expect(item).toMatchObject({
+        listingTitle: '3-Zimmer-Wohnung in Santiago',
+        listingCity: 'Santiago',
+      });
     }
     await expect(
       queries.batch(provider.id, 'provider', [randomUUID()]),

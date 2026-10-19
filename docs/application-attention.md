@@ -50,6 +50,8 @@ All routes are under /api/v1 and require authenticated, active users with the ma
 
 Aggregate query inputs are offset (default 0, minimum 0, maximum 1000000) and limit (default 20, range 1–100). UUID parameters must be UUID v4. Unknown inputs are rejected. Application pages sort by application ID ascending, independently of badge totals. Listing totals sort by listing ID ascending. Provider results include owned listings with zero attention. Applicant results include only listings represented by their own applications.
 
+Each paginated application summary item in aggregate and batch responses includes listingTitle and listingCity from the authorized application’s listing relation (the same compact listing fields used elsewhere in application read models). These fields are null when the listing stores no value; they are not synthesized from listingId.
+
 ## Actions and targets
 
 | Action                            | Audience  | Source   | Target                   |
@@ -103,3 +105,85 @@ Aggregate query count grows by application batches, not by individual applicatio
 Focused units cover composition, audience mapping, duplicate elimination, stable ordering, DTO validation, document capabilities and the application/listing lifecycle matrix. Dedicated PostgreSQL E2E covers the five APIs, authorization, WAITING privacy, actual domain mutations, replacements, historical viewing interest, exact totals across pages, batch/detail equivalence, timing boundaries and concurrent snapshot consistency.
 
 Run npm run test -- --runInBand application-attention application-conversation application-viewings application-message and npm run test:e2e -- --runTestsByPath test/application-attention.e2e-spec.ts. E2E requires the dedicated renyqo_e2e URL and E2E_DATABASE_ALLOW_RESET=true; cleanup is guarded and includes protected viewing audit tables through coordinated truncation.
+
+## Topbar actionable pagination
+
+Use `GET /api/v1/applicant/attention?filter=actionable&limit=20&offset=0`
+(or `/api/v1/provider/attention`; the provider listing route accepts the same filter).
+`filter` accepts `all` and `actionable`; omitted means `all`, preserving existing consumers.
+Invalid values return 400. Existing offset/limit bounds apply.
+
+In actionable mode the server derives attention in the authorized snapshot, filters
+applications with `pendingActionCount > 0 || actionableUnreadMessageCount > 0`,
+then sorts and paginates. Document uploads/reviews, viewing obligations and actionable
+unread messages qualify. Historical unread and optional capabilities do not qualify.
+Ordering is: applications with obligations first, pendingActionCount descending,
+actionableUnreadMessageCount descending, applicationId ascending (code-point order).
+This is a deterministic priority policy, not a chronological urgency ranking.
+
+`items` are grouped applications, not individual notifications. `pagination.totalApplications`
+is the number of matching applications before pagination. `totals` and every listing's
+totals summarize that same matching dataset, independently of offset/limit. Provider
+owned listings and listings with authorized applications may still appear with zero totals. `applicationsWithPendingActions`
+counts applications with obligations only; `totalPendingActions` counts obligations;
+`actionableUnreadMessageCount` counts messages separately. For a grouped topbar badge
+use `pagination.totalApplications`, including message-only applications.
+`nextRevalidateAt` is refresh metadata over the full authorized scope in both modes,
+including currently quiet applications that can acquire time-based viewing actions.
+Each listing's boundary covers its authorized applications. Refresh at that boundary
+and after domain mutations; counts, items and pagination still cover only the matching dataset.
+
+Example (illustrative listing/request IDs and timestamp):
+
+```json
+{
+  "asOf": "2026-10-19T10:00:00.000Z",
+  "totals": {
+    "applicationsWithPendingActions": 1,
+    "totalPendingActions": 1,
+    "actionableUnreadMessageCount": 0,
+    "categories": { "documentUploadCount": 1, "documentReviewCount": 0, "viewingActionCount": 0 },
+    "nextRevalidateAt": null
+  },
+  "listings": [{
+    "listingId": "11111111-1111-4111-8111-111111111111",
+    "applicationsWithPendingActions": 1,
+    "totalPendingActions": 1,
+    "actionableUnreadMessageCount": 0,
+    "categories": { "documentUploadCount": 1, "documentReviewCount": 0, "viewingActionCount": 0 },
+    "nextRevalidateAt": null
+  }],
+  "items": [{
+    "applicationId": "be46d33c-c376-4db7-be59-bed35b1a008e",
+    "listingId": "11111111-1111-4111-8111-111111111111",
+    "listingTitle": "Zimmer in Nordhorn",
+    "listingCity": "Nordhorn",
+    "pendingActionCount": 1,
+    "hasPendingAction": true,
+    "actionableUnreadMessageCount": 0,
+    "categories": { "documentUploadCount": 1, "documentReviewCount": 0, "viewingActionCount": 0 },
+    "targets": [{
+      "applicationId": "be46d33c-c376-4db7-be59-bed35b1a008e",
+      "listingId": "11111111-1111-4111-8111-111111111111",
+      "section": "DOCUMENTS",
+      "requestId": "22222222-2222-4222-8222-222222222222"
+    }],
+    "documentIndicators": [{
+      "requestId": "22222222-2222-4222-8222-222222222222",
+      "type": "SCHUFA",
+      "customLabel": null,
+      "status": "UPLOAD_REQUIRED"
+    }],
+    "nextRevalidateAt": null
+  }],
+  "pagination": { "offset": 0, "limit": 20, "totalApplications": 1, "hasMore": false }
+}
+```
+
+Frontend integration: add `filter=actionable` to the topbar request for both roles,
+render the returned grouped items using listingTitle/listingCity, documentIndicators,
+categories and actionableUnreadMessageCount, and navigate with applicationId and
+target section/resource IDs. Use pagination.hasMore for subsequent pages and
+pagination.totalApplications for the grouped badge. Do not filter a page of `all`
+applications or use totalPendingActions alone to detect an empty menu. This repository
+contains the backend; the topbar consumer must adopt the explicit filter separately.
