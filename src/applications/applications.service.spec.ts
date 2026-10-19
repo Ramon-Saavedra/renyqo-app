@@ -209,12 +209,12 @@ describe('ApplicationsService', () => {
   });
 
   describe('apply', () => {
-    it('rejects an application when eligibility fails', async () => {
+    it('rejects an application without disclosing the internal eligibility result', async () => {
       eligibilityService.evaluate.mockReturnValue(
         new EligibilityResponseDto(
           false,
-          ['household_income_below_requirement'],
-          [],
+          ['household_income_below_requirement', 'pets_not_allowed'],
+          ['smoking_by_arrangement'],
           new Date(),
         ),
       );
@@ -226,9 +226,8 @@ describe('ApplicationsService', () => {
         constructor: UnprocessableEntityException,
         response: {
           message: 'Applicant is not eligible for this listing',
+          code: 'APPLICANT_NOT_ELIGIBLE',
           canApply: false,
-          reasons: ['household_income_below_requirement'],
-          warnings: [],
         },
       });
       expect(eligibilityService.evaluate).toHaveBeenCalled();

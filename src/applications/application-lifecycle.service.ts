@@ -19,6 +19,7 @@ import {
   ListingStatus,
 } from '../generated/prisma/enums';
 import { EligibilityService } from '../eligibility/eligibility.service';
+import { ApplicantEligibilityResponseDto } from '../eligibility/dto/applicant-eligibility-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationAdmissionService } from './application-admission.service';
@@ -88,9 +89,14 @@ export class ApplicationLifecycleService {
       const eligibility = this.eligibilityService.evaluate(listing, profile);
 
       if (!eligibility.canApply) {
+        const applicantEligibility = new ApplicantEligibilityResponseDto(
+          eligibility,
+        );
         throw new UnprocessableEntityException({
           message: 'Applicant is not eligible for this listing',
-          ...eligibility,
+          code: 'APPLICANT_NOT_ELIGIBLE',
+          canApply: applicantEligibility.canApply,
+          evaluatedAt: applicantEligibility.evaluatedAt,
         });
       }
 

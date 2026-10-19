@@ -684,13 +684,9 @@ describe('Backend API E2E', () => {
     const blockedResponse = await applicantAgent
       .get(`/api/v1/listings/${listing.id}/eligibility`)
       .expect(200);
-    expect(blockedResponse.body).toMatchObject({
+    expect(responseBody(blockedResponse)).toEqual({
       canApply: false,
-      reasons: [
-        'household_income_below_requirement',
-        'schufa_required_but_not_available',
-      ],
-      warnings: [],
+      evaluatedAt: responseBody(blockedResponse)['evaluatedAt'],
     });
     expect(typeof responseBody(blockedResponse)['evaluatedAt']).toBe('string');
 
@@ -715,10 +711,9 @@ describe('Backend API E2E', () => {
     const allowedResponse = await applicantAgent
       .get(`/api/v1/listings/${listing.id}/eligibility`)
       .expect(200);
-    expect(allowedResponse.body).toMatchObject({
+    expect(responseBody(allowedResponse)).toEqual({
       canApply: true,
-      reasons: [],
-      warnings: [],
+      evaluatedAt: responseBody(allowedResponse)['evaluatedAt'],
     });
     expect(typeof responseBody(allowedResponse)['evaluatedAt']).toBe('string');
     await applicantAgent
@@ -2477,10 +2472,15 @@ describe('Backend API E2E', () => {
       const blockedResponse = await applicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)
         .expect(422);
-      expect(responseBody(blockedResponse)).toMatchObject({
+      expect(responseBody(blockedResponse)).toEqual({
+        message: 'Applicant is not eligible for this listing',
+        code: 'APPLICANT_NOT_ELIGIBLE',
         canApply: false,
-        reasons: ['household_income_below_requirement'],
+        evaluatedAt: responseBody(blockedResponse)['evaluatedAt'],
       });
+      expect(typeof responseBody(blockedResponse)['evaluatedAt']).toBe(
+        'string',
+      );
 
       const liveApplications = await getPrisma().application.findMany({
         where: {
