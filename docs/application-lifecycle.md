@@ -12,9 +12,9 @@ Only `ACTIVE` and `WAITING` are current/live application attempts. `REJECTED`, `
 
 ## Eligibility authority
 
-`GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns `canApply`, `reasons`, `warnings` and `evaluatedAt`. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
+`GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns only `canApply` and `evaluatedAt`. The applicant-safe projection preserves the result and timestamp and omits `reasons` and `warnings`. Internal evaluations retain their detailed reasons and warnings. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
 
-`POST /api/v1/listings/:id/apply` evaluates admission history and recalculates eligibility from current database data inside the same Serializable transaction that creates the application, under the existing listing lock. A previous frontend eligibility result is never trusted. An ineligible submission returns `422` with the explainable eligibility payload and creates no application row.
+`POST /api/v1/listings/:id/apply` evaluates admission history and recalculates eligibility from current database data inside the same Serializable transaction that creates the application, under the existing listing lock. A previous frontend eligibility result is never trusted. An ineligible submission returns `422` with the existing generic message, `code: "APPLICANT_NOT_ELIGIBLE"`, `canApply: false`, `evaluatedAt`, and creates no application row. Provider-authorized restoration errors retain their existing detailed contract.
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 

@@ -123,21 +123,32 @@ describe('EligibilityController', () => {
     );
   });
 
-  it('delegates the eligibility check to the service', async () => {
-    const response = new EligibilityResponseDto(
-      true,
-      [],
-      [],
-      new Date('2024-01-01'),
-    );
-    eligibilityService.check.mockResolvedValue(response);
+  it.each([true, false])(
+    'projects eligibility %s without applicant diagnostics',
+    async (canApply) => {
+      const response = new EligibilityResponseDto(
+        canApply,
+        ['household_income_below_requirement', 'pets_not_allowed'],
+        ['smoking_by_arrangement'],
+        new Date('2024-01-01'),
+      );
+      eligibilityService.check.mockResolvedValue(response);
 
-    await expect(
-      controller.check(LISTING_ID, makeApplicantUser()),
-    ).resolves.toBe(response);
-    expect(eligibilityService.check).toHaveBeenCalledWith(
-      LISTING_ID,
-      APPLICANT_ID,
-    );
-  });
+      await expect(
+        controller.check(LISTING_ID, makeApplicantUser()),
+      ).resolves.toEqual({
+        canApply,
+        evaluatedAt: response.evaluatedAt,
+      });
+      expect(response.reasons).toEqual([
+        'household_income_below_requirement',
+        'pets_not_allowed',
+      ]);
+      expect(response.warnings).toEqual(['smoking_by_arrangement']);
+      expect(eligibilityService.check).toHaveBeenCalledWith(
+        LISTING_ID,
+        APPLICANT_ID,
+      );
+    },
+  );
 });

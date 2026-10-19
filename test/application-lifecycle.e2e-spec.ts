@@ -19,6 +19,12 @@ import { ApplicationActivityService } from '../src/applications/application-acti
 import { REAPPLICATION_COOLDOWN_MS } from '../src/applications/application-admission.service';
 import type { EnvironmentVariables } from '../src/config/env.validation';
 import { PrismaService } from '../src/prisma/prisma.service';
+import type { Prisma } from '../src/generated/prisma/client';
+import { EligibilityService } from '../src/eligibility/eligibility.service';
+import type {
+  EligibilityReason,
+  EligibilityWarning,
+} from '../src/eligibility/dto/eligibility-response.dto';
 import {
   ApplicationActivityActorType,
   ApplicationActivityType,
@@ -28,6 +34,8 @@ import {
   ListingEventSource,
   ListingEventType,
   ListingStatus,
+  PetsPolicy,
+  SmokingPolicy,
 } from '../src/generated/prisma/enums';
 import { CloudinaryService } from '../src/listing-images/cloudinary.service';
 import {
@@ -406,6 +414,187 @@ describe('Application Lifecycle E2E', () => {
 
   afterEach(async () => {
     await clearDatabase();
+  });
+
+  describe('Applicant-safe eligibility disclosure', () => {
+    const cases: {
+      name: string;
+      listing: Prisma.ListingUpdateInput;
+      profile: Prisma.ApplicantProfileUpdateInput;
+      reasons: EligibilityReason[];
+      warnings?: EligibilityWarning[];
+    }[] = [
+      {
+        name: 'missing income',
+        listing: { minimumHouseholdNetIncome: 5000 },
+        profile: { householdNetIncome: null },
+        reasons: ['household_income_not_available'],
+      },
+      {
+        name: 'low income',
+        listing: { minimumHouseholdNetIncome: 5000 },
+        profile: {},
+        reasons: ['household_income_below_requirement'],
+      },
+      {
+        name: 'missing SCHUFA',
+        listing: { schufaRequired: true },
+        profile: { schufaAvailable: false },
+        reasons: ['schufa_required_but_not_available'],
+      },
+      {
+        name: 'missing income proof',
+        listing: { incomeProofRequired: true },
+        profile: { incomeProofAvailable: false },
+        reasons: ['income_proof_required_but_not_available'],
+      },
+      {
+        name: 'missing household size',
+        listing: { suitableForPeopleCount: 2 },
+        profile: { adultsCount: null, childrenCount: null, peopleCount: null },
+        reasons: ['household_size_not_available'],
+      },
+      {
+        name: 'large household',
+        listing: { suitableForPeopleCount: 1 },
+        profile: {},
+        reasons: ['household_size_exceeds_requirement'],
+      },
+      {
+        name: 'pets',
+        listing: { petsPolicy: PetsPolicy.NOT_ALLOWED },
+        profile: { hasPets: true },
+        reasons: ['pets_not_allowed'],
+      },
+      {
+        name: 'smoking',
+        listing: { smokingPolicy: SmokingPolicy.NOT_ALLOWED },
+        profile: { isSmoker: true },
+        reasons: ['smoking_not_allowed'],
+      },
+      {
+        name: 'multiple failures with a warning',
+        listing: {
+          minimumHouseholdNetIncome: 5000,
+          petsPolicy: PetsPolicy.NOT_ALLOWED,
+          smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
+        },
+        profile: { hasPets: true, isSmoker: true },
+        reasons: ['household_income_below_requirement', 'pets_not_allowed'],
+        warnings: ['smoking_by_arrangement'],
+      },
+      {
+        name: 'eligible with arrangement warnings',
+        listing: {
+          petsPolicy: PetsPolicy.BY_ARRANGEMENT,
+          smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
+        },
+        profile: { hasPets: true, isSmoker: true },
+        reasons: [],
+        warnings: ['pets_by_arrangement', 'smoking_by_arrangement'],
+      },
+      { name: 'eligible', listing: {}, profile: {}, reasons: [] },
+    ];
+
+    it.each(cases)(
+      'preserves enforcement without disclosing $name',
+      async (fixture) => {
+        const { provider } = await registerProvider();
+        const applicant = await registerApplicant();
+        const applicantId = safeUserBody(
+          await applicant.get('/api/v1/auth/me').expect(200),
+        ).id;
+        const listing = await publishListing(provider.id);
+        const currentListing = await getPrisma().listing.update({
+          where: { id: listing.id },
+          data: fixture.listing,
+        });
+        await getPrisma().applicantProfile.create({
+          data: {
+            applicantId,
+            introduction: 'Test applicant',
+            householdNetIncome: 4000,
+            schufaAvailable: true,
+            incomeProofAvailable: true,
+            adultsCount: 2,
+            childrenCount: 0,
+            peopleCount: 2,
+            hasPets: false,
+            isSmoker: false,
+          },
+        });
+        const profile = await getPrisma().applicantProfile.update({
+          where: { applicantId },
+          data: fixture.profile,
+        });
+        if (!app) throw new Error('Missing application');
+        const evaluation = app
+          .get(EligibilityService)
+          .evaluate(currentListing, profile);
+        const canApply = fixture.reasons.length === 0;
+        expect(evaluation).toMatchObject({
+          canApply,
+          reasons: fixture.reasons,
+          warnings: fixture.warnings ?? [],
+        });
+        const eligibility = responseBody(
+          await applicant
+            .get(`/api/v1/listings/${listing.id}/eligibility`)
+            .expect(200),
+        );
+        expect(eligibility).toEqual({
+          canApply,
+          evaluatedAt: expect.any(String),
+        });
+        const submitted = responseBody(
+          await applicant
+            .post(`/api/v1/listings/${listing.id}/apply`)
+            .expect(canApply ? 201 : 422),
+        );
+        if (!canApply) {
+          expect(submitted).toEqual({
+            message: 'Applicant is not eligible for this listing',
+            code: 'APPLICANT_NOT_ELIGIBLE',
+            canApply: false,
+            evaluatedAt: expect.any(String),
+          });
+        }
+        expect(
+          await getPrisma().application.count({
+            where: { listingId: listing.id, applicantId },
+          }),
+        ).toBe(canApply ? 1 : 0);
+        // Internal evaluation stays detailed after both public projections.
+        expect(
+          app.get(EligibilityService).evaluate(currentListing, profile),
+        ).toMatchObject({
+          reasons: fixture.reasons,
+          warnings: fixture.warnings ?? [],
+        });
+      },
+    );
+
+    it('preserves eligibility and submission access checks', async () => {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const listing = await publishListing(provider.id);
+      for (const suffix of ['eligibility', 'apply']) {
+        if (suffix === 'eligibility') {
+          await request(getServer())
+            .get(`/api/v1/listings/${listing.id}/${suffix}`)
+            .expect(401);
+          await providerAgent
+            .get(`/api/v1/listings/${listing.id}/${suffix}`)
+            .expect(403);
+        } else {
+          await request(getServer())
+            .post(`/api/v1/listings/${listing.id}/${suffix}`)
+            .expect(401);
+          await providerAgent
+            .post(`/api/v1/listings/${listing.id}/${suffix}`)
+            .expect(403);
+        }
+      }
+    });
   });
 
   describe('Re-application admission', () => {
