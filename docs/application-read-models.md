@@ -11,7 +11,7 @@ All routes below are authenticated GET requests under `/api/v1`. Provider and ap
 | `/provider/listings/overview`                                                | Paginated compact listing selection with active, anonymous waiting, exited and operational attention counts |
 | `/provider/listings/:listingId/application-overview`                         | Selected listing summary, full listing counts, up to five ACTIVE applicants and five recent exits           |
 | `/provider/applications/:applicationId/workspace`                            | Provider workspace with compact applicant identity                                                          |
-| `/applicant/applications/overview`                                           | Paginated application cards with compact listing identity and operational summaries                         |
+| `/applicant/applications/overview`                                           | Paginated listing cards (one representative application per listing) with compact listing identity, operational summaries, tab counts and optional status group filter |
 | `/applicant/applications/:applicationId/workspace`                           | Applicant workspace with compact listing identity                                                           |
 | `/{audience}/applications/:applicationId/activity`                           | Cursor-paginated audience-visible activity timeline                                                         |
 | `/{audience}/applications/:applicationId/document-history`                   | Cursor-paginated document requests, including superseded requests, without embedded file history            |
@@ -23,19 +23,23 @@ All routes below are authenticated GET requests under `/api/v1`. Provider and ap
 
 Collections return `asOf`, `items`, `pagination { limit, hasMore, nextCursor }` and `totalCount`. Counts cover the authorized scope before the cursor boundary. Provider listing attention counts cover all visible applications belonging to each returned listing, not just its five-row previews.
 
-Query parameters are `cursor` and `limit`. Default limit is 20; maximum is 100. Unknown input fields, malformed cursors and invalid page sizes return 400. Cursor data is an opaque encoded boundary, validated by collection kind, UUID and timestamp/order value. It cannot change authorization scope.
+`GET /applicant/applications/overview` additionally returns `counts { all, active, waiting, done }` for the full collapsed listing set, independent of the current page and `group`. `totalCount` is the size of the collapsed set after the requested `group` filter, not the raw application row count.
+
+Query parameters are `cursor` and `limit` on every paginated collection. Applicant application overview also accepts `group` (`ALL`, `ACTIVE`, `WAITING`, `DONE`; default `ALL`). `DONE` means `ACCEPTED`, `REJECTED` or `WITHDRAWN`. Default limit is 20; maximum is 100. Unknown input fields, malformed cursors and invalid page sizes return 400. Cursor data is an opaque encoded boundary, validated by collection kind, UUID and timestamp/order value. It cannot change authorization scope. Applicant overview cursors use kind `applications` but are only valid for the same `group` value that produced them.
 
 | Collection               | Order                                                                              |
 | ------------------------ | ---------------------------------------------------------------------------------- |
 | Provider listings        | `displayOrder ASC, id ASC`                                                         |
-| Applicant applications   | `createdAt DESC, id DESC`                                                          |
+| Applicant applications   | One representative row per `listingId`, then `createdAt DESC, id DESC` on that collapsed set |
 | Activity                 | `occurredAt DESC, id DESC`                                                         |
 | Document request history | `requestedAt DESC, id DESC`                                                        |
 | File attempts            | `createdAt DESC, id DESC`                                                          |
 | ACTIVE applicant preview | `activeAt ASC, id ASC`, maximum five                                               |
 | Recent exit preview      | Projected `exitedAt DESC, application ID DESC`, maximum five qualifying applicants |
 
-Applicant ordering uses submission time. There is no applicant quality ranking. Each response has its own consistent snapshot; cursors do not freeze the database across subsequent requests. Moving listing positions or new records can affect later pages.
+Applicant overview ordering uses the representative application's submission time (`createdAt`). There is no applicant quality ranking. Each response has its own consistent snapshot; cursors do not freeze the database across subsequent requests. Moving listing positions or new records can affect later pages.
+
+For each owned listing, applicant overview selects exactly one application row: if the listing has an `ACTIVE` or `WAITING` attempt, that attempt is shown; otherwise the latest closed attempt (`ACCEPTED`, `REJECTED` or `WITHDRAWN`) by `createdAt DESC, id DESC`. Older attempts for the same listing remain stored for provider history and are not deleted. The `group` filter applies after this collapse. Pagination, `totalCount`, `hasMore` and cursors describe the collapsed, filtered set only.
 
 ## Compact contracts
 
@@ -49,7 +53,7 @@ Provider applicant rows contain `applicationId`, `status`, `submittedAt`, `activ
 
 Recent-exit cards additionally expose authoritative `canRestore`. The applications-domain recent-exit projection is shared by legacy exits, application overview cards and listing overview counts. It selects the newest attempt per applicant/listing before terminal filtering, excludes any current ACTIVE/WAITING attempt, and requires verified previous ACTIVE participation. Counts represent applicants rather than historical rows; the five-card limit follows selection and privacy checks. Exit dates follow the latest consistent lifecycle transition, with status-specific legacy row fallback only when transition history is absent. Superseded exits never reappear. Restored-to-WAITING withdrawal can be reconstructed from history without changing queue or mutation behavior.
 
-Applicant cards contain `applicationId`, `status`, `submittedAt`, `activeAt`, `listing`, compact `attention`, `conversation`, document counts and `viewing`. Conversation exposes `hasMessages`, `applicantRepliesEnabled`, `canCurrentUserSend`, `canCurrentUserManageApplicantReplies` and nullable `sendBlockReason`; it contains no message preview. Document counts distinguish requested, upload-required, review-required, processing and reviewed requests. Action counts are audience-specific and become zero when the application process disallows those actions.
+Applicant cards contain `applicationId`, `status`, `submittedAt`, `activeAt`, `rejectedAt`, `withdrawnAt`, `listing`, compact `attention`, `conversation`, document counts and `viewing`. Conversation exposes `hasMessages`, `applicantRepliesEnabled`, `canCurrentUserSend`, `canCurrentUserManageApplicantReplies` and nullable `sendBlockReason`; it contains no message preview. Document counts distinguish requested, upload-required, review-required, processing and reviewed requests. Action counts are audience-specific and become zero when the application process disallows those actions.
 
 Viewing summaries expose current/latest/latest-completed viewing state, change-request state, pending interest, authoritative `nextAction`, `canPropose`, schedules, effective outcome, submitted interest and per-viewing capabilities. At most one row per summary category is serialized; full viewing history is separate. Outstanding interest obligations remain part of the authoritative attention derivation even for older completed rounds.
 
@@ -87,7 +91,7 @@ Legacy provider application arrays intentionally stop returning never-active exi
 
 Every composite captures one clock value and uses one Repeatable Read transaction. Authorization, domain facts, previews and counts share that transaction. Internal attention composition consumes the same projections as workspace summaries and never starts an independent transaction. Lifecycle capabilities consume the already-authorized application; minimal eligibility facts are fetched only when restoration is otherwise possible.
 
-List composition batches conversations, grouped unread counts, current document requests and selected viewing rows. Message bodies and full historical files/activity are excluded from compact selectors. Parameterized SQL is limited to existing/latest-message reads, one image per listing and deterministic recent-exit selection; Prisma handles the other reads.
+List composition batches conversations, grouped unread counts, current document requests and selected viewing rows. Message bodies and full historical files/activity are excluded from compact selectors. Parameterized SQL covers existing/latest-message reads, one image per listing, deterministic recent-exit selection and applicant overview representative selection (live-or-newest closed per listing, then group filter and cursor pagination); Prisma handles the other reads.
 
 Provider full-listing attention totals scan authorized application facts in batches of 200, retaining totals and requested preview summaries. Work therefore scales with batches, not one query per application. Queries per page are bounded within each batch, and complete derived application results are not retained for aggregation.
 
@@ -121,7 +125,7 @@ These GETs do not mark messages as read. Only explicit `PATCH /api/v1/provider/a
 
 Regression coverage uses two properties with an unread applicant message plus document and viewing obligations on Nordhorn. It checks listing-page totals, parity with selected-listing/workspace, unchanged unread state after selecting the other property, and refreshed counts after the actual read PATCH while document/viewing obligations remain.
 
-PostgreSQL-backed tests instrument actual driver SELECTs at 1, 25 and 101 applications, independently of HTTP/session queries. The current run measured 13 SELECTs for applicant overviews and 16 for provider listing overviews at each tested size; the provider path adds one batched image SELECT. Selected-listing/workspace/history instrumentation also checks fixed query groups and database LIMITs or primary-key-bounded current-file reads as history grows. Dashboard image regression coverage verifies a cover at a later position, a changed cover, fallback without a designated cover, and no photos in both HTTP responses.
+PostgreSQL-backed tests instrument actual driver SELECTs at 1, 25 and 101 applications, independently of HTTP/session queries. The current run measured 14 SELECTs for applicant overviews and 16 for provider listing overviews at each tested size; the provider path adds one batched image SELECT. Applicant overview `totalCount` stays at one collapsed card when many historical rows share one listing. Selected-listing/workspace/history instrumentation also checks fixed query groups and database LIMITs or primary-key-bounded current-file reads as history grows. Dashboard image regression coverage verifies a cover at a later position, a changed cover, fallback without a designated cover, and no photos in both HTTP responses.
 
 Representative EXPLAIN ANALYZE fixtures include 151 listings, 1001 applications and 1000 activity rows. Existing listing ordering and activity indexes support bounded preview reads. Applicant application ordering uses a small top-N sort at this tested scope. These measurements do not establish production-scale latency guarantees; no new index is justified by the current evidence. Reassess the applicant ordering query at materially larger real scopes.
 

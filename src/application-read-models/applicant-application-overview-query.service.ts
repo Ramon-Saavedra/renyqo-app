@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { ApplicationWorkspaceQueryService } from './application-workspace-query.service';
-import {
+import type {
   ApplicantApplicationOverviewGroup,
-  ReadModelPageQueryDto,
-} from './dto/read-model-input.dto';
+  ApplicantApplicationOverviewQuery,
+} from './dto/applicant-application-overview-query.dto';
 import {
   ApplicantApplicationCardDto,
   ApplicantApplicationOverviewCountsDto,
@@ -42,7 +42,7 @@ export class ApplicantApplicationOverviewQueryService {
 
   overview(
     userId: string,
-    query: ReadModelPageQueryDto,
+    query: ApplicantApplicationOverviewQuery,
   ): Promise<ApplicantApplicationOverviewPageDto> {
     const group: ApplicantApplicationOverviewGroup = query.group ?? 'ALL';
     const cursor = decodeReadModelCursor(query.cursor, 'applications');

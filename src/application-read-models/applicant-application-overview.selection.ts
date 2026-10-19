@@ -1,5 +1,5 @@
 import { Prisma } from '../generated/prisma/client';
-import type { ApplicantApplicationOverviewGroup } from './dto/read-model-input.dto';
+import type { ApplicantApplicationOverviewGroup } from './dto/applicant-application-overview-query.dto';
 
 export function applicantRepresentativesCte(applicantId: string) {
   return Prisma.sql`

@@ -2,7 +2,7 @@
 
 ## Optimized application reads
 
-The additive overview, workspace and bounded history endpoints are documented in [Application read models](application-read-models.md). Existing response envelopes and pagination contracts remain intact. The intentional security correction excludes never-active exited applications from legacy provider application lists.
+The additive overview, workspace and bounded history endpoints are documented in [Application read models](application-read-models.md). Other read-model collection envelopes remain `{ asOf, items, pagination, totalCount }`. `GET /api/v1/applicant/applications/overview` additionally returns collapsed listing representatives, optional `group` filtering, `counts` and card-level `rejectedAt` / `withdrawnAt`; see that document for selection, pagination and cursor rules. The intentional security correction excludes never-active exited applications from legacy provider application lists.
 
 ## Application attention
 

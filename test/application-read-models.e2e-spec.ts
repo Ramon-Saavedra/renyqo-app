@@ -24,6 +24,7 @@ import { Client } from 'pg';
 import { ApplicantApplicationOverviewQueryService } from '../src/application-read-models/applicant-application-overview-query.service';
 import { ProviderApplicationOverviewQueryService } from '../src/application-read-models/provider-application-overview-query.service';
 import { ApplicationWorkspaceQueryService } from '../src/application-read-models/application-workspace-query.service';
+import type { ApplicantApplicationOverviewQuery } from '../src/application-read-models/dto/applicant-application-overview-query.dto';
 import { ReadModelPageQueryDto } from '../src/application-read-models/dto/read-model-input.dto';
 import type { ApplicantApplicationOverviewPageDto } from '../src/application-read-models/dto/read-model-response.dto';
 import { ApplicationHistoryQueryService } from '../src/application-read-models/application-history-query.service';
@@ -1359,6 +1360,12 @@ describe('Application read models E2E', () => {
       .expect(400);
   });
 
+  it('rejects applicant overview group on provider listing overview', async () => {
+    await provider.agent
+      .get('/api/v1/provider/listings/overview?group=ACTIVE')
+      .expect(400);
+  });
+
   it('retains legacy route contracts apart from the visibility correction', async () => {
     const providerList = await provider.agent
       .get('/api/v1/provider/applications')
@@ -1756,13 +1763,12 @@ describe('Application read models E2E', () => {
                 : '';
           })
           .filter((text) => /SELECT/i.test(text));
-      const query = new ReadModelPageQueryDto();
-      query.limit = 100;
+      const overviewPage: ApplicantApplicationOverviewQuery = { limit: 100 };
       const cards: ApplicantApplicationOverviewPageDto =
-        await applicantQuery.overview(applicant.id, query);
+        await applicantQuery.overview(applicant.id, overviewPage);
       const applicantStatements = statements();
       spy.mockClear();
-      const listings = await providerQuery.overview(provider.id, query);
+      const listings = await providerQuery.overview(provider.id, overviewPage);
       const providerStatements = statements();
       results.push({
         count,
