@@ -24,7 +24,9 @@ import { Client } from 'pg';
 import { ApplicantApplicationOverviewQueryService } from '../src/application-read-models/applicant-application-overview-query.service';
 import { ProviderApplicationOverviewQueryService } from '../src/application-read-models/provider-application-overview-query.service';
 import { ApplicationWorkspaceQueryService } from '../src/application-read-models/application-workspace-query.service';
+import type { ApplicantApplicationOverviewQuery } from '../src/application-read-models/dto/applicant-application-overview-query.dto';
 import { ReadModelPageQueryDto } from '../src/application-read-models/dto/read-model-input.dto';
+import type { ApplicantApplicationOverviewPageDto } from '../src/application-read-models/dto/read-model-response.dto';
 import { ApplicationHistoryQueryService } from '../src/application-read-models/application-history-query.service';
 import { ApplicationConversationReadService } from '../src/application-conversation/application-conversation-read.service';
 import { PROVIDER_CURATION_COOLDOWN_MS } from '../src/applications/application-lifecycle.constants';
@@ -1040,26 +1042,57 @@ describe('Application read models E2E', () => {
     },
   );
 
-  it('paginates applicant cards with equal timestamps without duplicates and with full totals', async () => {
-    const ids = [applicationId];
+  it('collapses applicant overview to one card per listing and paginates the collapsed set', async () => {
     await prisma.application.update({
       where: { id: applicationId },
       data: { createdAt: now },
     });
-    for (let i = 0; i < 6; i++)
-      ids.push(
-        (
-          await prisma.application.create({
-            data: {
-              listingId,
-              applicantId: applicant.id,
-              status: ApplicationStatus.WITHDRAWN,
-              activeAt: now,
-              createdAt: now,
-            },
-          })
-        ).id,
-      );
+    for (let i = 0; i < 6; i++) {
+      await prisma.application.create({
+        data: {
+          listingId,
+          applicantId: applicant.id,
+          status: ApplicationStatus.WITHDRAWN,
+          activeAt: now,
+          createdAt: now,
+          withdrawnAt: now,
+        },
+      });
+    }
+    const listingIds: string[] = [listingId];
+    for (let i = 0; i < 6; i++) {
+      const listing = await prisma.listing.create({
+        data: { providerId: provider.id, displayOrder: i + 2 },
+      });
+      listingIds.push(listing.id);
+      await prisma.application.create({
+        data: {
+          listingId: listing.id,
+          applicantId: applicant.id,
+          status: ApplicationStatus.WITHDRAWN,
+          activeAt: now,
+          createdAt: new Date(now.getTime() - (i + 1) * 1000),
+          withdrawnAt: now,
+        },
+      });
+    }
+    const collapsed = await get('applicant', 'applications/overview');
+    expect(collapsed['totalCount']).toBe(7);
+    expect(nested(collapsed, 'counts')).toEqual({
+      all: 7,
+      active: 1,
+      waiting: 0,
+      done: 6,
+    });
+    expect(rows(collapsed)).toHaveLength(7);
+    expect(
+      rows(collapsed).find(
+        (row) => getString(nested(row, 'listing'), 'id') === listingId,
+      ),
+    ).toMatchObject({
+      applicationId,
+      status: ApplicationStatus.ACTIVE,
+    });
     const seen: string[] = [];
     let cursor: string | null = null;
     do {
@@ -1069,12 +1102,120 @@ describe('Application read models E2E', () => {
       );
       expect(response['totalCount']).toBe(7);
       seen.push(
-        ...rows(response).map((row) => getString(row, 'applicationId')),
+        ...rows(response).map((row) => getString(nested(row, 'listing'), 'id')),
       );
       const value = nested(response, 'pagination')['nextCursor'];
       cursor = typeof value === 'string' ? value : null;
     } while (cursor);
-    expect(seen).toEqual(ids.sort().reverse());
+    expect(seen).toEqual(listingIds);
+  });
+
+  it('prefers the open application over older attempts for the same listing', async () => {
+    const older = await prisma.application.create({
+      data: {
+        listingId,
+        applicantId: applicant.id,
+        status: ApplicationStatus.REJECTED,
+        activeAt: now,
+        createdAt: new Date(now.getTime() - 60_000),
+        rejectedAt: new Date(now.getTime() - 60_000),
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+      },
+    });
+    const response = await get('applicant', 'applications/overview');
+    expect(rows(response)).toHaveLength(1);
+    expect(rows(response)[0]).toMatchObject({
+      applicationId,
+      status: ApplicationStatus.ACTIVE,
+    });
+    expect(rows(response)[0]).not.toMatchObject({ applicationId: older.id });
+    const providerOverview = await get(
+      'provider',
+      `listings/${listingId}/application-overview`,
+    );
+    expect(
+      rows(providerOverview, 'activeApplications').map(
+        (row) => row['applicationId'],
+      ),
+    ).toEqual([applicationId]);
+    expect(
+      await prisma.application.count({
+        where: { listingId, applicantId: applicant.id },
+      }),
+    ).toBe(2);
+    expect(
+      (
+        await prisma.application.findMany({
+          where: { listingId, applicantId: applicant.id },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
+        })
+      ).map((row) => row.id),
+    ).toEqual([applicationId, older.id]);
+  });
+
+  it('filters applicant overview groups and keeps collapsed counts on empty pages', async () => {
+    await prisma.application.update({
+      where: { id: applicationId },
+      data: {
+        status: ApplicationStatus.REJECTED,
+        rejectedAt: now,
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+      },
+    });
+    const emptyWaiting = await get(
+      'applicant',
+      'applications/overview?group=WAITING',
+    );
+    expect(emptyWaiting['totalCount']).toBe(0);
+    expect(rows(emptyWaiting)).toHaveLength(0);
+    expect(nested(emptyWaiting, 'pagination')['hasMore']).toBe(false);
+    expect(nested(emptyWaiting, 'counts')).toEqual({
+      all: 1,
+      active: 0,
+      waiting: 0,
+      done: 1,
+    });
+    const waitingListing = await prisma.listing.create({
+      data: { providerId: provider.id, displayOrder: 2 },
+    });
+    const waitingApplication = await prisma.application.create({
+      data: {
+        listingId: waitingListing.id,
+        applicantId: applicant.id,
+        status: ApplicationStatus.WAITING,
+        activeAt: now,
+      },
+    });
+    const activeOnly = await get(
+      'applicant',
+      'applications/overview?group=ACTIVE',
+    );
+    expect(activeOnly['totalCount']).toBe(0);
+    expect(rows(activeOnly)).toHaveLength(0);
+    expect(nested(activeOnly, 'counts')).toEqual({
+      all: 2,
+      active: 0,
+      waiting: 1,
+      done: 1,
+    });
+    const waitingOnly = await get(
+      'applicant',
+      'applications/overview?group=WAITING',
+    );
+    expect(waitingOnly['totalCount']).toBe(1);
+    expect(rows(waitingOnly)[0]).toMatchObject({
+      applicationId: waitingApplication.id,
+      status: ApplicationStatus.WAITING,
+    });
+    expect(nested(waitingOnly, 'pagination')['hasMore']).toBe(false);
+    const doneOnly = await get('applicant', 'applications/overview?group=DONE');
+    expect(doneOnly['totalCount']).toBe(1);
+    expect(rows(doneOnly)[0]).toMatchObject({
+      applicationId,
+      status: ApplicationStatus.REJECTED,
+      rejectedAt: now.toISOString(),
+    });
   });
 
   it('paginates provider listings and keeps per-listing counts independent of previews', async () => {
@@ -1204,17 +1345,26 @@ describe('Application read models E2E', () => {
       .expect(404);
   });
 
-  it.each(['limit=0', 'limit=101', 'cursor=invalid', 'unexpected=true'])(
-    'rejects malformed pagination %s',
-    async (query) => {
-      await applicant.agent
-        .get(`/api/v1/applicant/applications/overview?${query}`)
-        .expect(400);
-      await provider.agent
-        .get(`/api/v1/provider/listings/overview?${query}`)
-        .expect(400);
-    },
-  );
+  it.each([
+    'limit=0',
+    'limit=101',
+    'cursor=invalid',
+    'unexpected=true',
+    'group=INVALID',
+  ])('rejects malformed pagination %s', async (query) => {
+    await applicant.agent
+      .get(`/api/v1/applicant/applications/overview?${query}`)
+      .expect(400);
+    await provider.agent
+      .get(`/api/v1/provider/listings/overview?${query}`)
+      .expect(400);
+  });
+
+  it('rejects applicant overview group on provider listing overview', async () => {
+    await provider.agent
+      .get('/api/v1/provider/listings/overview?group=ACTIVE')
+      .expect(400);
+  });
 
   it('retains legacy route contracts apart from the visibility correction', async () => {
     const providerList = await provider.agent
@@ -1613,20 +1763,21 @@ describe('Application read models E2E', () => {
                 : '';
           })
           .filter((text) => /SELECT/i.test(text));
-      const query = new ReadModelPageQueryDto();
-      query.limit = 100;
-      const cards = await applicantQuery.overview(applicant.id, query);
+      const overviewPage: ApplicantApplicationOverviewQuery = { limit: 100 };
+      const cards: ApplicantApplicationOverviewPageDto =
+        await applicantQuery.overview(applicant.id, overviewPage);
       const applicantStatements = statements();
       spy.mockClear();
-      const listings = await providerQuery.overview(provider.id, query);
+      const listings = await providerQuery.overview(provider.id, overviewPage);
       const providerStatements = statements();
       results.push({
         count,
         applicantQueries: applicantStatements.length,
         providerQueries: providerStatements.length,
       });
-      expect(cards.totalCount).toBe(count);
-      expect(cards.items.length).toBe(Math.min(count, 100));
+      expect(cards.totalCount).toBe(1);
+      expect(cards.counts.all).toBe(1);
+      expect(cards.items.length).toBe(1);
       expect(listings.items[0].exitedApplicationsCount).toBe(1);
       expect(
         [...applicantStatements, ...providerStatements].join(' '),

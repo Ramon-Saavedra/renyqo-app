@@ -6,6 +6,7 @@ import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantApplicationOverviewQueryService } from './applicant-application-overview-query.service';
 import { ApplicationWorkspaceQueryService } from './application-workspace-query.service';
 import { ApplicationHistoryQueryService } from './application-history-query.service';
+import { ApplicantApplicationOverviewQueryDto } from './dto/applicant-application-overview-query.dto';
 import {
   ReadModelPageQueryDto,
   ReadModelApplicationParamsDto,
@@ -24,7 +25,7 @@ export class ApplicantReadModelsController {
   @Get('overview')
   overview(
     @CurrentUser() user: SafeUser,
-    @Query() query: ReadModelPageQueryDto,
+    @Query() query: ApplicantApplicationOverviewQueryDto,
   ) {
     return this.overviews.overview(user.id, query);
   }

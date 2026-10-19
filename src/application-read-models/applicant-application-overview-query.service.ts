@@ -1,10 +1,15 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '../generated/prisma/client';
 import { ApplicationWorkspaceQueryService } from './application-workspace-query.service';
-import { ReadModelPageQueryDto } from './dto/read-model-input.dto';
+import type {
+  ApplicantApplicationOverviewGroup,
+  ApplicantApplicationOverviewQuery,
+} from './dto/applicant-application-overview-query.dto';
 import {
   ApplicantApplicationCardDto,
+  ApplicantApplicationOverviewCountsDto,
+  ApplicantApplicationOverviewPageDto,
   CompactListingDto,
-  ReadModelPageDto,
   ReadModelPaginationDto,
 } from './dto/read-model-response.dto';
 import { readModelApplicationSelect } from './read-model-select';
@@ -12,38 +17,83 @@ import {
   decodeReadModelCursor,
   encodeReadModelCursor,
 } from './read-model-cursor';
+import {
+  applicantOverviewGroupCountKey,
+  applicantOverviewGroupFilter,
+  applicantRepresentativesCte,
+} from './applicant-application-overview.selection';
+
+type RepresentativeRow = {
+  id: string;
+  createdAt: Date;
+  status: string;
+};
+
+type RepresentativeCounts = {
+  all: number;
+  active: number;
+  waiting: number;
+  done: number;
+};
 
 @Injectable()
 export class ApplicantApplicationOverviewQueryService {
   constructor(private readonly workspace: ApplicationWorkspaceQueryService) {}
 
-  overview(userId: string, query: ReadModelPageQueryDto) {
+  overview(
+    userId: string,
+    query: ApplicantApplicationOverviewQuery,
+  ): Promise<ApplicantApplicationOverviewPageDto> {
+    const group: ApplicantApplicationOverviewGroup = query.group ?? 'ALL';
     const cursor = decodeReadModelCursor(query.cursor, 'applications');
+    const representatives = applicantRepresentativesCte(userId);
+    const groupFilter = applicantOverviewGroupFilter(group);
+    const cursorBoundary = cursor
+      ? Prisma.sql`AND (
+          "createdAt" < ${cursor.value}::timestamptz
+          OR (
+            "createdAt" = ${cursor.value}::timestamptz
+            AND id < ${cursor.id}::uuid
+          )
+        )`
+      : Prisma.empty;
     return this.workspace.prisma.$transaction(
       async (tx) => {
         const asOf = this.workspace.clock.now();
-        const rows = await tx.application.findMany({
-          where: {
-            applicantId: userId,
-            ...(cursor
-              ? {
-                  OR: [
-                    { createdAt: { lt: new Date(cursor.value) } },
-                    {
-                      createdAt: new Date(cursor.value),
-                      id: { lt: cursor.id },
-                    },
-                  ],
-                }
-              : {}),
-          },
-          select: readModelApplicationSelect,
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          take: query.limit + 1,
-        });
-        const page = rows.slice(0, query.limit);
-        const totalCount = await tx.application.count({
-          where: { applicantId: userId },
+        const [countsRow] = await tx.$queryRaw<RepresentativeCounts[]>`
+          WITH ${representatives}
+          SELECT
+            COUNT(*)::int AS all,
+            COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+            COUNT(*) FILTER (WHERE status = 'waiting')::int AS waiting,
+            COUNT(*) FILTER (
+              WHERE status IN ('accepted', 'rejected', 'withdrawn')
+            )::int AS done
+          FROM representatives
+        `;
+        const counts = countsRow ?? { all: 0, active: 0, waiting: 0, done: 0 };
+        const totalCount = counts[applicantOverviewGroupCountKey(group)];
+        const representativePage = await tx.$queryRaw<RepresentativeRow[]>`
+          WITH ${representatives}
+          SELECT id, "createdAt", status
+          FROM representatives
+          WHERE ${groupFilter}
+          ${cursorBoundary}
+          ORDER BY "createdAt" DESC, id DESC
+          LIMIT ${query.limit + 1}
+        `;
+        const pageRepresentatives = representativePage.slice(0, query.limit);
+        const rows = pageRepresentatives.length
+          ? await tx.application.findMany({
+              where: { id: { in: pageRepresentatives.map((row) => row.id) } },
+              select: readModelApplicationSelect,
+            })
+          : [];
+        const rowsById = new Map(rows.map((row) => [row.id, row]));
+        const page = pageRepresentatives.map((row) => {
+          const application = rowsById.get(row.id);
+          if (!application) throw new Error('Missing application row');
+          return application;
         });
         const sections = await this.workspace.compose(
           tx,
@@ -70,9 +120,9 @@ export class ApplicantApplicationOverviewQueryService {
             summary.viewing,
           );
         });
-        const last = page.at(-1);
-        const hasMore = rows.length > query.limit;
-        return new ReadModelPageDto(
+        const last = pageRepresentatives.at(-1);
+        const hasMore = representativePage.length > query.limit;
+        return new ApplicantApplicationOverviewPageDto(
           asOf,
           items,
           new ReadModelPaginationDto(
@@ -87,6 +137,12 @@ export class ApplicantApplicationOverviewQueryService {
               : null,
           ),
           totalCount,
+          new ApplicantApplicationOverviewCountsDto(
+            counts.all,
+            counts.active,
+            counts.waiting,
+            counts.done,
+          ),
         );
       },
       { isolationLevel: 'RepeatableRead' },

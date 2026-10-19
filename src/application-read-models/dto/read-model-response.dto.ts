@@ -140,6 +140,8 @@ export class ApplicantApplicationCardDto {
   readonly status: ReadModelApplication['status'];
   readonly submittedAt: Date;
   readonly activeAt: Date | null;
+  readonly rejectedAt: Date | null;
+  readonly withdrawnAt: Date | null;
   constructor(
     application: ReadModelApplication,
     readonly listing: CompactListingDto,
@@ -154,6 +156,29 @@ export class ApplicantApplicationCardDto {
     this.status = application.status;
     this.submittedAt = application.createdAt;
     this.activeAt = application.activeAt;
+    this.rejectedAt = application.rejectedAt;
+    this.withdrawnAt = application.withdrawnAt;
+  }
+}
+
+export class ApplicantApplicationOverviewCountsDto {
+  constructor(
+    readonly all: number,
+    readonly active: number,
+    readonly waiting: number,
+    readonly done: number,
+  ) {}
+}
+
+export class ApplicantApplicationOverviewPageDto extends ReadModelPageDto<ApplicantApplicationCardDto> {
+  constructor(
+    asOf: Date,
+    items: ApplicantApplicationCardDto[],
+    pagination: ReadModelPaginationDto,
+    totalCount: number,
+    readonly counts: ApplicantApplicationOverviewCountsDto,
+  ) {
+    super(asOf, items, pagination, totalCount);
   }
 }
 
