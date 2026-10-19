@@ -86,4 +86,19 @@ describe('Read model cursors and input validation', () => {
       validateSync(plainToInstance(ReadModelPageQueryDto, { limit })),
     ).not.toHaveLength(0);
   });
+
+  it.each(['ALL', 'ACTIVE', 'WAITING', 'DONE'])(
+    'accepts applicant overview group %s',
+    (group) => {
+      expect(
+        validateSync(plainToInstance(ReadModelPageQueryDto, { group })),
+      ).toEqual([]);
+    },
+  );
+
+  it('rejects an unknown applicant overview group', () => {
+    expect(
+      validateSync(plainToInstance(ReadModelPageQueryDto, { group: 'OPEN' })),
+    ).not.toHaveLength(0);
+  });
 });
