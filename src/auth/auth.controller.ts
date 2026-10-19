@@ -18,6 +18,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AuthenticatedGuard } from './guards/authenticated.guard';
+import { RealtimeConnectionsService } from '../realtime/realtime-connections.service';
 import {
   generateCsrfToken,
   revokeCsrfToken,
@@ -25,7 +26,10 @@ import {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly realtimeConnections: RealtimeConnectionsService,
+  ) {}
 
   @Get('csrf-token')
   csrfToken(@Req() req: Request): { csrfToken: string } {
@@ -91,6 +95,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ message: string }> {
+    const sessionId = req.sessionID;
     revokeCsrfToken(req);
     let logoutError: Error | undefined;
     await new Promise<void>((resolve) => {
@@ -112,6 +117,7 @@ export class AuthController {
     if (logoutError ?? destroyError) {
       throw logoutError ?? destroyError ?? new Error('Logout failed');
     }
+    this.realtimeConnections.disconnectSessions([sessionId]);
     return { message: 'Logged out' };
   }
 

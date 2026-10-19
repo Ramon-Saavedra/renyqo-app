@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeConnectionsService } from '../realtime/realtime-connections.service';
 import { PasswordResetTokensRepository } from './password-reset-tokens.repository';
 
 type PasswordResetTokenRow = {
@@ -24,6 +25,7 @@ type MockTransactionClient = {
 
 describe('PasswordResetTokensRepository', () => {
   let repository: PasswordResetTokensRepository;
+  let realtimeConnections: { disconnectUser: jest.Mock };
   let tx: MockTransactionClient;
   let transaction: jest.MockedFunction<
     (
@@ -38,10 +40,14 @@ describe('PasswordResetTokensRepository', () => {
     };
     tx.$executeRaw.mockResolvedValue(1);
     transaction = jest.fn((callback) => callback(tx));
-    repository = new PasswordResetTokensRepository({
-      $transaction: transaction,
-      $executeRaw: jest.fn<ExecuteRaw>(),
-    } as unknown as PrismaService);
+    realtimeConnections = { disconnectUser: jest.fn() };
+    repository = new PasswordResetTokensRepository(
+      {
+        $transaction: transaction,
+        $executeRaw: jest.fn<ExecuteRaw>(),
+      } as unknown as PrismaService,
+      realtimeConnections as unknown as RealtimeConnectionsService,
+    );
   });
 
   it('updates password, marks token used and invalidates sessions for a valid token', async () => {
@@ -68,6 +74,9 @@ describe('PasswordResetTokensRepository', () => {
     );
     expect(String(tx.$executeRaw.mock.calls[2]?.[0])).toContain(
       'DELETE FROM "user_sessions"',
+    );
+    expect(realtimeConnections.disconnectUser).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
     );
   });
 

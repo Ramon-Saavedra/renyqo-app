@@ -19,14 +19,15 @@
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["node", "express", "express-session", "passport", "multer"]
+    "types": [
+      "node",
+      "jest",
+      "express",
+      "express-session",
+      "passport",
+      "multer"
+    ]
   },
-  "exclude": [
-    "node_modules",
-    "dist",
-    "test",
-    "evals",
-    "**/*.spec.ts",
-    "src/__mocks__/**"
-  ]
+  "include": ["src/**/*", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist", "evals", "src/__mocks__/**"]
 }

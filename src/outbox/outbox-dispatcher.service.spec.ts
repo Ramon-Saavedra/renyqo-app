@@ -1,7 +1,9 @@
+import { Test } from '@nestjs/testing';
 import { OutboxDispatcherService } from './outbox-dispatcher.service';
 import type { OutboxPublisher } from './outbox-publisher';
-import type { OutboxConfigService } from './outbox-config.service';
-import type { OutboxRepository } from './outbox-repository';
+import { OutboxConfigService } from './outbox-config.service';
+import { OutboxRepository } from './outbox-repository';
+import { OUTBOX_PUBLISHER } from './outbox-publisher';
 
 describe('OutboxDispatcherService', () => {
   const config = {
@@ -81,5 +83,58 @@ describe('OutboxDispatcherService', () => {
 
     expect(repository.markDispatched).not.toHaveBeenCalled();
     expect(repository.releaseAfterFailure).toHaveBeenCalled();
+  });
+
+  it('drains an active poll and leaves later claims recoverable on shutdown', async () => {
+    jest.useFakeTimers();
+    let finish: () => void = () => {
+      throw new Error('Publish did not start');
+    };
+    const publisher: OutboxPublisher = {
+      publish: jest.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    };
+    const claimed = ['first', 'second'].map((id) => ({
+      id,
+      type: 'conversation.message.created',
+      schemaVersion: 1,
+      applicationId: 'application',
+      conversationId: 'conversation',
+      payload: {},
+      occurredAt: new Date(),
+      attemptCount: 1,
+      claimToken: 'claim',
+    }));
+    const repository = {
+      claimBatch: jest.fn().mockResolvedValue(claimed),
+      markDispatched: jest.fn().mockResolvedValue(1),
+      releaseAfterFailure: jest.fn(),
+    };
+    const module = await Test.createTestingModule({
+      providers: [
+        OutboxDispatcherService,
+        { provide: OutboxConfigService, useValue: config },
+        { provide: OutboxRepository, useValue: repository },
+        { provide: OUTBOX_PUBLISHER, useValue: publisher },
+      ],
+    }).compile();
+    const dispatcher = module.get(OutboxDispatcherService);
+    dispatcher.onModuleInit();
+    await jest.advanceTimersByTimeAsync(0);
+    const closing = dispatcher.onModuleDestroy();
+    finish();
+    await closing;
+    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    expect(repository.markDispatched).toHaveBeenCalledWith(
+      'first',
+      'claim',
+      expect.any(Date),
+    );
+    await module.close();
+    jest.useRealTimers();
   });
 });

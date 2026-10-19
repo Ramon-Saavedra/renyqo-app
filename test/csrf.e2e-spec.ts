@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, it, jest } from '@jest/globals';
 import request from 'supertest';
 import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
+import { RealtimeConnectionsService } from '../src/realtime/realtime-connections.service';
 import { configureCsrfProtection } from '../src/security/csrf/csrf-protection';
 
 class MutationDto {
@@ -73,6 +74,12 @@ class CsrfTestController {
         login: jest.fn(),
         forgotPassword: jest.fn(),
         resetPassword: jest.fn(),
+      },
+    },
+    {
+      provide: RealtimeConnectionsService,
+      useValue: {
+        disconnectSessions: jest.fn(),
       },
     },
   ],

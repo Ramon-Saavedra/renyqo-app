@@ -209,7 +209,7 @@ describe('Outbox foundation E2E', () => {
   afterAll(async () => {
     if (app) {
       app.get(OutboxRetentionService).onModuleDestroy();
-      app.get(OutboxDispatcherService).onModuleDestroy();
+      await app.get(OutboxDispatcherService).onModuleDestroy();
       await app.close();
     }
     if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
@@ -424,7 +424,7 @@ describe('Outbox dispatcher publish E2E', () => {
 
   afterAll(async () => {
     module.get(OutboxRetentionService).onModuleDestroy();
-    module.get(OutboxDispatcherService).onModuleDestroy();
+    await module.get(OutboxDispatcherService).onModuleDestroy();
     await module.close();
   });
 

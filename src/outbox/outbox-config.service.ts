@@ -1,6 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { NodeEnv } from '../config/env.validation';
 
 @Injectable()
 export class OutboxConfigService implements OnModuleInit {
@@ -11,8 +10,13 @@ export class OutboxConfigService implements OnModuleInit {
   readonly maxAttempts: number;
   readonly retentionDays: number;
   readonly retentionBatchSize: number;
+  private readonly realtimeEnabled: boolean;
 
   constructor(config: ConfigService) {
+    this.realtimeEnabled = parseBoolean(
+      config.get<string>('REALTIME_ENABLED'),
+      false,
+    );
     this.dispatchEnabled = parseBoolean(
       config.get<string>('OUTBOX_DISPATCH_ENABLED'),
       false,
@@ -44,10 +48,9 @@ export class OutboxConfigService implements OnModuleInit {
   }
 
   onModuleInit(): void {
-    const nodeEnv = process.env['NODE_ENV'];
-    if (this.dispatchEnabled && nodeEnv === NodeEnv.Production) {
+    if (this.dispatchEnabled && !this.realtimeEnabled) {
       throw new Error(
-        'OUTBOX_DISPATCH_ENABLED cannot be true in production until a realtime transport publisher is configured. Events are still written to the outbox; HTTP remains authoritative.',
+        'OUTBOX_DISPATCH_ENABLED requires REALTIME_ENABLED=true. HTTP remains authoritative.',
       );
     }
   }
