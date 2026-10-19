@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { EmailModule } from '../email/email.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -12,6 +13,7 @@ import { SessionSerializer } from './serializers/session.serializer';
     PassportModule.register({ session: true }),
     UsersModule,
     EmailModule,
+    RealtimeModule,
   ],
   providers: [AuthService, SessionSerializer, PasswordResetTokensRepository],
   controllers: [AuthController],

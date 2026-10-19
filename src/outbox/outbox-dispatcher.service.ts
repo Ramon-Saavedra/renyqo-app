@@ -14,7 +14,7 @@ import { OUTBOX_PUBLISHER, type OutboxPublisher } from './outbox-publisher';
 export class OutboxDispatcherService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OutboxDispatcherService.name);
   private timer: NodeJS.Timeout | undefined;
-  private running = false;
+  private inFlight: Promise<void> | undefined;
   private pollInFlight = false;
   private stopped = false;
 
@@ -37,15 +37,16 @@ export class OutboxDispatcherService implements OnModuleInit, OnModuleDestroy {
     this.schedulePoll(0);
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
+    await this.inFlight;
   }
 
   private schedulePoll(delayMs: number): void {
     if (this.stopped) return;
     this.timer = setTimeout(() => {
-      void this.poll();
+      this.inFlight = this.poll();
     }, delayMs);
   }
 
@@ -79,6 +80,8 @@ export class OutboxDispatcherService implements OnModuleInit, OnModuleDestroy {
       this.config.batchSize,
     );
     for (const event of claimed) {
+      // Remaining claims expire naturally if shutdown or a slow batch exhausts the lease.
+      if (this.stopped || Date.now() >= leaseUntil.getTime()) break;
       try {
         await this.publisher.publish({
           eventId: event.id,

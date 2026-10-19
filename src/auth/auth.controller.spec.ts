@@ -5,6 +5,7 @@ import type { Request } from 'express';
 
 import { Role, UserStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
+import { RealtimeConnectionsService } from '../realtime/realtime-connections.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -78,6 +79,12 @@ describe('AuthController', () => {
             login: jest.fn(),
             forgotPassword: jest.fn(),
             resetPassword: jest.fn(),
+          },
+        },
+        {
+          provide: RealtimeConnectionsService,
+          useValue: {
+            disconnectSessions: jest.fn(),
           },
         },
       ],

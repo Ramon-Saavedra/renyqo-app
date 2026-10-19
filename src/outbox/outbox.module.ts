@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ConversationOutboxProducer } from './conversation-outbox.producer';
-import { LoggingOutboxPublisher } from './logging-outbox.publisher';
+import { RealtimeModule } from '../realtime/realtime.module';
+import { RealtimeOutboxPublisher } from '../realtime/realtime-outbox.publisher';
 import { OutboxConfigService } from './outbox-config.service';
 import { OutboxDispatcherService } from './outbox-dispatcher.service';
 import { OUTBOX_PUBLISHER } from './outbox-publisher';
@@ -10,7 +11,7 @@ import { OutboxRetentionService } from './outbox-retention.service';
 import { OutboxWriter } from './outbox-writer.service';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, RealtimeModule],
   providers: [
     OutboxConfigService,
     OutboxWriter,
@@ -18,8 +19,7 @@ import { OutboxWriter } from './outbox-writer.service';
     OutboxRepository,
     OutboxDispatcherService,
     OutboxRetentionService,
-    LoggingOutboxPublisher,
-    { provide: OUTBOX_PUBLISHER, useExisting: LoggingOutboxPublisher },
+    { provide: OUTBOX_PUBLISHER, useExisting: RealtimeOutboxPublisher },
   ],
   exports: [OutboxWriter, ConversationOutboxProducer],
 })

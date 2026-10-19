@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { RealtimeConnectionsService } from '../realtime/realtime-connections.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 type CreatePasswordResetTokenInput = {
@@ -20,7 +21,10 @@ type PasswordResetTokenRow = {
 
 @Injectable()
 export class PasswordResetTokensRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtimeConnections: RealtimeConnectionsService,
+  ) {}
 
   async invalidateActiveTokensForUser(
     userId: string,
@@ -80,6 +84,7 @@ export class PasswordResetTokensRepository {
         WHERE "sess"->'passport'->>'user' = ${token.user_id}
       `;
 
+      this.realtimeConnections.disconnectUser(token.user_id);
       return true;
     });
   }
