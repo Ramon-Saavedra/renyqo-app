@@ -10,7 +10,14 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { Role } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
 
-export async function realtimeTestApp() {
+export async function realtimeTestApp(
+  options: {
+    enabled?: boolean;
+    handshakeLimit?: number;
+    connectionLimit?: number;
+    sessionLimit?: number;
+  } = {},
+) {
   const database = process.env['E2E_DATABASE_URL'];
   if (!database || process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true')
     throw new Error('Dedicated E2E database and reset marker required');
@@ -21,10 +28,12 @@ export async function realtimeTestApp() {
     SESSION_SECRET: secret,
     NODE_ENV: 'test',
     FRONTEND_URL: 'http://localhost:3001',
-    REALTIME_ENABLED: 'true',
+    REALTIME_ENABLED: options.enabled === false ? 'false' : 'true',
     OUTBOX_DISPATCH_ENABLED: 'false',
     REALTIME_SESSION_RECHECK_INTERVAL_MS: '50',
-    REALTIME_MAX_CONNECTIONS_PER_SESSION: '2',
+    REALTIME_MAX_CONNECTIONS_PER_SESSION: String(options.sessionLimit ?? 2),
+    REALTIME_MAX_CONNECTIONS: String(options.connectionLimit ?? 1000),
+    REALTIME_HANDSHAKES_PER_IP_PER_MINUTE: String(options.handshakeLimit ?? 60),
   });
   process.env['DATABASE_URL'] = database;
   process.env['NODE_ENV'] = 'test';

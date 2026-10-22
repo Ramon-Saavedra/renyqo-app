@@ -6,7 +6,7 @@ The server emits only `domain-event` notifications. Clients cannot join rooms, s
 
 ## Identity and validity
 
-Socket admission requires the exact origin of `FRONTEND_URL` and a valid signed `sid` cookie. Missing origins, alternate origins and unsigned/tampered cookies fail closed. A joined PostgreSQL lookup resolves the stored Passport identity, session expiry, current role and active account. Client auth fields are ignored. The default namespace rejects connections.
+Socket admission requires the exact origin of `FRONTEND_URL`. A missing origin, another origin, disabled realtime, the handshake rate limit, and the new-IP admission cap are rejected before the namespace connects. Session authentication runs in namespace middleware, before any room join. Missing, unsigned, expired, deleted, inactive, and unsupported-role sessions fail closed with Socket.IO connect error data `{ "code": "AUTH_REQUIRED" }`. Connection caps and session-lookup failures use a generic connect error and do not set that code. A joined PostgreSQL lookup resolves the stored Passport identity, session expiry, current role and active account. Client auth fields are ignored. The default namespace rejects connections.
 
 HTTP session middleware and socket signature verification share the same session infrastructure and secret. Sockets never run session-saving/touching middleware, so connection/revalidation/heartbeats do not create or extend login sessions. Existing login session regeneration and HTTP CSRF protection remain unchanged.
 

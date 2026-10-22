@@ -1,10 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { IncomingMessage } from 'node:http';
-import { SessionInfrastructureService } from '../auth/session/session-infrastructure.service';
+import type { ExtendedError } from 'socket.io';
 import { RealtimeConfigService } from './realtime-config.service';
 import { RealtimeConnectionsService } from './realtime-connections.service';
-import { RealtimeSessionService } from './realtime-session.service';
+import {
+  RealtimeSessionService,
+  RealtimeUnauthenticatedError,
+} from './realtime-session.service';
 import type { RealtimeNamespace } from './realtime-socket';
+
+export const REALTIME_AUTH_REQUIRED_CODE = 'AUTH_REQUIRED';
 
 @Injectable()
 export class RealtimeAdmissionService {
@@ -14,7 +19,6 @@ export class RealtimeAdmissionService {
 
   constructor(
     private readonly config: RealtimeConfigService,
-    private readonly infrastructure: SessionInfrastructureService,
     private readonly sessions: RealtimeSessionService,
     private readonly connections: RealtimeConnectionsService,
   ) {}
@@ -31,11 +35,19 @@ export class RealtimeAdmissionService {
         .authenticate(socket.request.headers.cookie)
         .then((identity) => this.connections.add(socket, identity))
         .then(() => next())
-        .catch(() => {
+        .catch((error: unknown) => {
           this.logger.warn({ signal: 'REALTIME_CONNECTION_REJECTED' });
-          next(new Error('Realtime connection rejected'));
+          next(this.rejection(error));
         });
     });
+  }
+
+  private rejection(error: unknown): ExtendedError {
+    const rejected: ExtendedError = new Error('Realtime connection rejected');
+    if (error instanceof RealtimeUnauthenticatedError) {
+      rejected.data = { code: REALTIME_AUTH_REQUIRED_CODE };
+    }
+    return rejected;
   }
 
   private accept(request: IncomingMessage): boolean {
@@ -53,9 +65,6 @@ export class RealtimeAdmissionService {
       return false;
     const count = (this.attempts.get(ip) ?? 0) + 1;
     this.attempts.set(ip, count);
-    return (
-      count <= this.config.handshakeLimit &&
-      this.infrastructure.signedSessionId(request.headers.cookie) !== null
-    );
+    return count <= this.config.handshakeLimit;
   }
 }
