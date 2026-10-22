@@ -9,6 +9,14 @@ export type RealtimeIdentity = {
   userId: string;
   role: Role;
 };
+
+export class RealtimeUnauthenticatedError extends Error {
+  constructor() {
+    super('Unauthenticated');
+    this.name = 'RealtimeUnauthenticatedError';
+  }
+}
+
 const SESSION_BATCH_SIZE = 200;
 
 @Injectable()
@@ -20,9 +28,9 @@ export class RealtimeSessionService {
 
   async authenticate(cookie: string | undefined): Promise<RealtimeIdentity> {
     const id = this.sessions.signedSessionId(cookie);
-    if (!id) throw new Error('Unauthenticated');
+    if (!id) throw new RealtimeUnauthenticatedError();
     const identity = (await this.valid([id])).get(id);
-    if (!identity) throw new Error('Unauthenticated');
+    if (!identity) throw new RealtimeUnauthenticatedError();
     return identity;
   }
 

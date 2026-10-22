@@ -3,20 +3,25 @@ import { Test } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionInfrastructureService } from '../auth/session/session-infrastructure.service';
 import { Role } from '../generated/prisma/enums';
-import { RealtimeSessionService } from './realtime-session.service';
+import {
+  RealtimeSessionService,
+  RealtimeUnauthenticatedError,
+} from './realtime-session.service';
 
 describe('Session lookup batching', () => {
   const query = jest.fn<() => Promise<unknown[]>>();
+  const signedSessionId = jest.fn<() => string | null>(() => 'session');
   let service: RealtimeSessionService;
   beforeEach(async () => {
     query.mockReset().mockResolvedValue([]);
+    signedSessionId.mockReset().mockReturnValue('session');
     const module = await Test.createTestingModule({
       providers: [
         RealtimeSessionService,
         { provide: PrismaService, useValue: { $queryRaw: query } },
         {
           provide: SessionInfrastructureService,
-          useValue: { signedSessionId: () => 'session' },
+          useValue: { signedSessionId },
         },
       ],
     }).compile();
@@ -39,6 +44,27 @@ describe('Session lookup batching', () => {
   });
   it('propagates database failure instead of treating it as no recipients', async () => {
     query.mockRejectedValue(new Error('database unavailable'));
-    await expect(service.valid(['session'])).rejects.toThrow();
+    await expect(service.valid(['session'])).rejects.toThrow(
+      'database unavailable',
+    );
+  });
+  it('rejects a missing or unsigned cookie before lookup', async () => {
+    signedSessionId.mockReturnValue(null);
+    await expect(service.authenticate(undefined)).rejects.toBeInstanceOf(
+      RealtimeUnauthenticatedError,
+    );
+    expect(query).not.toHaveBeenCalled();
+  });
+  it('rejects an expired, inactive, or unsupported session', async () => {
+    query.mockResolvedValue([]);
+    await expect(service.authenticate('sid=signed')).rejects.toBeInstanceOf(
+      RealtimeUnauthenticatedError,
+    );
+  });
+  it('does not convert a lookup failure into an authentication error', async () => {
+    query.mockRejectedValue(new Error('database unavailable'));
+    await expect(service.authenticate('sid=signed')).rejects.toThrow(
+      'database unavailable',
+    );
   });
 });
