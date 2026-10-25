@@ -567,17 +567,30 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
     expect((await inbox().unread(f.applicant.userId)).unreadCount).toBe(0);
     expect((await list(f.applicant.userId)).items[0].readAt).not.toBeNull();
     // Exercise the real dispatcher/claimed-row path for the new nullable application scope.
-    for (let batch = 0; batch < 5; batch++) {
-      await c.app.get(OutboxDispatcherService).dispatchOnce();
-      if (
-        (
-          await c.prisma.outboxEvent.findUniqueOrThrow({
-            where: { id: events[0].id },
-          })
-        ).dispatchedAt
-      )
-        break;
-    }
+    // More than the old five batches of backlog must not determine this test's result.
+    await c.prisma.outboxEvent.createMany({
+      data: Array.from({ length: 300 }, () => ({
+        applicationId: f.app.id,
+        type: 'application.lifecycle.changed',
+        payload: { listingId: f.listing.id },
+        occurredAt: new Date(),
+        nextAttemptAt: new Date(0),
+      })),
+    });
+    const oldest = await c.prisma.outboxEvent.aggregate({
+      _min: { createdAt: true },
+    });
+    // Prioritize only our fixture event; leave unrelated rows/backoff untouched.
+    await c.prisma.outboxEvent.update({
+      where: { id: events[0].id },
+      data: {
+        createdAt: new Date(
+          (oldest._min.createdAt ?? events[0].createdAt).getTime() - 1,
+        ),
+        nextAttemptAt: new Date(0),
+      },
+    });
+    await c.app.get(OutboxDispatcherService).dispatchOnce();
     expect(
       (
         await c.prisma.outboxEvent.findUniqueOrThrow({

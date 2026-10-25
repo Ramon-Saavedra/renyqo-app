@@ -146,6 +146,14 @@ export class ApplicationViewingOutcomeService {
           );
         return this.query.response(tx, application, 'applicant', viewingId);
       }
+      const workflow = await tx.viewingWorkflow.findUnique({
+        where: { applicationId },
+        select: { state: true },
+      });
+      if (workflow?.state === 'CLOSED')
+        throw new ConflictException(
+          'Post-viewing interest was closed by the application lifecycle',
+        );
       if (interest === ViewingInterest.NOT_INTERESTED && !confirmWithdrawal)
         throw new BadRequestException('Withdrawal confirmation required');
       const now = this.clock.now();

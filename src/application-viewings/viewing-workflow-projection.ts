@@ -9,6 +9,7 @@ import type {
 import {
   ApplicationViewingPolicy,
   CORRECTION_WINDOW_MS,
+  legacyViewingAllowsActions,
 } from './application-viewing.policy';
 import { VIEWING_CHANGE_CUTOFF_MS } from './viewing-workflow-command.policy';
 import type { ViewingAudience } from './application-viewing-access.service';
@@ -218,12 +219,13 @@ export function projectViewingWorkflow(
     });
   // Reuse the legacy policy against the live ledger, never the imported pointers.
   const legacyPolicy = new ApplicationViewingPolicy();
-  const legacyMutable = mutable && w?.state !== 'CLOSED';
-  if (legacy && legacyMutable)
+  const legacyMutable = (a: ProjectionAppointment) =>
+    legacyViewingAllowsActions(mutable, w?.state === 'CLOSED', a.status);
+  if (legacy)
     for (const a of ordered) {
       const action = legacyPolicy.nextAction(
         a,
-        true,
+        legacyMutable(a),
         a.id === latest?.id,
         asOf,
       );
@@ -439,11 +441,11 @@ export function projectViewingWorkflow(
     )
       boundaries.push(correctionCutoffAt);
   }
-  if (legacy && legacyMutable)
+  if (legacy)
     for (const a of ordered) {
       const boundary = legacyPolicy.attentionRevalidatesAt(
         a,
-        true,
+        legacyMutable(a),
         a.id === latest?.id,
         asOf,
       );

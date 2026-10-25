@@ -445,6 +445,57 @@ describe('authoritative viewing projection', () => {
     expect(p.confirmedAppointment).toBeNull();
     expect(p.capabilities.every((c) => !c.allowed)).toBe(true);
   });
+  it.each([
+    ['PROPOSED', 'APPLICANT_RESPOND_TO_VIEWING'],
+    ['CHANGE_REQUESTED', 'PROVIDER_RESPOND_TO_CHANGE_REQUEST'],
+    ['ACCEPTED', 'PROVIDER_RECORD_VIEWING_OUTCOME'],
+    ['OUTCOME_PENDING', 'PROVIDER_RECORD_VIEWING_OUTCOME'],
+  ] as const)(
+    'projects live %s after closed LEGACY restore without reviving old interest',
+    (status, action) => {
+      const s = completed();
+      s.workflow = workflow({
+        mode: 'LEGACY',
+        state: 'CLOSED',
+        closureReason: 'APPLICATION_REJECTED',
+        closedAt: now,
+        confirmedAppointmentId: null,
+      });
+      const live = appointment({
+        id: 'new',
+        round: 2,
+        status,
+        appointment: null,
+        acceptedAt:
+          status === 'ACCEPTED' || status === 'OUTCOME_PENDING' ? now : null,
+      });
+      s.appointments.push(live);
+      const at =
+        status === 'PROPOSED' || status === 'CHANGE_REQUESTED' ? now : end;
+      expect(project(s, at).obligations.map((o) => o.action)).toEqual([action]);
+      expect(project(s, at, 'provider', false).obligations).toEqual([]);
+      const reads = new ApplicationViewingReadService(
+        new ApplicationViewingPolicy(),
+      );
+      const summary = reads.summary(
+        s.appointments,
+        true,
+        2,
+        at,
+        status === 'PROPOSED' ? 'applicant' : 'provider',
+        s,
+      );
+      expect(summary.nextAction).toBe(action);
+      expect(summary.pendingInterest?.capabilities.canSubmitInterest).toBe(
+        false,
+      );
+      if (status === 'PROPOSED')
+        expect(summary.latest?.capabilities.canAccept).toBe(true);
+      if (status === 'ACCEPTED' || status === 'OUTCOME_PENDING')
+        expect(summary.latest?.capabilities.canMarkCompleted).toBe(true);
+    },
+  );
+
   it('does not revive legacy post-viewing obligations after lifecycle closure or restore', () => {
     const s = completed();
     s.workflow = workflow({

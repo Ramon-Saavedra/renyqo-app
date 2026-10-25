@@ -26,6 +26,22 @@ export type ViewingNextAction =
   | 'PROVIDER_CLOSE_UNANSWERED_VIEWING'
   | 'PROVIDER_DECIDE_CONSIDERATION'
   | 'NONE';
+
+/** Closed legacy snapshots suppress past decisions, not new live ledger actions. */
+export function legacyViewingAllowsActions(
+  mutable: boolean,
+  closed: boolean,
+  status: Status,
+): boolean {
+  return (
+    mutable &&
+    (!closed ||
+      status === Status.PROPOSED ||
+      status === Status.ACCEPTED ||
+      status === Status.CHANGE_REQUESTED ||
+      status === Status.OUTCOME_PENDING)
+  );
+}
 export const CORRECTION_WINDOW_MS = 24 * 60 * 60_000;
 
 @Injectable()
@@ -147,12 +163,14 @@ export class ApplicationViewingPolicy {
       canMarkCompleted:
         live &&
         provider &&
-        viewing.status === Status.ACCEPTED &&
+        (viewing.status === Status.ACCEPTED ||
+          viewing.status === Status.OUTCOME_PENDING) &&
         now >= viewing.endsAt,
       canMarkNoShow:
         live &&
         provider &&
-        viewing.status === Status.ACCEPTED &&
+        (viewing.status === Status.ACCEPTED ||
+          viewing.status === Status.OUTCOME_PENDING) &&
         now >= viewing.endsAt,
       canCorrectOutcome:
         live &&
@@ -184,7 +202,12 @@ export class ApplicationViewingPolicy {
       return 'PROVIDER_CLOSE_UNANSWERED_VIEWING';
     if (latest && viewing.status === Status.CHANGE_REQUESTED)
       return 'PROVIDER_RESPOND_TO_CHANGE_REQUEST';
-    if (latest && viewing.status === Status.ACCEPTED && now >= viewing.endsAt)
+    if (
+      latest &&
+      (viewing.status === Status.ACCEPTED ||
+        viewing.status === Status.OUTCOME_PENDING) &&
+      now >= viewing.endsAt
+    )
       return 'PROVIDER_RECORD_VIEWING_OUTCOME';
     if (viewing.status === Status.COMPLETED && !viewing.interest)
       return 'APPLICANT_CONFIRM_POST_VIEWING_INTEREST';
@@ -200,7 +223,11 @@ export class ApplicationViewingPolicy {
     if (!mutable || !latest) return null;
     if (viewing.status === Status.PROPOSED && now < viewing.startsAt)
       return viewing.startsAt;
-    if (viewing.status === Status.ACCEPTED && now < viewing.endsAt)
+    if (
+      (viewing.status === Status.ACCEPTED ||
+        viewing.status === Status.OUTCOME_PENDING) &&
+      now < viewing.endsAt
+    )
       return viewing.endsAt;
     return null;
   }

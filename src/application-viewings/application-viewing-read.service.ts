@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ApplicationViewingStatus } from '../generated/prisma/enums';
 import { Prisma } from '../generated/prisma/client';
-import { ApplicationViewingPolicy } from './application-viewing.policy';
+import {
+  ApplicationViewingPolicy,
+  legacyViewingAllowsActions,
+} from './application-viewing.policy';
 import type { ViewingAudience } from './application-viewing-access.service';
 import {
   projectViewingWorkflow,
@@ -52,13 +55,20 @@ export class ApplicationViewingReadService {
           asOf,
         )
       : null;
-    const legacyMutable =
-      mutable &&
+    const legacyMutable = (row: LegacySummaryRow) =>
       projection?.mode !== 'CURRENT' &&
-      source?.workflow?.state !== 'CLOSED';
+      legacyViewingAllowsActions(
+        mutable,
+        source?.workflow?.state === 'CLOSED',
+        row.status,
+      );
     const ordered = [...rows].sort((a, b) => b.round - a.round);
     const latest = ordered.find((row) => row.round === latestRound);
-    const current = ordered.find((row) => this.policy.unresolved(row));
+    const current = ordered.find(
+      (row) =>
+        this.policy.unresolved(row) ||
+        row.status === ApplicationViewingStatus.OUTCOME_PENDING,
+    );
     const completed = ordered.find(
       (row) => row.status === ApplicationViewingStatus.COMPLETED,
     );
@@ -83,14 +93,14 @@ export class ApplicationViewingReadService {
               : null,
             nextAction: this.policy.nextAction(
               row,
-              legacyMutable,
+              legacyMutable(row),
               row.round === latestRound,
               asOf,
             ),
             capabilities: this.policy.capabilities(
               row,
               audience,
-              legacyMutable,
+              legacyMutable(row),
               row.round === latestRound,
               asOf,
             ),
