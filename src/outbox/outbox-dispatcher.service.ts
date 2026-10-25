@@ -88,6 +88,7 @@ export class OutboxDispatcherService implements OnModuleInit, OnModuleDestroy {
           type: event.type,
           schemaVersion: event.schemaVersion,
           applicationId: event.applicationId,
+          userId: event.userId,
           conversationId: event.conversationId,
           occurredAt: event.occurredAt,
           payload: event.payload,

@@ -1,3 +1,5 @@
+import { ApplicationEventRouter } from './application-event-router.service';
+import { RealtimeEventRouter } from './realtime-event-router.service';
 import { Module } from '@nestjs/common';
 import { SessionModule } from '../auth/session/session.module';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -18,6 +20,8 @@ import { RealtimeSessionService } from './realtime-session.service';
     RealtimeConnectionsService,
     RealtimeAdmissionService,
     ConversationEventRouter,
+    ApplicationEventRouter,
+    RealtimeEventRouter,
     RealtimeDeliveryService,
     RealtimeGateway,
     RealtimeOutboxPublisher,

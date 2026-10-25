@@ -2,13 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { providerApplicationIsVisible } from '../applications/application-process.policy';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '../generated/prisma/enums';
-import type { RealtimeEvent } from './realtime-event';
+import type { ConversationRealtimeEvent } from './realtime-event';
 
 @Injectable()
 export class ConversationEventRouter {
   constructor(private readonly prisma: PrismaService) {}
 
-  async recipients(event: RealtimeEvent): Promise<string[]> {
+  async recipients(event: ConversationRealtimeEvent): Promise<string[]> {
     const conversation = await this.prisma.applicationConversation.findFirst({
       where: { id: event.conversationId, applicationId: event.applicationId },
       select: {

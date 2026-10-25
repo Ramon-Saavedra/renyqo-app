@@ -1,3 +1,4 @@
+import { ApplicationOutboxProducer } from './application-outbox.producer';
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ConversationOutboxProducer } from './conversation-outbox.producer';
@@ -15,12 +16,17 @@ import { OutboxWriter } from './outbox-writer.service';
   providers: [
     OutboxConfigService,
     OutboxWriter,
+    ApplicationOutboxProducer,
     ConversationOutboxProducer,
     OutboxRepository,
     OutboxDispatcherService,
     OutboxRetentionService,
     { provide: OUTBOX_PUBLISHER, useExisting: RealtimeOutboxPublisher },
   ],
-  exports: [OutboxWriter, ConversationOutboxProducer],
+  exports: [
+    ApplicationOutboxProducer,
+    OutboxWriter,
+    ConversationOutboxProducer,
+  ],
 })
 export class OutboxModule {}
