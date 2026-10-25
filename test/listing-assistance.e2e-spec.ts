@@ -251,6 +251,7 @@ async function clearDatabase(): Promise<void> {
   }
 
   const client = getPrisma();
+  await client.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
   await client.application.deleteMany();
   await client.listingReport.deleteMany();
   await client.savedListing.deleteMany();

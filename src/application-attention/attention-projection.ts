@@ -60,7 +60,7 @@ export function projectApplicationAttention(
 export function compactAttentionSummary(
   detail: ApplicationAttentionSummaryDto,
 ): ApplicationAttentionSummaryDto {
-  return new ApplicationAttentionSummaryDto(
+  const summary = new ApplicationAttentionSummaryDto(
     detail.pendingActionCount,
     detail.actionableUnreadMessageCount,
     detail.categories,
@@ -68,6 +68,8 @@ export function compactAttentionSummary(
     detail.documentIndicators,
     detail.nextRevalidateAt,
   );
+  summary.viewing = detail.viewing;
+  return summary;
 }
 
 export class AttentionTotalAccumulator {
@@ -175,7 +177,10 @@ function targetsFor(
           input.applicationId,
           input.listingId,
           AttentionSection.VIEWING,
-          { viewingId: action.target.viewingId },
+          {
+            viewingId: action.target.viewingId,
+            workflowTarget: action.target.workflowTarget,
+          },
         ),
       );
     }

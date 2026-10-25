@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import type { Prisma } from '../generated/prisma/client';
+import type { Prisma, ViewingWorkflow } from '../generated/prisma/client';
 import { ApplicationViewingStatus as Status } from '../generated/prisma/enums';
 import type { ProposeViewingDto } from './dto/viewing-input.dto';
 import type { ViewingAudience } from './application-viewing-access.service';
@@ -24,7 +24,57 @@ export type ViewingNextAction =
   | 'PROVIDER_RECORD_VIEWING_OUTCOME'
   | 'APPLICANT_CONFIRM_POST_VIEWING_INTEREST'
   | 'PROVIDER_CLOSE_UNANSWERED_VIEWING'
+  | 'PROVIDER_DECIDE_CONSIDERATION'
   | 'NONE';
+
+/** A historical closure ends this visit's decision, not every later legacy visit. */
+export function legacyInterestClosedByLifecycle(
+  workflow:
+    | Pick<ViewingWorkflow, 'state' | 'closedAt' | 'updatedAt'>
+    | null
+    | undefined,
+  viewing: {
+    startsAt: Date;
+    outcomes: readonly { recordedAt: Date }[];
+    appointment?: { interestState: string } | null;
+  },
+): boolean {
+  if (viewing.appointment?.interestState === 'CLOSED') return true;
+  if (workflow?.state !== 'CLOSED') return false;
+  if (!workflow.closedAt) return true;
+  // LEGACY ledger commands leave the closed snapshot untouched. Lifecycle and
+  // restore update it, while preserving closedAt. Include that later boundary
+  // so repeated reject/restore cycles cannot reopen an earlier visit's interest.
+  const boundary = new Date(
+    Math.max(workflow.closedAt.getTime(), workflow.updatedAt.getTime()),
+  );
+  const firstOutcome = viewing.outcomes[0];
+  // No inferred interest for unknown history, corrected old outcomes, or a visit
+  // already underway at termination whose attendance was recorded only later.
+  return (
+    !firstOutcome ||
+    firstOutcome.recordedAt <= boundary ||
+    viewing.startsAt <= boundary
+  );
+}
+
+/** Closed legacy snapshots suppress past decisions, not new live ledger actions. */
+export function legacyViewingAllowsActions(
+  mutable: boolean,
+  closed: boolean,
+  status: Status,
+  interestClosed = closed,
+): boolean {
+  if (status === Status.COMPLETED) return mutable && !interestClosed;
+  return (
+    mutable &&
+    (!closed ||
+      status === Status.PROPOSED ||
+      status === Status.ACCEPTED ||
+      status === Status.CHANGE_REQUESTED ||
+      status === Status.OUTCOME_PENDING)
+  );
+}
 export const CORRECTION_WINDOW_MS = 24 * 60 * 60_000;
 
 @Injectable()
@@ -146,12 +196,14 @@ export class ApplicationViewingPolicy {
       canMarkCompleted:
         live &&
         provider &&
-        viewing.status === Status.ACCEPTED &&
+        (viewing.status === Status.ACCEPTED ||
+          viewing.status === Status.OUTCOME_PENDING) &&
         now >= viewing.endsAt,
       canMarkNoShow:
         live &&
         provider &&
-        viewing.status === Status.ACCEPTED &&
+        (viewing.status === Status.ACCEPTED ||
+          viewing.status === Status.OUTCOME_PENDING) &&
         now >= viewing.endsAt,
       canCorrectOutcome:
         live &&
@@ -183,7 +235,12 @@ export class ApplicationViewingPolicy {
       return 'PROVIDER_CLOSE_UNANSWERED_VIEWING';
     if (latest && viewing.status === Status.CHANGE_REQUESTED)
       return 'PROVIDER_RESPOND_TO_CHANGE_REQUEST';
-    if (latest && viewing.status === Status.ACCEPTED && now >= viewing.endsAt)
+    if (
+      latest &&
+      (viewing.status === Status.ACCEPTED ||
+        viewing.status === Status.OUTCOME_PENDING) &&
+      now >= viewing.endsAt
+    )
       return 'PROVIDER_RECORD_VIEWING_OUTCOME';
     if (viewing.status === Status.COMPLETED && !viewing.interest)
       return 'APPLICANT_CONFIRM_POST_VIEWING_INTEREST';
@@ -199,7 +256,11 @@ export class ApplicationViewingPolicy {
     if (!mutable || !latest) return null;
     if (viewing.status === Status.PROPOSED && now < viewing.startsAt)
       return viewing.startsAt;
-    if (viewing.status === Status.ACCEPTED && now < viewing.endsAt)
+    if (
+      (viewing.status === Status.ACCEPTED ||
+        viewing.status === Status.OUTCOME_PENDING) &&
+      now < viewing.endsAt
+    )
       return viewing.endsAt;
     return null;
   }

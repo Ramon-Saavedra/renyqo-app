@@ -1,4 +1,9 @@
+import { OutboxModule } from '../outbox/outbox.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { Module } from '@nestjs/common';
+import { ApplicationConsiderationService } from './application-consideration.service';
+import { ApplicationViewingReadModule } from '../application-viewings/application-viewing-read.module';
+import { ViewingLifecycleService } from './viewing-lifecycle.service';
 import { ApplicationAttentionModule } from '../application-attention/application-attention.module';
 import { ApplicationProcessReadModule } from './application-process-read.module';
 
@@ -21,6 +26,9 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
 
 @Module({
   imports: [
+    NotificationsModule,
+    OutboxModule,
+    ApplicationViewingReadModule,
     PrismaModule,
     EligibilityModule,
     ApplicationProcessReadModule,
@@ -33,6 +41,8 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
     ProviderApplicationsController,
   ],
   providers: [
+    ApplicationConsiderationService,
+    ViewingLifecycleService,
     ApplicationActivityService,
     ApplicationLifecycleService,
     ApplicationProcessQueryService,
@@ -45,6 +55,9 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
     ApplicationActionThrottlerStorage,
   ],
   exports: [
+    ApplicationConsiderationService,
+    ViewingLifecycleService,
+    ProviderApplicationCurationService,
     ProviderRecentExitsQueryService,
     ApplicationsService,
     ApplicationLifecycleService,

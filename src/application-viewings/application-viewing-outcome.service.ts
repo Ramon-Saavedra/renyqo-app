@@ -1,4 +1,9 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
+import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { ApplicationActivityService } from '../applications/application-activity.service';
 import type { Prisma } from '../generated/prisma/client';
 import {
@@ -16,6 +21,7 @@ import { ApplicationViewingQueryService } from './application-viewing-query.serv
 import {
   ApplicationViewingPolicy,
   ViewingClock,
+  legacyInterestClosedByLifecycle,
 } from './application-viewing.policy';
 import type { CorrectViewingOutcomeDto } from './dto/viewing-input.dto';
 import type { ViewingResponseDto } from './dto/viewing-response.dto';
@@ -29,6 +35,7 @@ export class ApplicationViewingOutcomeService {
     private readonly policy: ApplicationViewingPolicy,
     private readonly clock: ViewingClock,
     private readonly activity: ApplicationActivityService,
+    private readonly lifecycle: ApplicationLifecycleService,
   ) {}
 
   record(
@@ -45,6 +52,7 @@ export class ApplicationViewingOutcomeService {
         userId,
         'provider',
       );
+      await this.access.assertLegacy(tx, applicationId);
       const row = await this.query.find(tx, applicationId, viewingId);
       const now = this.clock.now();
       const latest = await tx.applicationViewing.findFirst({
@@ -119,6 +127,7 @@ export class ApplicationViewingOutcomeService {
     viewingId: string,
     userId: string,
     interest: ViewingInterest,
+    confirmWithdrawal = false,
   ): Promise<ViewingResponseDto> {
     return runSerializableTransaction(this.prisma, async (tx) => {
       const application = await this.access.mutation(
@@ -127,6 +136,7 @@ export class ApplicationViewingOutcomeService {
         userId,
         'applicant',
       );
+      await this.access.assertLegacy(tx, applicationId);
       const row = await this.query.find(tx, applicationId, viewingId);
       if (row.status !== Status.COMPLETED)
         throw new ConflictException('Interest requires a completed viewing');
@@ -137,6 +147,20 @@ export class ApplicationViewingOutcomeService {
           );
         return this.query.response(tx, application, 'applicant', viewingId);
       }
+      const workflow = await tx.viewingWorkflow.findUnique({
+        where: { applicationId },
+        select: { state: true, closedAt: true, updatedAt: true },
+      });
+      const appointment = await tx.viewingAppointment.findUnique({
+        where: { viewingId },
+        select: { interestState: true },
+      });
+      if (legacyInterestClosedByLifecycle(workflow, { ...row, appointment }))
+        throw new ConflictException(
+          'Post-viewing interest was closed by the application lifecycle',
+        );
+      if (interest === ViewingInterest.NOT_INTERESTED && !confirmWithdrawal)
+        throw new BadRequestException('Withdrawal confirmation required');
       const now = this.clock.now();
       await tx.applicationViewingInterest.create({
         data: { viewingId, interest, respondedAt: now },
@@ -152,7 +176,20 @@ export class ApplicationViewingOutcomeService {
           : Event.VIEWING_INTEREST_DECLINED,
         now,
       );
-      return this.query.response(tx, application, 'applicant', viewingId);
+      if (interest === ViewingInterest.NOT_INTERESTED)
+        await this.lifecycle.withdrawWithinTransaction(
+          tx,
+          applicationId,
+          userId,
+        );
+      return this.query.response(
+        tx,
+        interest === ViewingInterest.NOT_INTERESTED
+          ? { ...application, status: 'WITHDRAWN' }
+          : application,
+        'applicant',
+        viewingId,
+      );
     });
   }
 

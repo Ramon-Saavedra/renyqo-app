@@ -20,6 +20,12 @@ function hasSerializationCode(value: unknown): boolean {
   if (value.code === 'P2034') {
     return true;
   }
+  // Commit failures can be returned directly by the pg adapter without a P2034 wrapper.
+  if (
+    value.kind === 'TransactionWriteConflict' &&
+    value.originalCode === '40001'
+  )
+    return true;
 
   if (isRecord(value.cause) && hasSerializationCode(value.cause)) {
     return true;

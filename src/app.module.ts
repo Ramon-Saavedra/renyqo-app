@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from './notifications/notifications.module';
 import { ApplicationReadModelsModule } from './application-read-models/application-read-models.module';
 import { ApplicationAttentionModule } from './application-attention/application-attention.module';
 import { ApplicationViewingsModule } from './application-viewings/application-viewings.module';
@@ -21,6 +22,7 @@ import { ListingAssistanceModule } from './listing-assistance/listing-assistance
 
 @Module({
   imports: [
+    NotificationsModule,
     ConfigModule.forRoot({
       isGlobal: true,
       validate: validateEnv,

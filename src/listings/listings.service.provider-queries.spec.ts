@@ -1,3 +1,4 @@
+import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -165,6 +166,14 @@ describe('ListingsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: ViewingLifecycleService,
+          useValue: {
+            closeWithinTransaction: jest.fn(),
+            closeListingWithinTransaction: jest.fn(),
+            restoreWithinTransaction: jest.fn(),
+          },
+        },
         ListingsService,
         {
           provide: ApplicationActivityService,

@@ -1,3 +1,4 @@
+import { OutboxDispatcherService } from '../src/outbox/outbox-dispatcher.service';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -29,6 +30,9 @@ import { ReadModelPageQueryDto } from '../src/application-read-models/dto/read-m
 import type { ApplicantApplicationOverviewPageDto } from '../src/application-read-models/dto/read-model-response.dto';
 import { ApplicationHistoryQueryService } from '../src/application-read-models/application-history-query.service';
 import { ApplicationConversationReadService } from '../src/application-conversation/application-conversation-read.service';
+import { ApplicationProcessQueryService } from '../src/applications/application-process-query.service';
+import { ViewingWorkflowCommandService } from '../src/application-viewings/viewing-workflow-command.service';
+import { ProviderApplicationCurationService } from '../src/applications/provider-application-curation.service';
 import { PROVIDER_CURATION_COOLDOWN_MS } from '../src/applications/application-lifecycle.constants';
 import { ViewingClock } from '../src/application-viewings/application-viewing.policy';
 import { AppModule } from '../src/app.module';
@@ -123,12 +127,16 @@ describe('Application read models E2E', () => {
     assertSafeE2EDatabaseUrl(url);
     process.env['DATABASE_URL'] = url;
     process.env['NODE_ENV'] = 'test';
+    // Query-budget assertions measure HTTP reads, not the unrelated outbox poller.
+    process.env['OUTBOX_DISPATCH_ENABLED'] = 'false';
     process.env['SESSION_SECRET'] =
       'e2e-session-secret-at-least-thirty-two-characters';
     process.env['FRONTEND_URL'] = 'http://localhost:3001';
     const module = await Test.createTestingModule({
       imports: [AppModule],
     })
+      .overrideProvider(OutboxDispatcherService)
+      .useValue({})
       .overrideProvider(ViewingClock)
       .useValue({ now: () => now })
       .compile();
@@ -232,7 +240,7 @@ describe('Application read models E2E', () => {
       throw new Error('Unsafe E2E cleanup configuration');
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_viewing_interests, application_viewing_outcomes, application_viewings`;
+    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_command_receipts, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
     await prisma.applicationDocumentRequest.updateMany({
       data: { currentFileId: null },
     });
@@ -460,6 +468,72 @@ describe('Application read models E2E', () => {
     expect(pgClientQueryOverlapWarnings()).toEqual([]);
   });
 
+  it('skips inactive no-obligation composition but keeps terminal attendance attention', async () => {
+    const people = Array.from({ length: 25 }, () => ({
+      id: randomUUID(),
+      name: 'Historical',
+      email: `${randomUUID()}@e2e.renyqo.test`,
+      passwordHash: 'unused',
+      acceptedTermsAt: now,
+      acceptedPrivacyAt: now,
+    }));
+    await prisma.user.createMany({ data: people });
+    await prisma.application.createMany({
+      data: people.map((u) => ({
+        applicantId: u.id,
+        listingId,
+        status: ApplicationStatus.REJECTED,
+        activeAt: now,
+      })),
+    });
+    const commands = app.get(ViewingWorkflowCommandService);
+    const startsAt = new Date(now.getTime() + 24 * 60 * 60_000);
+    const endsAt = new Date(startsAt.getTime() + 30 * 60_000);
+    const invitation = await commands.execute(
+      applicationId,
+      provider.id,
+      'provider',
+      {
+        action: 'invite',
+        body: {
+          requestKey: randomUUID(),
+          expectedWorkflowRevision: 0,
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+          timeZone: 'Europe/Berlin',
+        },
+      },
+    );
+    await commands.execute(applicationId, applicant.id, 'applicant', {
+      action: 'accept',
+      proposalId: invitation.proposalId!,
+      body: { requestKey: randomUUID(), expectedWorkflowRevision: 1 },
+    });
+    now = new Date(endsAt.getTime() + 1);
+    await app
+      .get(ProviderApplicationCurationService)
+      .reject(applicationId, provider.id);
+    const compose = jest.spyOn(
+      app.get(ApplicationWorkspaceQueryService).attention,
+      'composeWithinTransaction',
+    );
+    const overview = await get('provider', 'listings/overview');
+    expect(nested(rows(overview)[0], 'attention')).toMatchObject({
+      totalPendingActions: 1,
+      categories: expect.objectContaining({ viewingActionCount: 1 }),
+    });
+    expect(
+      compose.mock.calls.flatMap((call) => call[1].map((row) => row.id)),
+    ).toEqual([applicationId]);
+    const detail = await get(
+      'provider',
+      `applications/${applicationId}/workspace`,
+    );
+    expect(nested(detail, 'attention')).toMatchObject({
+      pendingActionCount: 1,
+    });
+  });
+
   it('keeps per-listing attention independent of selection and refreshes only after explicit read acknowledgement', async () => {
     await prisma.listing.update({
       where: { id: listingId },
@@ -629,7 +703,7 @@ describe('Application read models E2E', () => {
     );
     expect(
       rows(response, 'activeApplications').map((row) => row['applicationId']),
-    ).toEqual(active.map((row) => row.id).sort());
+    ).toEqual(active.map((row) => row.id));
     const expected = await prisma.application.findMany({
       where: { listingId, status: ApplicationStatus.REJECTED },
       orderBy: { id: 'desc' },
@@ -655,7 +729,7 @@ describe('Application read models E2E', () => {
     expect(visibleExits).toHaveLength(5);
   });
 
-  it('orders ACTIVE applicants by activeAt and mixed exits by effective exit time before ID ties', async () => {
+  it('orders ACTIVE applicants by consideration position and preserves mixed exit chronology', async () => {
     await prisma.application.update({
       where: { id: applicationId },
       data: {
@@ -720,10 +794,6 @@ describe('Application read models E2E', () => {
     const response = await get(
       'provider',
       `listings/${listingId}/application-overview`,
-    );
-    active.sort(
-      (a, b) =>
-        a.activeAt.getTime() - b.activeAt.getTime() || a.id.localeCompare(b.id),
     );
     exits.sort(
       (a, b) => b.at.getTime() - a.at.getTime() || b.id.localeCompare(a.id),
@@ -829,6 +899,22 @@ describe('Application read models E2E', () => {
         'listing',
       )['imageUrl'],
     ).toBe('https://images.example/10');
+    const legacy = await app
+      .get(ApplicationProcessQueryService)
+      .findAllByApplicantWithListing(applicant.id);
+    expect(legacy[0].listing.images).toEqual([
+      { secureUrl: 'https://images.example/10', isCover: true, position: 10 },
+    ]);
+    await prisma.listingImage.updateMany({
+      where: { listingId },
+      data: { isCover: false },
+    });
+    const fallback = await app
+      .get(ApplicationProcessQueryService)
+      .findAllByApplicantWithListing(applicant.id);
+    expect(fallback[0].listing.images).toEqual([
+      { secureUrl: 'https://images.example/0', isCover: false, position: 0 },
+    ]);
   });
 
   it.each(['provider', 'applicant'] as const)(
@@ -1695,10 +1781,10 @@ describe('Application read models E2E', () => {
                 ? input['text']
                 : '';
           })
-          .filter((text) => /SELECT/i.test(text));
+          .filter((text) => /^\s*(?:SELECT|WITH)\b/i.test(text));
         current.push(statements.length);
         expect(statements.length).toBeGreaterThan(0);
-        expect(statements.length).toBeLessThanOrEqual(22);
+        expect(statements.length).toBeLessThanOrEqual(29);
         expect(statements.join(' ')).not.toMatch(
           /"body"|storage_key|password_hash|checksum|scan_verdict/,
         );
@@ -1762,7 +1848,7 @@ describe('Application read models E2E', () => {
                 ? input['text']
                 : '';
           })
-          .filter((text) => /SELECT/i.test(text));
+          .filter((text) => /^\s*(?:SELECT|WITH)\b/i.test(text));
       const overviewPage: ApplicantApplicationOverviewQuery = { limit: 100 };
       const cards: ApplicantApplicationOverviewPageDto =
         await applicantQuery.overview(applicant.id, overviewPage);
@@ -1788,13 +1874,13 @@ describe('Application read models E2E', () => {
         ),
       ).toHaveLength(1);
       expect(applicantStatements.length).toBeGreaterThan(0);
-      expect(applicantStatements.length).toBeLessThanOrEqual(18);
-      expect(providerStatements.length).toBeLessThanOrEqual(18);
+      expect(applicantStatements.length).toBeLessThanOrEqual(23);
+      expect(providerStatements.length).toBeLessThanOrEqual(23);
       spy.mockRestore();
     }
+    console.log('READ_MODEL_QUERY_COUNTS', JSON.stringify(results));
     expect(new Set(results.map((row) => row.applicantQueries)).size).toBe(1);
     expect(new Set(results.map((row) => row.providerQueries)).size).toBe(1);
-    console.log('READ_MODEL_QUERY_COUNTS', JSON.stringify(results));
   }, 60000);
 
   it('keeps compact payload sizes independent of message, file and activity history volume', async () => {

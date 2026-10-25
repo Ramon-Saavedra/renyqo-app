@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { activeConsiderationOrder } from '../applications/application-consideration-read';
 import { Prisma } from '../generated/prisma/client';
 import { ApplicationStatus } from '../generated/prisma/enums';
 import {
@@ -91,6 +92,31 @@ export class ProviderApplicationOverviewQueryService {
           AND: [
             providerApplicationVisibility(userId),
             { listingId: { in: ids } },
+            // Retain attendance/correction candidates even after termination.
+            // Skip only inactive rows without potentially relevant viewing history.
+            {
+              OR: [
+                {
+                  status: ApplicationStatus.ACTIVE,
+                  listing: { status: { in: ['PUBLISHED', 'PAUSED'] } },
+                },
+                { id: { in: [...retained] } },
+                {
+                  viewings: {
+                    some: {
+                      status: {
+                        in: [
+                          'ACCEPTED',
+                          'OUTCOME_PENDING',
+                          'COMPLETED',
+                          'NO_SHOW',
+                        ],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
             cursor ? { id: { gt: cursor } } : {},
           ],
         },
@@ -198,7 +224,7 @@ export class ProviderApplicationOverviewQueryService {
         const active = await tx.application.findMany({
           where: { listingId, status: ApplicationStatus.ACTIVE },
           select: providerApplicationSelect,
-          orderBy: [{ activeAt: 'asc' }, { id: 'asc' }],
+          orderBy: activeConsiderationOrder,
           take: 5,
         });
         const exits = await this.recentExits.select(tx, userId, [listingId]);
@@ -227,11 +253,19 @@ export class ProviderApplicationOverviewQueryService {
         );
         const totals = summaries.totals.get(listingId);
         if (!totals) throw new Error('Missing listing summary');
+        const consideration = await this.workspace.consideration.batch(
+          tx,
+          active.map((row) => row.id),
+        );
         const cards = (rows: typeof active) =>
           rows.map((row) => {
             const summary = summaries.attention.get(row.id);
             if (!summary) throw new Error('Missing application summary');
-            return new ProviderApplicationCardDto(row, summary);
+            return new ProviderApplicationCardDto(
+              row,
+              summary,
+              consideration.get(row.id),
+            );
           });
         return new ProviderListingApplicationOverviewDto(
           asOf,

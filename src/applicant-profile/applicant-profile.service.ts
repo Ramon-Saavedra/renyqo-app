@@ -26,6 +26,15 @@ export class ApplicantProfileService {
     return runSerializableTransaction(
       this.prisma,
       async (tx) => {
+        // Match admission/promotion: acquire all relevant listings before writing the profile.
+        const applications = await tx.application.findMany({
+          where: { applicantId, status: { in: ['ACTIVE', 'WAITING'] } },
+          select: { listingId: true },
+          distinct: ['listingId'],
+          orderBy: { listingId: 'asc' },
+        });
+        for (const application of applications)
+          await tx.$queryRaw`SELECT id FROM listings WHERE id=${application.listingId}::uuid FOR UPDATE`;
         const existing = await tx.applicantProfile.findUnique({
           where: { applicantId },
         });

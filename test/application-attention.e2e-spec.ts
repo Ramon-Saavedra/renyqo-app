@@ -1,3 +1,4 @@
+import { OutboxDispatcherService } from '../src/outbox/outbox-dispatcher.service';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -101,12 +102,16 @@ describe('Application attention E2E', () => {
     assertSafeE2EDatabaseUrl(url);
     process.env['DATABASE_URL'] = url;
     process.env['NODE_ENV'] = 'test';
+    // Query-budget assertions measure HTTP reads, not the unrelated outbox poller.
+    process.env['OUTBOX_DISPATCH_ENABLED'] = 'false';
     process.env['SESSION_SECRET'] =
       'e2e-session-secret-at-least-thirty-two-characters';
     process.env['FRONTEND_URL'] = 'http://localhost:3001';
     const module = await Test.createTestingModule({
       imports: [AppModule],
     })
+      .overrideProvider(OutboxDispatcherService)
+      .useValue({})
       .overrideProvider(ViewingClock)
       .useValue({ now: () => now })
       .compile();
@@ -214,7 +219,7 @@ describe('Application attention E2E', () => {
       throw new Error('Unsafe E2E cleanup configuration');
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_viewing_interests, application_viewing_outcomes, application_viewings`;
+    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
     await prisma.applicationDocumentRequest.updateMany({
       data: { currentFileId: null },
     });
@@ -1157,7 +1162,7 @@ describe('Application attention E2E', () => {
               ? input['text']
               : '';
         })
-        .filter((text) => /SELECT/i.test(text));
+        .filter((text) => /^\s*(?:SELECT|WITH)\b/i.test(text));
     const single = statements().length;
     expect(single).toBeGreaterThan(0);
     spy.mockClear();

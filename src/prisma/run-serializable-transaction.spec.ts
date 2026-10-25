@@ -47,6 +47,27 @@ describe('runSerializableTransaction', () => {
     });
   });
 
+  it('retries an unwrapped adapter serialization failure at commit', async () => {
+    prisma.$transaction.mockRejectedValueOnce({
+      name: 'DriverAdapterError',
+      cause: { kind: 'TransactionWriteConflict', originalCode: '40001' },
+    });
+    const operation = jest.fn().mockResolvedValue('committed');
+    await expect(
+      runSerializableTransaction(asPrismaWithTransaction(prisma), operation),
+    ).resolves.toBe('committed');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry adapter constraint violations', async () => {
+    const error = { cause: { kind: 'postgres', originalCode: '23514' } };
+    prisma.$transaction.mockRejectedValueOnce(error);
+    await expect(
+      runSerializableTransaction(asPrismaWithTransaction(prisma), jest.fn()),
+    ).rejects.toBe(error);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it('retries on a top-level P2034 error', async () => {
     const conflictError = new PrismaClientKnownRequestError(
       'serialization conflict',

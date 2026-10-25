@@ -112,6 +112,7 @@ describe('Provider recent-exit projection E2E', () => {
     )
       throw new Error('Unsafe E2E cleanup');
     if (listingId) {
+      await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
       await prisma.application.deleteMany({ where: { listingId } });
       await prisma.listingEvent.deleteMany({ where: { listingId } });
       await prisma.listing.deleteMany({ where: { id: listingId, providerId } });

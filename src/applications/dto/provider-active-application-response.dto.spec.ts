@@ -55,6 +55,7 @@ describe('ProviderActiveApplicationResponseDto', () => {
       status: ApplicationStatus.ACTIVE,
       activeAt: new Date('2024-06-01T10:00:00.000Z'),
       attention,
+      consideration: { position: null, revision: 0, applicantNoShow: null },
       applicant: {
         name: 'Anna Applicant',
         peopleCount: 3,

@@ -51,6 +51,11 @@ type ProviderActiveApplicationBody = {
   listingId: string;
   status: string;
   activeAt: string | null;
+  consideration: {
+    position: string;
+    revision: number;
+    applicantNoShow: unknown;
+  };
   applicant: {
     name: string;
     peopleCount: number | null;
@@ -224,7 +229,10 @@ function isProviderActiveApplicationBody(
       ['pets_by_arrangement', 'smoking_by_arrangement'].includes(warning),
     ) &&
     isRecord(value.attention) &&
-    Object.keys(value).length === 6 &&
+    isRecord(value.consideration) &&
+    typeof value.consideration.position === 'string' &&
+    typeof value.consideration.revision === 'number' &&
+    Object.keys(value).length === 8 &&
     Object.keys(value.applicant).length === 4
   );
 }
@@ -340,6 +348,7 @@ async function clearDatabase(): Promise<void> {
     throw new Error('Prisma service has not been initialized.');
   }
 
+  await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
   await prisma.application.deleteMany();
   await prisma.listingReport.deleteMany();
   await prisma.savedListing.deleteMany();
@@ -531,7 +540,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
     ).toBe(true);
   });
 
-  it('returns minimal applicant summaries for 1–4 ACTIVE applications in activeAt ASC order', async () => {
+  it('returns minimal applicant summaries for 1–4 ACTIVE applications in consideration order', async () => {
     const { agent, provider } = await registerProvider();
     const listing = await publishListing(provider.id);
 
@@ -585,9 +594,11 @@ describe('Provider ACTIVE applications summary E2E', () => {
       'activeAt',
       'applicant',
       'attention',
+      'consideration',
       'id',
       'listingId',
       'status',
+      'viewing',
     ]);
     expect(bodies.every((item) => typeof item.activeAt === 'string')).toBe(
       true,
@@ -605,7 +616,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       .expect({ waitingCount: 0 });
   });
 
-  it('orders ACTIVE applications by activeAt and id, excludes non-ACTIVE applications, and keeps the limit at five', async () => {
+  it('orders ACTIVE applications by consideration position regardless of timestamps, excludes non-ACTIVE applications, and keeps the limit at five', async () => {
     const { agent, provider } = await registerProvider();
     const listing = await publishListing(provider.id);
     const applicants: Array<
@@ -678,26 +689,17 @@ describe('Provider ACTIVE applications summary E2E', () => {
       .get(`/api/v1/provider/listings/${listing.id}/active-applications`)
       .expect(200);
     const bodies = activeApplicationBodies(response);
-    const equalActiveAtIds = [applicationIds[2], applicationIds[3]].sort();
 
     expect(bodies).toHaveLength(5);
     expect(
       bodies.every((item) => item.status === ApplicationStatus.ACTIVE),
     ).toBe(true);
-    expect(bodies.map((item) => item.id)).toEqual([
-      applicationIds[1],
-      ...equalActiveAtIds,
-      applicationIds[0],
-      applicationIds[4],
-    ]);
+    expect(bodies.map((item) => item.id)).toEqual(applicationIds.slice(0, 5));
     expect(bodies.map((item) => item.applicant.name)).toEqual([
-      'Ordering Applicant 2',
-      ...equalActiveAtIds.map((id) =>
-        id === applicationIds[2]
-          ? 'Ordering Applicant 3'
-          : 'Ordering Applicant 4',
-      ),
       'Ordering Applicant 1',
+      'Ordering Applicant 2',
+      'Ordering Applicant 3',
+      'Ordering Applicant 4',
       'Ordering Applicant 5',
     ]);
     expect(

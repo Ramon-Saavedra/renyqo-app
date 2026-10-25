@@ -1,5 +1,7 @@
 # Transactional outbox foundation
 
+This page records the conversation foundation. Application/listing invalidation and user-scoped notification hints are now implemented; see [viewing realtime](viewing-workflow-realtime.md), [notifications](viewing-workflow-notifications.md) and [current rollout](viewing-workflow-rollout.md). Conversation compatibility is preserved.
+
 This phase persists **domain events in PostgreSQL** in the **same transaction** as conversation mutations. HTTP remains authoritative for commands, snapshots, histories, uploads, and read acknowledgements.
 
 **Realtime delivery is not active by default.** Both `REALTIME_ENABLED` and `OUTBOX_DISPATCH_ENABLED` default to `false`. The real Socket.IO publisher is wired, but dispatch requires realtime to be enabled; contradictory configuration fails startup. Rows accumulate safely while dispatch is disabled. See [Realtime security](realtime-security.md).

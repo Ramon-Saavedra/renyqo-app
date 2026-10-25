@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
-import { CONVERSATION_OUTBOX_SCHEMA_VERSION } from './conversation-events';
+import { OUTBOX_SCHEMA_VERSION } from './outbox.types';
 
 export type AppendOutboxEventInput = {
   readonly type: string;
-  readonly applicationId: string;
-  readonly conversationId: string;
+  readonly applicationId: string | null;
+  readonly userId?: string;
+  readonly conversationId: string | null;
+  readonly deduplicationKey?: string;
   readonly occurredAt: Date;
   readonly payload: Prisma.InputJsonValue;
 };
@@ -16,12 +18,29 @@ export class OutboxWriter {
     tx: Prisma.TransactionClient,
     input: AppendOutboxEventInput,
   ): Promise<{ id: string }> {
+    if (input.deduplicationKey)
+      return tx.outboxEvent.upsert({
+        where: { deduplicationKey: input.deduplicationKey },
+        create: {
+          type: input.type,
+          schemaVersion: OUTBOX_SCHEMA_VERSION,
+          applicationId: input.applicationId,
+          userId: input.userId,
+          conversationId: input.conversationId,
+          payload: input.payload,
+          occurredAt: input.occurredAt,
+          deduplicationKey: input.deduplicationKey,
+        },
+        update: { payload: input.payload, occurredAt: input.occurredAt },
+        select: { id: true },
+      });
     return tx.outboxEvent
       .create({
         data: {
           type: input.type,
-          schemaVersion: CONVERSATION_OUTBOX_SCHEMA_VERSION,
+          schemaVersion: OUTBOX_SCHEMA_VERSION,
           applicationId: input.applicationId,
+          userId: input.userId,
           conversationId: input.conversationId,
           occurredAt: input.occurredAt,
           payload: input.payload,

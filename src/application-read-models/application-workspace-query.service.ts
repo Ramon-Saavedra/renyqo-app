@@ -1,4 +1,8 @@
 import { emptyConversationFacts } from '../application-conversation/application-conversation-read.service';
+import {
+  considerationSummary,
+  ApplicationConsiderationReadService,
+} from '../applications/application-consideration-read';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { ConversationSide } from '../generated/prisma/enums';
@@ -41,6 +45,7 @@ export class ApplicationWorkspaceQueryService {
     private readonly lifecycle: ApplicationLifecycleReadService,
     private readonly activity: ApplicationActivityReadService,
     private readonly conversations: ApplicationConversationReadService,
+    readonly consideration: ApplicationConsiderationReadService,
   ) {}
 
   scope(
@@ -118,6 +123,7 @@ export class ApplicationWorkspaceQueryService {
               facts.viewings.rounds.get(application.id),
               asOf,
               audience,
+              facts.viewings.workflows.get(application.id),
             ),
           },
         ];
@@ -195,6 +201,9 @@ export class ApplicationWorkspaceQueryService {
           return new ProviderApplicationWorkspaceDto(
             workspace,
             new CompactApplicantDto(providerApplication.applicant),
+            (await this.consideration.batch(tx, [applicationId])).get(
+              applicationId,
+            ) ?? considerationSummary(),
           );
         }
         const images = await this.coverImages(tx, [application.listingId]);

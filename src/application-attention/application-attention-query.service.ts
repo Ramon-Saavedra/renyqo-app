@@ -11,6 +11,7 @@ import { ApplicationConversationReadService } from '../application-conversation/
 import { ApplicationDocumentReadService } from '../application-documents/application-document-read.service';
 import { ApplicationViewingReadService } from '../application-viewings/application-viewing-read.service';
 import { ViewingClock } from '../application-viewings/application-viewing.policy';
+import { projectViewingWorkflow } from '../application-viewings/viewing-workflow-projection';
 import type { AttentionAudience } from './application-pending-action';
 import { ApplicationPendingActionService } from './application-pending-action.service';
 import { AttentionQueryDto } from './dto/attention-input.dto';
@@ -288,6 +289,8 @@ export class ApplicationAttentionQueryService {
         mutable,
         viewings.rounds.get(application.id),
         asOf,
+        viewings.workflows.get(application.id),
+        audience,
       );
       const derived = this.pending.derive(
         application,
@@ -313,6 +316,15 @@ export class ApplicationAttentionQueryService {
           ),
         }),
       );
+      const source = viewings.workflows.get(application.id);
+      if (source)
+        result.get(application.id)!.viewing = projectViewingWorkflow(
+          application.id,
+          source,
+          mutable,
+          audience,
+          asOf,
+        );
     }
     return { attention: result, conversations, documents, viewings };
   }

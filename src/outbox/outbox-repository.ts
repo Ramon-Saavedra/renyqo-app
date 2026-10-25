@@ -7,8 +7,9 @@ type ClaimedRow = {
   id: string;
   type: string;
   schema_version: number;
-  application_id: string;
-  conversation_id: string;
+  application_id: string | null;
+  user_id: string | null;
+  conversation_id: string | null;
   payload: unknown;
   occurred_at: Date;
   attempt_count: number;
@@ -48,6 +49,7 @@ export class OutboxRepository {
           e.type,
           e.schema_version,
           e.application_id,
+          e.user_id,
           e.conversation_id,
           e.payload,
           e.occurred_at,
@@ -59,6 +61,7 @@ export class OutboxRepository {
         type: row.type,
         schemaVersion: row.schema_version,
         applicationId: row.application_id,
+        userId: row.user_id,
         conversationId: row.conversation_id,
         payload: row.payload,
         occurredAt: row.occurred_at,

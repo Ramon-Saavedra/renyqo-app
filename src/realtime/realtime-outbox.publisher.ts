@@ -3,7 +3,7 @@ import type {
   OutboxPublisher,
   OutboxPublishEvent,
 } from '../outbox/outbox-publisher';
-import { ConversationEventRouter } from './conversation-event-router.service';
+import { RealtimeEventRouter } from './realtime-event-router.service';
 import { RealtimeDeliveryService } from './realtime-delivery.service';
 import { realtimeEvent } from './realtime-event';
 import { withRealtimeDeadline } from './realtime-deadline';
@@ -11,7 +11,7 @@ import { withRealtimeDeadline } from './realtime-deadline';
 @Injectable()
 export class RealtimeOutboxPublisher implements OutboxPublisher {
   constructor(
-    private readonly router: ConversationEventRouter,
+    private readonly router: RealtimeEventRouter,
     private readonly delivery: RealtimeDeliveryService,
   ) {}
   async publish(input: OutboxPublishEvent): Promise<void> {

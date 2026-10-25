@@ -1,6 +1,7 @@
 import { CompactConversationSummaryDto } from '../../application-conversation/dto/compact-conversation-summary.dto';
 import type { ApplicationDocumentType } from '../../generated/prisma/enums';
 import { ApplicationPendingActionType as Action } from '../application-pending-action';
+import type { ViewingWorkflowProjection } from '../../application-viewings/viewing-workflow-projection';
 
 export enum AttentionSection {
   MESSAGES = 'MESSAGES',
@@ -22,7 +23,10 @@ export class DocumentReviewTargetDto {
 }
 
 export class ViewingTargetDto {
-  constructor(readonly viewingId: string) {}
+  constructor(
+    readonly viewingId: string,
+    readonly workflowTarget?: ViewingWorkflowProjection['obligations'][number]['target'],
+  ) {}
 }
 
 export class DocumentUploadPendingActionDto {
@@ -64,6 +68,7 @@ export class AttentionCategoryTotalsDto {
 }
 
 export class AttentionTargetDto {
+  readonly workflowTarget?: ViewingWorkflowProjection['obligations'][number]['target'];
   readonly requestId?: string;
   readonly documentId?: string;
   readonly viewingId?: string;
@@ -75,11 +80,14 @@ export class AttentionTargetDto {
       requestId?: string;
       documentId?: string;
       viewingId?: string;
+      workflowTarget?: ViewingWorkflowProjection['obligations'][number]['target'];
     },
   ) {
     if (ids?.requestId !== undefined) this.requestId = ids.requestId;
     if (ids?.documentId !== undefined) this.documentId = ids.documentId;
     if (ids?.viewingId !== undefined) this.viewingId = ids.viewingId;
+    if (ids?.workflowTarget !== undefined)
+      this.workflowTarget = ids.workflowTarget;
   }
 }
 
@@ -97,6 +105,7 @@ export class DocumentAttentionIndicatorDto {
 }
 
 export class ApplicationAttentionSummaryDto {
+  viewing?: ViewingWorkflowProjection;
   readonly hasPendingAction: boolean;
   constructor(
     readonly pendingActionCount: number,
@@ -150,6 +159,7 @@ export class ApplicationAttentionListItemDto extends ApplicationAttentionSummary
       summary.documentIndicators,
       summary.nextRevalidateAt,
     );
+    this.viewing = summary.viewing;
   }
 }
 
@@ -166,6 +176,7 @@ export class ApplicantListingAttentionDto extends ApplicationAttentionSummaryDto
       summary.documentIndicators,
       summary.nextRevalidateAt,
     );
+    this.viewing = summary.viewing;
   }
 }
 

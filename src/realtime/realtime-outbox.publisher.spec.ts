@@ -8,7 +8,7 @@ import {
   jest,
 } from '@jest/globals';
 import { Test } from '@nestjs/testing';
-import { ConversationEventRouter } from './conversation-event-router.service';
+import { RealtimeEventRouter } from './realtime-event-router.service';
 import { RealtimeDeliveryService } from './realtime-delivery.service';
 import { RealtimeOutboxPublisher } from './realtime-outbox.publisher';
 import { REALTIME_OPERATION_TIMEOUT_MS } from './realtime-deadline';
@@ -32,7 +32,7 @@ describe('Realtime publisher failures', () => {
     const module = await Test.createTestingModule({
       providers: [
         RealtimeOutboxPublisher,
-        { provide: ConversationEventRouter, useValue: { recipients } },
+        { provide: RealtimeEventRouter, useValue: { recipients } },
         {
           provide: RealtimeDeliveryService,
           useValue: { assertReady: () => undefined, publish },

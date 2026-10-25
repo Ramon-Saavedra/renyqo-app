@@ -3,6 +3,7 @@ import type {
   Application,
   User,
 } from '../../generated/prisma/client';
+import type { ApplicationConsiderationSummary } from '../application-consideration-read';
 import type { ApplicationAttentionSummaryDto } from '../../application-attention/dto/attention-response.dto';
 import type { EligibilityWarning } from '../../eligibility/dto/eligibility-response.dto';
 
@@ -10,6 +11,7 @@ export type ProviderActiveApplicationRecord = Pick<
   Application,
   'id' | 'listingId' | 'status' | 'activeAt'
 > & {
+  consideration?: ApplicationConsiderationSummary;
   applicant: Pick<User, 'name'> & {
     profile: Pick<ApplicantProfile, 'peopleCount' | 'introduction'> | null;
   };
@@ -35,6 +37,8 @@ export class ProviderActiveApplicantSummaryDto {
 }
 
 export class ProviderActiveApplicationResponseDto {
+  readonly viewing: ApplicationAttentionSummaryDto['viewing'];
+  readonly consideration: ApplicationConsiderationSummary;
   readonly id: string;
   readonly listingId: string;
   readonly status: Application['status'];
@@ -46,6 +50,12 @@ export class ProviderActiveApplicationResponseDto {
     readonly attention: ApplicationAttentionSummaryDto,
   ) {
     this.id = application.id;
+    this.viewing = attention.viewing;
+    this.consideration = application.consideration ?? {
+      position: null,
+      revision: 0,
+      applicantNoShow: null,
+    };
     this.listingId = application.listingId;
     this.status = application.status;
     this.activeAt = application.activeAt;

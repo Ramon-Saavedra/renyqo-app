@@ -117,7 +117,7 @@ describe('Realtime conversation delivery', () => {
     applicantSocket.on('domain-event', (value: unknown) => own.push(value));
     await Promise.all([connected(providerSocket), connected(applicantSocket)]);
     await context.prisma.application.update({
-      where: { id: event.applicationId },
+      where: { id: event.applicationId! },
       data: { status: ApplicationStatus.WAITING, activeAt: null },
     });
     await publisher.publish(event);

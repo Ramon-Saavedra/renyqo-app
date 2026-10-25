@@ -219,7 +219,7 @@ describe('Attention read-model preparation E2E', () => {
     });
     await prisma.applicationDocumentFile.deleteMany();
     await prisma.applicationDocumentRequest.deleteMany();
-    await prisma.$executeRaw`TRUNCATE TABLE application_viewing_interests, application_viewing_outcomes, application_viewings`;
+    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
     await prisma.application.deleteMany();
     await prisma.savedListing.deleteMany();
     await prisma.listing.deleteMany();
@@ -367,6 +367,14 @@ describe('Attention read-model preparation E2E', () => {
         listingId,
         section: 'VIEWING',
         viewingId: viewing.id,
+        workflowTarget: {
+          applicationId,
+          workflowId: null,
+          proposalId: null,
+          appointmentId: viewing.id,
+          section: 'VIEWING',
+          action: 'APPLICANT_RESPOND_TO_VIEWING',
+        },
       },
       {
         applicationId,

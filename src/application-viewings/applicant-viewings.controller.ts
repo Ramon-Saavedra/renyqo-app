@@ -96,6 +96,7 @@ export class ApplicantViewingsController {
       params.viewingId,
       user.id,
       dto.interest,
+      dto.confirmWithdrawal,
     );
   }
 }

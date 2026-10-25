@@ -232,6 +232,7 @@ describe('Application documents E2E', () => {
     });
     await prisma.applicationDocumentFile.deleteMany();
     await prisma.applicationDocumentRequest.deleteMany();
+    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
     await prisma.application.deleteMany();
     await prisma.listingReport.deleteMany();
     await prisma.savedListing.deleteMany();

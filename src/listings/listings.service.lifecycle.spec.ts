@@ -1,3 +1,4 @@
+import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import {
   ConflictException,
   NotFoundException,
@@ -119,7 +120,9 @@ describe('ListingsService', () => {
   let activityService: jest.Mocked<
     Pick<
       ApplicationActivityService,
-      'appendWithinTransaction' | 'appendManyWithinTransaction'
+      | 'appendWithinTransaction'
+      | 'appendManyWithinTransaction'
+      | 'lifecycleChangedForListingWithinTransaction'
     >
   >;
   beforeEach(async () => {
@@ -168,11 +171,22 @@ describe('ListingsService', () => {
     };
     activityService = {
       appendWithinTransaction: jest.fn(),
+      lifecycleChangedForListingWithinTransaction: jest.fn(() =>
+        Promise.resolve(),
+      ),
       appendManyWithinTransaction: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: ViewingLifecycleService,
+          useValue: {
+            closeWithinTransaction: jest.fn(),
+            closeListingWithinTransaction: jest.fn(),
+            restoreWithinTransaction: jest.fn(),
+          },
+        },
         ListingsService,
         {
           provide: ApplicationActivityService,

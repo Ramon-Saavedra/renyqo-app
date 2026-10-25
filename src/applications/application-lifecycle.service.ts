@@ -23,6 +23,7 @@ import { ApplicantEligibilityResponseDto } from '../eligibility/dto/applicant-el
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationAdmissionService } from './application-admission.service';
+import { ViewingLifecycleService } from './viewing-lifecycle.service';
 import { applicationCanWithdraw } from './application-process.policy';
 
 import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
@@ -41,6 +42,7 @@ export class ApplicationLifecycleService {
     private readonly promotionService: ApplicationWaitingPromotionService,
     private readonly activityService: ApplicationActivityService,
     private readonly admissionService: ApplicationAdmissionService,
+    private readonly viewingLifecycle: ViewingLifecycleService,
   ) {}
 
   async apply(listingId: string, applicantId: string): Promise<Application> {
@@ -156,75 +158,91 @@ export class ApplicationLifecycleService {
     applicationId: string,
     applicantId: string,
   ): Promise<Application> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const applicationReference = await tx.application.findUnique({
-        where: { id: applicationId },
-        select: { listingId: true },
-      });
+    return runSerializableTransaction(this.prisma, (tx) =>
+      this.withdrawWithinTransaction(tx, applicationId, applicantId),
+    );
+  }
 
-      if (!applicationReference) {
-        throw new NotFoundException('Application not found');
-      }
-
-      await this.transactionService.lockListing(
-        tx,
-        applicationReference.listingId,
-      );
-      await this.transactionService.lockApplication(tx, applicationId);
-
-      const application = await tx.application.findUnique({
-        where: { id: applicationId },
-      });
-
-      if (!application || application.applicantId !== applicantId) {
-        throw new NotFoundException('Application not found');
-      }
-
-      if (application.status === ApplicationStatus.WITHDRAWN) {
-        return application;
-      }
-
-      if (!applicationCanWithdraw(application.status)) {
-        throw new ConflictException('This application cannot be withdrawn');
-      }
-
-      const withdrawn = await tx.application.update({
-        where: { id: applicationId },
-        data: {
-          status: ApplicationStatus.WITHDRAWN,
-          ...(application.status === ApplicationStatus.ACTIVE
-            ? { withdrawnAt: new Date() }
-            : {}),
-        },
-      });
-
-      await this.activityService.appendWithinTransaction(tx, {
-        applicationId,
-        type: ApplicationActivityType.APPLICATION_WITHDRAWN,
-        actorUserId: applicantId,
-        actorType: ApplicationActivityActorType.APPLICANT,
-        visibility:
-          application.status === ApplicationStatus.ACTIVE
-            ? ApplicationActivityVisibility.BOTH
-            : ApplicationActivityVisibility.APPLICANT,
-        metadata: {
-          fromStatus: application.status,
-          toStatus: ApplicationStatus.WITHDRAWN,
-        },
-      });
-
-      if (application.status === ApplicationStatus.ACTIVE) {
-        const listing = await tx.listing.findUnique({
-          where: { id: application.listingId },
-        });
-
-        if (listing) {
-          await this.promotionService.promoteWithinTransaction(tx, listing);
-        }
-      }
-
-      return withdrawn;
+  /** Joins a caller-owned Serializable transaction; ownership, locks and promotion stay here. */
+  async withdrawWithinTransaction(
+    tx: ApplicationTransactionClient,
+    applicationId: string,
+    applicantId: string,
+  ): Promise<Application> {
+    const applicationReference = await tx.application.findUnique({
+      where: { id: applicationId },
+      select: { listingId: true },
     });
+
+    if (!applicationReference) {
+      throw new NotFoundException('Application not found');
+    }
+
+    await this.transactionService.lockListing(
+      tx,
+      applicationReference.listingId,
+    );
+    await this.transactionService.lockApplication(tx, applicationId);
+
+    const application = await tx.application.findUnique({
+      where: { id: applicationId },
+    });
+
+    if (!application || application.applicantId !== applicantId) {
+      throw new NotFoundException('Application not found');
+    }
+
+    if (application.status === ApplicationStatus.WITHDRAWN) {
+      return application;
+    }
+
+    if (!applicationCanWithdraw(application.status)) {
+      throw new ConflictException('This application cannot be withdrawn');
+    }
+
+    await this.viewingLifecycle.closeWithinTransaction(
+      tx,
+      applicationId,
+      'APPLICATION_WITHDRAWN',
+      ApplicationActivityActorType.APPLICANT,
+      applicantId,
+    );
+    const withdrawn = await tx.application.update({
+      where: { id: applicationId },
+      data: {
+        status: ApplicationStatus.WITHDRAWN,
+        ...(application.status === ApplicationStatus.ACTIVE
+          ? { withdrawnAt: new Date() }
+          : {}),
+      },
+    });
+
+    await this.activityService.appendWithinTransaction(tx, {
+      applicationId,
+      type: ApplicationActivityType.APPLICATION_WITHDRAWN,
+      actorUserId: applicantId,
+      actorType: ApplicationActivityActorType.APPLICANT,
+      visibility:
+        application.status === ApplicationStatus.ACTIVE
+          ? ApplicationActivityVisibility.BOTH
+          : ApplicationActivityVisibility.APPLICANT,
+      metadata: {
+        fromStatus: application.status,
+        toStatus: ApplicationStatus.WITHDRAWN,
+      },
+    });
+
+    if (application.status === ApplicationStatus.ACTIVE) {
+      const listing = await tx.listing.findUnique({
+        where: { id: application.listingId },
+      });
+
+      if (listing) {
+        await this.promotionService.promoteWithinTransaction(tx, listing);
+      }
+    }
+
+    return withdrawn;
   }
 
   async promoteWaitingApplications(listingId: string): Promise<number> {
@@ -238,6 +256,104 @@ export class ApplicationLifecycleService {
 
       return this.promotionService.promoteWithinTransaction(tx, listing);
     });
+  }
+
+  /** Worker-ready system transition. Caller owns the transaction and retry boundary. */
+  async expireViewingInterestWithinTransaction(
+    tx: ApplicationTransactionClient,
+    applicationId: string,
+    appointmentId: string,
+    expectedWorkflowRevision: number,
+    now: Date,
+  ): Promise<boolean> {
+    const ref = await tx.application.findUniqueOrThrow({
+      where: { id: applicationId },
+      select: { listingId: true },
+    });
+    await this.transactionService.lockListing(tx, ref.listingId);
+    await this.transactionService.lockApplication(tx, applicationId);
+    const app = await tx.application.findUniqueOrThrow({
+      where: { id: applicationId },
+      include: { listing: true },
+    });
+    const w = await tx.viewingWorkflow.findUnique({ where: { applicationId } });
+    const a = await tx.viewingAppointment.findFirst({
+      where: { viewingId: appointmentId, workflow: { applicationId } },
+      include: { viewing: true },
+    });
+    const latestCompleted = await tx.applicationViewing.findFirst({
+      where: { applicationId, status: 'COMPLETED' },
+      orderBy: { round: 'desc' },
+      select: { id: true },
+    });
+    if (
+      !w ||
+      w.mode !== 'CURRENT' ||
+      (w.state !== 'OPEN' && w.closureReason !== 'PROVIDER_CLOSED') ||
+      w.revision !== expectedWorkflowRevision ||
+      latestCompleted?.id !== appointmentId ||
+      !a ||
+      a.viewing.status !== 'COMPLETED' ||
+      a.interestState !== 'PENDING' ||
+      !a.interestDeadlineAt ||
+      now < a.interestDeadlineAt ||
+      app.status !== ApplicationStatus.ACTIVE ||
+      ![ListingStatus.PUBLISHED, ListingStatus.PAUSED].some(
+        (status) => status === app.listing.status,
+      )
+    )
+      return false;
+    await tx.viewingAppointment.update({
+      where: { viewingId: appointmentId },
+      data: { interestState: 'EXPIRED', interestClosedAt: now },
+    });
+    await this.activityService.appendWithinTransaction(tx, {
+      applicationId,
+      type: ApplicationActivityType.VIEWING_INTEREST_EXPIRED,
+      actorType: ApplicationActivityActorType.SYSTEM,
+      visibility: ApplicationActivityVisibility.BOTH,
+      occurredAt: now,
+      metadata: {
+        appointmentId,
+        workflowId: w.id,
+        workflowRevision: w.revision + 1,
+      },
+    });
+    await this.viewingLifecycle.closeWithinTransaction(
+      tx,
+      applicationId,
+      'POST_VIEWING_RESPONSE_EXPIRED',
+      ApplicationActivityActorType.SYSTEM,
+    );
+    // A calendar-only closure is historical; expiry still advances the revision
+    // exactly once without rewriting that closure's date/reason or activity.
+    if (w.state === 'CLOSED')
+      await tx.viewingWorkflow.updateMany({
+        where: { id: w.id, revision: w.revision },
+        data: { revision: { increment: 1 }, updatedAt: now },
+      });
+    await tx.application.update({
+      where: { id: applicationId },
+      data: {
+        status: ApplicationStatus.REJECTED,
+        rejectedAt: now,
+        publicReason: ApplicationRejectionReason.POST_VIEWING_RESPONSE_EXPIRED,
+      },
+    });
+    await this.activityService.appendWithinTransaction(tx, {
+      applicationId,
+      type: ApplicationActivityType.APPLICATION_REJECTED,
+      actorType: ApplicationActivityActorType.SYSTEM,
+      visibility: ApplicationActivityVisibility.BOTH,
+      occurredAt: now,
+      metadata: {
+        fromStatus: ApplicationStatus.ACTIVE,
+        toStatus: ApplicationStatus.REJECTED,
+        reason: ApplicationRejectionReason.POST_VIEWING_RESPONSE_EXPIRED,
+      },
+    });
+    await this.promotionService.promoteWithinTransaction(tx, app.listing);
+    return true;
   }
 
   async revalidateActiveAndWaitingApplications(
@@ -288,6 +404,13 @@ export class ApplicationLifecycleService {
         }
 
         const wasActive = application.status === ApplicationStatus.ACTIVE;
+        await this.transactionService.lockApplication(tx, application.id);
+        await this.viewingLifecycle.closeWithinTransaction(
+          tx,
+          application.id,
+          'ELIGIBILITY_REJECTED',
+          ApplicationActivityActorType.SYSTEM,
+        );
         await tx.application.update({
           where: { id: application.id },
           data: {

@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { ConversationEventRouter } from './conversation-event-router.service';
+import { RealtimeEventRouter } from './realtime-event-router.service';
 import { RealtimeConfigService } from './realtime-config.service';
 import { RealtimeConnectionsService } from './realtime-connections.service';
 import type { RealtimeEvent } from './realtime-event';
@@ -10,7 +10,7 @@ export class RealtimeDeliveryService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly config: RealtimeConfigService,
     private readonly connections: RealtimeConnectionsService,
-    private readonly router: ConversationEventRouter,
+    private readonly router: RealtimeEventRouter,
   ) {}
   onModuleInit(): void {
     if (this.config.enabled) this.ready = true;
@@ -31,11 +31,17 @@ export class RealtimeDeliveryService implements OnModuleInit, OnModuleDestroy {
     if (signal.aborted) throw new Error('Realtime publication cancelled');
     if (!this.ready || this.connections.isStopped())
       throw new Error('Realtime transport unavailable');
-    const authorized = new Set(await this.router.recipients(event));
+    const authorized = new Map(
+      (await this.router.routes(event)).map((route) => [
+        route.userId,
+        route.event,
+      ]),
+    );
     if (signal.aborted) throw new Error('Realtime publication cancelled');
     for (const { socket, identity } of connections) {
       if (!authorized.has(identity.userId)) continue;
-      if (socket.connected) socket.emit('domain-event', event);
+      if (socket.connected)
+        socket.emit('domain-event', authorized.get(identity.userId)!);
     }
   }
   onModuleDestroy(): void {

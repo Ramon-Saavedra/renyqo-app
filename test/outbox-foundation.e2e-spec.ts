@@ -44,6 +44,7 @@ function body(response: Response): Record<string, unknown> {
 
 describe('Outbox foundation E2E', () => {
   let app: INestApplication;
+  let sessionStore: InstanceType<ReturnType<typeof connectPgSimple>>;
   let prisma: PrismaService;
   let server: RequestTarget;
   let certificate: Buffer;
@@ -149,6 +150,7 @@ describe('Outbox foundation E2E', () => {
       tableName: 'user_sessions',
       createTableIfMissing: false,
     });
+    sessionStore = store;
     app.use(
       session({
         store,
@@ -194,6 +196,7 @@ describe('Outbox foundation E2E', () => {
 
   afterEach(async () => {
     await prisma.outboxEvent.deleteMany();
+    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
     await prisma.application.deleteMany();
     await prisma.listingReport.deleteMany();
     await prisma.savedListing.deleteMany();
@@ -212,6 +215,7 @@ describe('Outbox foundation E2E', () => {
       await app.get(OutboxDispatcherService).onModuleDestroy();
       await app.close();
     }
+    if (sessionStore) await Promise.resolve(sessionStore.close());
     if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
   });
 

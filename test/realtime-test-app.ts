@@ -1,3 +1,5 @@
+import { ViewingClock } from '../src/application-viewings/application-viewing.policy';
+import { ValidationPipe } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { sign } from 'cookie-signature';
 import { Test } from '@nestjs/testing';
@@ -13,6 +15,8 @@ import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
 export async function realtimeTestApp(
   options: {
     enabled?: boolean;
+    validation?: boolean;
+    clock?: () => Date;
     handshakeLimit?: number;
     connectionLimit?: number;
     sessionLimit?: number;
@@ -38,10 +42,20 @@ export async function realtimeTestApp(
   process.env['DATABASE_URL'] = database;
   process.env['NODE_ENV'] = 'test';
   const module = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(ViewingClock)
+    .useValue({ now: () => options.clock?.() ?? new Date() })
     .overrideProvider(ConfigService)
     .useValue(config)
     .compile();
   const app = module.createNestApplication();
+  if (options.validation)
+    app.useGlobalPipes(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    );
   app.setGlobalPrefix('api/v1');
   app.use(app.get(SessionInfrastructureService).createMiddleware());
   app.use(passport.initialize());
@@ -111,29 +125,49 @@ export async function realtimeTestApp(
     for (const socket of sockets) socket.disconnect();
     await app.close();
     // The app owns Prisma, so cleanup uses a fresh connection after shutdown tests.
+    if (
+      !database ||
+      process.env['DATABASE_URL'] !== database ||
+      process.env['NODE_ENV'] !== 'test' ||
+      process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true'
+    )
+      throw new Error('Unsafe E2E cleanup');
+    assertSafeE2EDatabaseUrl(database);
     const cleanup = new PrismaService();
     await cleanup.$connect();
     try {
       await cleanup.outboxEvent.deleteMany({
         where: {
-          applicationId: {
-            in: (
-              await cleanup.application.findMany({
-                where: { applicantId: { in: userIds } },
-                select: { id: true },
-              })
-            ).map((row) => row.id),
-          },
+          OR: [
+            { userId: { in: userIds } },
+            {
+              applicationId: {
+                in: (
+                  await cleanup.application.findMany({
+                    where: { applicantId: { in: userIds } },
+                    select: { id: true },
+                  })
+                ).map((row) => row.id),
+              },
+            },
+          ],
         },
       });
+      await cleanup.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions, viewing_command_receipts, viewing_workflows, viewing_proposals, viewing_appointments, application_viewing_interests, application_viewing_outcomes, application_viewings`;
       await cleanup.application.deleteMany({
         where: { applicantId: { in: userIds } },
+      });
+      await cleanup.listingEvent.deleteMany({
+        where: { listing: { providerId: { in: userIds } } },
       });
       await cleanup.listing.deleteMany({
         where: { providerId: { in: userIds } },
       });
       await cleanup.userSession.deleteMany({
         where: { sid: { in: sessionIds } },
+      });
+      await cleanup.applicantProfile.deleteMany({
+        where: { applicantId: { in: userIds } },
       });
       await cleanup.user.deleteMany({ where: { id: { in: userIds } } });
     } finally {

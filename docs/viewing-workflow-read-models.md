@@ -1,0 +1,51 @@
+# Viewing read models and attention (Phase 6)
+
+> This page records its implementation phase. Phases 1–9 are complete; see [current rollout and schema](viewing-workflow-rollout.md) for deployment status and follow-ups.
+
+`projectViewingWorkflow` is the shared, pure projection. Its inputs are authorized application facts, live workflow/proposal/appointment facts, audience and one `asOf` clock instant. It performs no writes. Existing HTTP authorization, WAITING privacy, conversation capabilities, unread relevance, ACTIVE capacity and ordering policies remain in their existing domains.
+
+## HTTP contracts
+
+The existing applicant/provider `GET .../applications/:applicationId/viewing-workflow` now exposes the projection. The same dimensions are available in applicant overview `items[].viewing`, workspace `viewingSummary`, provider cards `viewing`, and attention detail/batch/list items `viewing`. No schema migration is introduced. Provider listing summaries still aggregate attention; application cards carry the application-specific projection.
+
+Two read-only routes are added for both audiences under that workflow URL: `GET /proposals?limit=20&beforeRound=N` and `GET /proposals/:proposalId`. They expose the same safe proposal projection with exact IDs, dates, shared messages, resolution and navigation target. Accepted proposals also expose their appointment history: acceptance/supersession/cancellation timestamps, structured cancellation attribution, all immutable outcome revisions with absence attribution/correction reason, and stored/effective applicant interest with its actual deadline. Pagination uses descending immutable proposal rounds, an exclusive `beforeRound` cursor and a maximum limit of 100. A stable old target therefore remains readable after a later proposal replaces it. These routes use the existing application authorization and WAITING visibility policies. Unreconciled LEGACY proposal snapshots are not presented as authoritative history; existing ledger/history reads remain available until reconciliation.
+
+- Identity: `applicationId`, nullable `workflowId`, `workflowRevision`, `mode`, `reconciliationRequired`, `asOf`.
+- Separate dimensions: `confirmedAppointment`, `pendingProposal`, `latestProposal`, `latestAppointment`, `outcome`, `applicantInterest`, `providerConsideration`, `closure`.
+- `confirmedAppointment` remains binding while a replacement is pending. It retains its own proposal ID and timing/short-notice state; an unknown legacy timing stays unknown. Proposal dates never overwrite it in the read projection. Cancellation belongs to its appointment and includes known actor, reason, shared note and late-cancellation flag. Latest outcome includes appointment ID/time/zone, effective outcome revision and absence attribution.
+- Proposals include proposer/responder, exact UTC instants and IANA timezone, optional shared message, short-notice timing, predecessor/base references and response deadline. `resolution` is stored truth; `effectiveResolution` can already be `EXPIRED` while the worker has not persisted expiry. Reads never invent persisted resolution/history.
+- Interest exposes stored/effective state, exact appointment, deadline, response timestamp and `lifecycleExpiryPending`. At 48 hours it stops being actionable on HTTP reads. Actual SYSTEM rejection/capacity effects remain the approved expiry phase; the flag explicitly identifies that pending processing.
+- Provider consideration retains its persisted state and decision timestamp. Its applicable appointment is obtained from existing consideration activity, ordered by workflow revision. A prior visit's decision cannot satisfy a later visit's obligation. Explicit `UNDECIDED` is a recorded decision and clears the obligation; the provider can change it later while that visit's decision remains open.
+- `capabilities[]` contains command action identifiers, `allowed`, `blockedReason`, and exact targets. Date-input validity (duration, timezone, short-notice acknowledgement, different alternative) still belongs to command validation. Reads cannot pre-validate a schedule the user has not entered.
+
+`obligations[]` carries exact action, responsible side, nullable deadline and target. Multiple simultaneous obligations are intentional: applicant interest and provider consideration can both be pending. `nextObligation` is the first display obligation, not an exclusive ownership lock; consumers must use the array and responsible side. Attention includes only obligations belonging to its audience. Internal attention sorting timestamps remain internal.
+
+Targets use `{ applicationId, workflowId, proposalId, appointmentId, section: 'VIEWING', action }`. Null IDs mean no such entity exists; clients must never substitute another round. `ViewingTargetDto.workflowTarget` and `AttentionTargetDto.workflowTarget` carry this exact structure. Existing `viewingId` remains a compatibility locator; new proposal commands must use `workflowTarget.proposalId`. HTTP command requests still require exact entity IDs, expected workflow revision and a new idempotency key.
+
+Old applicant summary aliases (`current`, `latest`, `latestCompleted`, `pendingInterest`, `changeRequested`, `canPropose`, string `nextAction`) and snapshot `state`/`postViewing` remain for compatibility. CURRENT ledger aliases do not authorize old endpoints. New clients use the separate dimensions, capabilities and obligations; they must not infer workflow state from those historical aliases.
+
+## Attention and refresh boundaries
+
+CURRENT attention is derived exclusively from projection obligations, avoiding simultaneous legacy and workflow obligations. Existing deduplication remains by audience/application/action/target. Provider consideration adds `DECIDE_VIEWING_CONSIDERATION`; existing action types are reused for invitation response, alternative response, attendance and applicant interest.
+
+`nextRevalidateAt` is the earliest future relevant boundary: proposal deadline/start, six-hour change cutoff, confirmed start/end, unresolved attendance end, pending interest deadline, or provider outcome-correction cutoff. At the exact boundary the next HTTP read recomputes capabilities/obligations. Expired invitations no longer demand a response; their stored pending reference remains visible as effectively expired until command/expiry processing. Confirmed appointments remain visible after attention clears. All times serialize as UTC ISO timestamps plus the stored IANA timezone; localized CET/CEST labels belong to presentation.
+
+No realtime/outbox event, expiry worker or durable notification is added here. Realtime remains Phase 7, expiry Phase 8 and required durable viewing notifications Phase 9 in the approved roadmap.
+
+## Lifecycle and legacy safety
+
+Terminal lifecycle closure suppresses calendar and post-viewing obligations, while already-started `OUTCOME_PENDING` appointments can still require provider attendance recording. History remains in the original ledger/outcome/activity endpoints. Restore never restores commitments or old post-viewing decisions. The existing consideration command now rejects a closed post-viewing decision with structured `409 VIEWING_STATE_CHANGED / POST_VIEWING_DECISION_CLOSED` so capabilities and commands agree. A fresh invitation does not reopen an older visit's closed interest/consideration.
+
+Closing a later calendar flow alone does not terminate the application or erase an earlier completed visit's still-open interest deadline/consideration. The appointment's decision state and application lifecycle remain authoritative for those independent dimensions. Lifecycle closure now records a real CLOSED LEGACY workflow even for a completed ledger that was never imported, preventing later restore/reconciliation from recreating an unanswered interest request.
+
+LEGACY reads use the live ledger and existing viewing policy, never imported pending/confirmed pointers. They preserve known schedules/statuses and generic change requests but invent no concrete alternative, deadline, absence/cancellation attribution, or authoritative open workflow. Exact legacy targets retain the ledger appointment/viewing ID; proposal/workflow IDs may be null. New command capabilities require reconciliation. During cutover of an explicitly closed LEGACY workflow, reconstructed unanswered interest is kept CLOSED, including after application restore. It receives the already-recorded closure timestamp, not a fabricated historical deadline.
+
+Phase 5 consideration order remains `(considerationPosition.position ASC, application.id ASC)`, independently of WAITING FIFO. The existing no-show marker now also includes the appointment's start/end/timezone, so providers do not need raw history to label the relevant visit. No outcome starts changing capacity or global reputation.
+
+## Read composition and remaining product cases
+
+Projection and proposal-history queries execute sequentially in the caller's RepeatableRead transaction; explicit scalar batches avoid Prisma issuing sibling relation queries concurrently on one PostgreSQL connection. Projection proposal selection is bounded to latest/pending/confirmed rounds rather than loading proposal history. Existing history pagination/cursors and ACTIVE ordering are unchanged. PostgreSQL query-budget tests account for the additional workflow/attendance facts and retain volume-scaling checks.
+
+Read query-budget suites explicitly override the unrelated outbox polling service. Its locally enabled background claim query had contaminated global PostgreSQL query counts; no production outbox/realtime behavior is changed. Raw concurrent fixture admissions are prepared sequentially; actual command-concurrency tests remain concurrent.
+
+Product cases to decide before frontend rollout: how to present simultaneous obligations; how to explain an expired replacement while the original visit is still binding; attribution disputes/corrections after the existing 24-hour correction window; and how to display a lifecycle-closed, already-started visit still awaiting attendance. Expiry and offline notifications are implemented; configure deployment and integrate frontend refetch before shipping the complete workflow.

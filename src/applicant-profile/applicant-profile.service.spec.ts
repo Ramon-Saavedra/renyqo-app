@@ -31,6 +31,12 @@ const makeRawProfile = (
 });
 
 type TransactionMock = {
+  application: {
+    findMany: jest.MockedFunction<
+      (args?: unknown) => Promise<{ listingId: string }[]>
+    >;
+  };
+  $queryRaw: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
   applicantProfile: {
     findUnique: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
     upsert: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
@@ -53,6 +59,12 @@ describe('ApplicantProfileService', () => {
 
   beforeEach(async () => {
     prismaMock = {
+      application: {
+        findMany: jest
+          .fn<(args?: unknown) => Promise<{ listingId: string }[]>>()
+          .mockResolvedValue([]),
+      },
+      $queryRaw: jest.fn<(args?: unknown) => Promise<unknown>>(),
       applicantProfile: {
         findUnique: jest.fn<(args?: unknown) => Promise<unknown>>(),
         upsert: jest.fn<(args?: unknown) => Promise<unknown>>(),
@@ -102,6 +114,25 @@ describe('ApplicantProfileService', () => {
   });
 
   describe('upsert', () => {
+    it('locks relevant listings before updating the profile and invoking lifecycle revalidation', async () => {
+      prismaMock.application.findMany.mockResolvedValue([
+        { listingId: '00000000-0000-4000-8000-000000000003' },
+      ]);
+      prismaMock.applicantProfile.findUnique.mockResolvedValue(
+        makeRawProfile(),
+      );
+      prismaMock.applicantProfile.upsert.mockResolvedValue(makeRawProfile());
+      await service.upsert(APPLICANT_ID, { householdNetIncome: 3000 });
+      expect(prismaMock.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prismaMock.applicantProfile.upsert.mock.invocationCallOrder[0],
+      );
+      expect(
+        prismaMock.applicantProfile.upsert.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        applicationsServiceMock.revalidateActiveAndWaitingApplications.mock
+          .invocationCallOrder[0],
+      );
+    });
     it('creates the profile when it does not exist', async () => {
       const dto: UpdateApplicantProfileDto = {
         introduction: 'New applicant introduction',
