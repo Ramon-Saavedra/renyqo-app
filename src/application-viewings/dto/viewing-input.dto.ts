@@ -10,6 +10,7 @@ import {
   Matches,
   Max,
   Min,
+  Equals,
 } from 'class-validator';
 import { ViewingInterest, ViewingOutcome } from '../../generated/prisma/enums';
 
@@ -73,6 +74,12 @@ export class CorrectViewingOutcomeDto {
 
 export class SubmitViewingInterestDto {
   @IsEnum(ViewingInterest) interest!: ViewingInterest;
+  @Transform(
+    ({ obj }: { obj: Record<string, unknown> }) => obj.confirmWithdrawal,
+  )
+  @IsOptional()
+  @Equals(true)
+  confirmWithdrawal?: boolean;
 }
 
 export class ViewingActionDto {}

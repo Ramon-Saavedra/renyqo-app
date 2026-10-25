@@ -55,14 +55,38 @@ export class ApplicationViewingAccessService {
     userId: string,
     side: ViewingAudience,
   ): Promise<ViewingApplication> {
-    const reference = await this.authorize(tx, applicationId, userId, side);
-    await tx.$queryRaw`SELECT id FROM listings WHERE id = ${reference.listingId}::uuid FOR UPDATE`;
-    await tx.$queryRaw`SELECT id FROM applications WHERE id = ${applicationId}::uuid FOR UPDATE`;
-    const current = await this.authorize(tx, applicationId, userId, side);
+    const current = await this.lock(tx, applicationId, userId, side);
     if (!this.canMutate(current))
       throw new ConflictException(
         'Viewings cannot be changed for this application',
       );
     return current;
+  }
+
+  /** Authorize and lock without blocking an authorized durable command replay. */
+  async lock(
+    tx: Prisma.TransactionClient,
+    applicationId: string,
+    userId: string,
+    side: ViewingAudience,
+  ): Promise<ViewingApplication> {
+    const reference = await this.authorize(tx, applicationId, userId, side);
+    await tx.$queryRaw`SELECT id FROM listings WHERE id = ${reference.listingId}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM applications WHERE id = ${applicationId}::uuid FOR UPDATE`;
+    return this.authorize(tx, applicationId, userId, side);
+  }
+
+  async assertLegacy(tx: Prisma.TransactionClient, applicationId: string) {
+    const workflow = await tx.viewingWorkflow.findUnique({
+      where: { applicationId },
+      select: { mode: true, revision: true },
+    });
+    if (workflow?.mode === 'CURRENT')
+      throw new ConflictException({
+        code: 'VIEWING_STATE_CHANGED',
+        reason: 'WORKFLOW_COMMAND_REQUIRED',
+        currentWorkflowRevision: workflow.revision,
+        message: 'Use the viewing workflow command API after reconciliation',
+      });
   }
 }

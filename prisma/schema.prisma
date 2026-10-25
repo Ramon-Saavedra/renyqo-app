@@ -1,3 +1,5 @@
+// Canonical PostgreSQL invariants live in migration SQL, including unsupported
+// CHECKs/deferred triggers. See docs/viewing-workflow-rollout.md; do not db push.
 generator client {
   provider            = "prisma-client"
   output              = "../src/generated/prisma"
@@ -56,6 +58,7 @@ enum ApplicationStatus {
 }
 
 enum ApplicationRejectionReason {
+  POST_VIEWING_RESPONSE_EXPIRED @map("post_viewing_response_expired")
   NOT_SELECTED                @map("not_selected")
   LISTING_RENTED              @map("listing_rented")
   PROFILE_NO_LONGER_ELIGIBLE  @map("profile_no_longer_eligible")
@@ -73,6 +76,12 @@ enum ListingEventSource {
 }
 
 enum ApplicationActivityType {
+  VIEWING_WORKFLOW_CLOSED @map("viewing_workflow_closed")
+  VIEWING_CONSIDERATION_CHANGED @map("viewing_consideration_changed")
+  VIEWING_INTEREST_EXPIRED @map("viewing_interest_expired")
+  VIEWING_REPLACEMENT_PROPOSED @map("viewing_replacement_proposed")
+  VIEWING_PROPOSAL_WITHDRAWN @map("viewing_proposal_withdrawn")
+  VIEWING_PROPOSAL_EXPIRED @map("viewing_proposal_expired")
   VIEWING_PROPOSED @map("viewing_proposed")
   VIEWING_ACCEPTED @map("viewing_accepted")
   VIEWING_DECLINED @map("viewing_declined")
@@ -167,6 +176,7 @@ model User {
   applicationActivities ApplicationActivity[] @relation("ApplicationActivityActor")
   profile      ApplicantProfile?
   passwordResetTokens PasswordResetToken[]
+  notifications Notification[]
   savedListings SavedListing[]
   listingReports ListingReport[] @relation("ListingReportReporter")
 
@@ -174,7 +184,7 @@ model User {
 }
 
 model PasswordResetToken {
-  id        String    @id @default(uuid()) @db.Uuid
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
   tokenHash String    @unique @map("token_hash")
   expiresAt DateTime  @map("expires_at")
@@ -224,10 +234,11 @@ model Listing {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   publishedAt DateTime? @map("published_at")
-  rentedAt    DateTime? @map("rented_at")
+  rentedAt    DateTime? @map("rented_at") @db.Timestamptz(6)
 
   provider User @relation(fields: [providerId], references: [id])
 
+  considerationPositions ApplicationConsiderationPosition[]
   applications Application[]
   images       ListingImage[]
   listingEvents ListingEvent[]
@@ -265,10 +276,10 @@ model Application {
   applicantId  String             @map("applicant_id") @db.Uuid
   status       ApplicationStatus  @default(WAITING)
   queueOrder   BigInt             @default(autoincrement()) @map("queue_order")
-  rejectedAt   DateTime?                    @map("rejected_at")
+  rejectedAt   DateTime?                    @map("rejected_at") @db.Timestamptz(6)
   publicReason ApplicationRejectionReason? @map("public_reason")
-  activeAt     DateTime?                    @map("active_at")
-  withdrawnAt  DateTime?                    @map("withdrawn_at")
+  activeAt     DateTime?                    @map("active_at") @db.Timestamptz(6)
+  withdrawnAt  DateTime?                    @map("withdrawn_at") @db.Timestamptz(6)
   createdAt    DateTime                     @default(now()) @map("created_at")
   updatedAt    DateTime           @updatedAt @map("updated_at")
 
@@ -279,13 +290,20 @@ model Application {
   conversation ApplicationConversation?
   documentRequests ApplicationDocumentRequest[]
   viewings ApplicationViewing[]
+  viewingWorkflow ViewingWorkflow?
+  viewingCommandReceipts ViewingCommandReceipt[]
+  considerationPosition ApplicationConsiderationPosition?
+  noShowConsequences ApplicationNoShowConsequence[]
+  notifications Notification[]
 
+  @@unique([id, listingId])
   @@index([listingId, status, queueOrder])
   @@index([applicantId])
   @@map("applications")
 }
 
 enum ApplicationViewingStatus {
+  OUTCOME_PENDING @map("outcome_pending")
   PROPOSED @map("proposed")
   ACCEPTED @map("accepted")
   DECLINED @map("declined")
@@ -328,6 +346,7 @@ model ApplicationViewing {
   application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   outcomes ApplicationViewingOutcome[]
   interest ApplicationViewingInterest?
+  appointment ViewingAppointment?
   @@unique([applicationId, round])
   @@unique([applicationId, requestKey])
   @@index([applicationId, status, round])
@@ -339,9 +358,12 @@ model ApplicationViewingOutcome {
   viewingId String @map("viewing_id") @db.Uuid
   revision Int
   outcome ViewingOutcome
+  absenceSide ViewingAbsenceSide? @map("absence_side")
   correctionReason String? @map("correction_reason") @db.VarChar(500)
   recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
   viewing ApplicationViewing @relation(fields: [viewingId], references: [id], onDelete: Restrict)
+  noShowConsequence ApplicationNoShowConsequence? @relation("NoShowSource")
+  correctedNoShowConsequence ApplicationNoShowConsequence? @relation("NoShowCorrection")
   @@unique([viewingId, revision])
   @@map("application_viewing_outcomes")
 }
@@ -353,6 +375,195 @@ model ApplicationViewingInterest {
   respondedAt DateTime @default(now()) @map("responded_at") @db.Timestamptz(3)
   viewing ApplicationViewing @relation(fields: [viewingId], references: [id], onDelete: Restrict)
   @@map("application_viewing_interests")
+}
+
+// ApplicationViewing remains the appointment/history ledger. Legacy unaccepted
+// rounds stay there for old IDs; new unaccepted schedules live only in proposals.
+enum ViewingParticipantSide {
+  PROVIDER @map("provider")
+  APPLICANT @map("applicant")
+}
+
+enum ViewingWorkflowMode {
+  LEGACY @map("legacy")
+  CURRENT @map("current")
+}
+
+enum ViewingWorkflowState {
+  OPEN @map("open")
+  CLOSED @map("closed")
+}
+
+enum ViewingClosureReason {
+  LISTING_UNPUBLISHED @map("listing_unpublished")
+  PROVIDER_CLOSED @map("provider_closed")
+  APPLICATION_WITHDRAWN @map("application_withdrawn")
+  APPLICATION_REJECTED @map("application_rejected")
+  APPLICATION_ACCEPTED @map("application_accepted")
+  LISTING_RENTED @map("listing_rented")
+  LISTING_ARCHIVED @map("listing_archived")
+  ELIGIBILITY_REJECTED @map("eligibility_rejected")
+  POST_VIEWING_RESPONSE_EXPIRED @map("post_viewing_response_expired")
+}
+
+enum ViewingProposalTiming {
+  NORMAL @map("normal")
+  SHORT_NOTICE @map("short_notice")
+  LEGACY @map("legacy")
+}
+
+enum ViewingProposalResolution {
+  PENDING @map("pending")
+  ACCEPTED @map("accepted")
+  DECLINED @map("declined")
+  SUPERSEDED @map("superseded")
+  WITHDRAWN @map("withdrawn")
+  EXPIRED @map("expired")
+  CLOSED @map("closed")
+}
+
+enum ViewingCancellationReason {
+  APPLICANT_CANCELLED @map("applicant_cancelled")
+  PROVIDER_ILLNESS @map("provider_illness")
+  PROVIDER_OPERATIONAL @map("provider_operational")
+  PROPERTY_UNAVAILABLE @map("property_unavailable")
+  OTHER @map("other")
+  APPLICATION_ENDED @map("application_ended")
+}
+
+enum ViewingAbsenceSide {
+  APPLICANT @map("applicant")
+  PROVIDER @map("provider")
+  BOTH @map("both")
+}
+
+enum ViewingInterestState {
+  NOT_REQUESTED @map("not_requested")
+  PENDING @map("pending")
+  STILL_INTERESTED @map("still_interested")
+  NOT_INTERESTED @map("not_interested")
+  EXPIRED @map("expired")
+  CLOSED @map("closed")
+  LEGACY_UNANSWERED @map("legacy_unanswered")
+}
+
+enum ViewingProviderConsideration {
+  UNDECIDED @map("undecided")
+  CONTINUE_CONSIDERING @map("continue_considering")
+  DO_NOT_CONTINUE @map("do_not_continue")
+}
+
+model ViewingWorkflow {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @unique @map("application_id") @db.Uuid
+  // LEGACY backfill is a cutover snapshot, not an authoritative live projection.
+  mode ViewingWorkflowMode @default(CURRENT)
+  revision Int @default(0)
+  initiatorSide ViewingParticipantSide @default(PROVIDER) @map("initiator_side")
+  state ViewingWorkflowState @default(OPEN)
+  closureReason ViewingClosureReason? @map("closure_reason")
+  closedAt DateTime? @map("closed_at") @db.Timestamptz(3)
+  pendingProposalId String? @unique @map("pending_proposal_id") @db.Uuid
+  confirmedAppointmentId String? @unique @map("confirmed_appointment_id") @db.Uuid
+  providerConsideration ViewingProviderConsideration @default(UNDECIDED) @map("provider_consideration")
+  considerationDecidedAt DateTime? @map("consideration_decided_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  proposals ViewingProposal[] @relation("WorkflowProposals")
+  appointments ViewingAppointment[] @relation("WorkflowAppointments")
+  pendingProposal ViewingProposal? @relation("PendingProposal", fields: [pendingProposalId, id], references: [id, workflowId], onDelete: Restrict, map: "pending_proposal_same_workflow")
+  confirmedAppointment ViewingAppointment? @relation("ConfirmedAppointment", fields: [confirmedAppointmentId, id], references: [viewingId, workflowId], onDelete: Restrict, map: "confirmed_appointment_same_workflow")
+  @@unique([pendingProposalId, id])
+  @@unique([confirmedAppointmentId, id])
+  @@map("viewing_workflows")
+}
+
+model ViewingProposal {
+  id String @id @default(uuid()) @db.Uuid
+  workflowId String @map("workflow_id") @db.Uuid
+  round Int
+  proposerSide ViewingParticipantSide @map("proposer_side")
+  responderSide ViewingParticipantSide @map("responder_side")
+  startsAt DateTime @map("starts_at") @db.Timestamptz(3)
+  endsAt DateTime @map("ends_at") @db.Timestamptz(3)
+  timeZone String @map("time_zone") @db.VarChar(100)
+  message String? @db.VarChar(500)
+  predecessorProposalId String? @map("predecessor_proposal_id") @db.Uuid
+  baseAppointmentId String? @map("base_appointment_id") @db.Uuid
+  timing ViewingProposalTiming
+  responseDeadlineAt DateTime? @map("response_deadline_at") @db.Timestamptz(3)
+  resolution ViewingProposalResolution @default(PENDING)
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolvedBy ApplicationActivityActorType? @map("resolved_by")
+  requestKey String @map("request_key") @db.Uuid
+  requestHash String @map("request_hash") @db.Char(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  workflow ViewingWorkflow @relation("WorkflowProposals", fields: [workflowId], references: [id], onDelete: Restrict)
+  pendingFor ViewingWorkflow? @relation("PendingProposal")
+  predecessor ViewingProposal? @relation("ProposalPredecessor", fields: [predecessorProposalId, workflowId], references: [id, workflowId], onDelete: Restrict, map: "predecessor_same_workflow")
+  successors ViewingProposal[] @relation("ProposalPredecessor")
+  baseAppointment ViewingAppointment? @relation("ProposalBase", fields: [baseAppointmentId, workflowId], references: [viewingId, workflowId], onDelete: Restrict, map: "base_appointment_same_workflow")
+  appointment ViewingAppointment? @relation("AppointmentSource")
+  @@unique([workflowId, round])
+  @@unique([workflowId, requestKey])
+  @@unique([id, workflowId])
+  @@index([resolution, responseDeadlineAt])
+  @@map("viewing_proposals")
+}
+
+model ViewingAppointment {
+  // Same ID as its ApplicationViewing ledger row and all existing outcome/history links.
+  viewingId String @id @map("viewing_id") @db.Uuid
+  workflowId String @map("workflow_id") @db.Uuid
+  proposalId String @unique @map("proposal_id") @db.Uuid
+  cancelledBy ApplicationActivityActorType? @map("cancelled_by")
+  cancellationReason ViewingCancellationReason? @map("cancellation_reason")
+  cancellationNote String? @map("cancellation_note") @db.VarChar(500)
+  lateCancellation Boolean? @map("late_cancellation")
+  interestState ViewingInterestState @default(NOT_REQUESTED) @map("interest_state")
+  interestRequestedAt DateTime? @map("interest_requested_at") @db.Timestamptz(3)
+  interestDeadlineAt DateTime? @map("interest_deadline_at") @db.Timestamptz(3)
+  interestClosedAt DateTime? @map("interest_closed_at") @db.Timestamptz(3)
+  viewing ApplicationViewing @relation(fields: [viewingId], references: [id], onDelete: Restrict)
+  workflow ViewingWorkflow @relation("WorkflowAppointments", fields: [workflowId], references: [id], onDelete: Restrict)
+  sourceProposal ViewingProposal @relation("AppointmentSource", fields: [proposalId, workflowId], references: [id, workflowId], onDelete: Restrict, map: "source_proposal_same_workflow")
+  confirmedFor ViewingWorkflow? @relation("ConfirmedAppointment")
+  alternatives ViewingProposal[] @relation("ProposalBase")
+  @@unique([viewingId, workflowId])
+  @@unique([proposalId, workflowId])
+  @@index([interestState, interestDeadlineAt])
+  @@map("viewing_appointments")
+}
+
+// Separate from WAITING queueOrder and historical activeAt. No behavioral ranking.
+model ApplicationConsiderationPosition {
+  applicationId String @id @map("application_id") @db.Uuid
+  listingId String @map("listing_id") @db.Uuid
+  position BigInt @default(autoincrement())
+  revision Int @default(0)
+  application Application @relation(fields: [applicationId, listingId], references: [id, listingId], onDelete: Restrict, map: "consideration_same_listing")
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  @@unique([listingId, position])
+  @@unique([applicationId, listingId])
+  @@map("application_consideration_positions")
+}
+
+model ApplicationNoShowConsequence {
+  outcomeId String @id @map("outcome_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  listingId String @map("listing_id") @db.Uuid
+  previousPosition BigInt @map("previous_position")
+  appliedPosition BigInt @map("applied_position")
+  appliedRevision Int @map("applied_revision")
+  correctedByOutcomeId String? @unique @map("corrected_by_outcome_id") @db.Uuid
+  correctedAt DateTime? @map("corrected_at") @db.Timestamptz(3)
+  positionRestored Boolean? @map("position_restored")
+  application Application @relation(fields: [applicationId, listingId], references: [id, listingId], onDelete: Restrict, onUpdate: NoAction)
+  sourceOutcome ApplicationViewingOutcome @relation("NoShowSource", fields: [outcomeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  correctionOutcome ApplicationViewingOutcome? @relation("NoShowCorrection", fields: [correctedByOutcomeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@index([applicationId])
+  @@map("application_no_show_consequences")
 }
 
 model ListingEvent {
@@ -382,15 +593,43 @@ model ApplicationActivity {
   actorUserId String?                        @map("actor_user_id") @db.Uuid
   actorType   ApplicationActivityActorType   @map("actor_type")
   visibility  ApplicationActivityVisibility
-  occurredAt  DateTime                       @default(now()) @map("occurred_at")
+  occurredAt  DateTime                       @default(now()) @map("occurred_at") @db.Timestamptz(6)
   payload     Json?
 
   application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   actor       User?        @relation("ApplicationActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  notifications Notification[]
 
+  @@unique([id, applicationId])
   @@index([applicationId, occurredAt, id])
-  @@index([applicationId, visibility, occurredAt, id])
+  @@index([applicationId, visibility, occurredAt, id], map: "application_activities_application_id_visibility_occurred_at_id")
   @@map("application_activities")
+}
+
+model Notification {
+  id String @id @default(uuid()) @db.Uuid
+  recipientId String @map("recipient_id") @db.Uuid
+  recipientSide ViewingParticipantSide @map("recipient_side")
+  applicationId String @map("application_id") @db.Uuid
+  listingId String @map("listing_id") @db.Uuid
+  sourceActivityId String @map("source_activity_id") @db.Uuid
+  type ApplicationActivityType
+  workflowId String? @map("workflow_id") @db.Uuid
+  proposalId String? @map("proposal_id") @db.Uuid
+  appointmentId String? @map("appointment_id") @db.Uuid
+  section String @db.VarChar(16)
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  readAt DateTime? @map("read_at") @db.Timestamptz(3)
+  expiresAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP + '90 days'::interval)")) @map("expires_at") @db.Timestamptz(3)
+  recipient User @relation(fields: [recipientId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "notifications_recipient_id_fkey")
+  application Application @relation(fields: [applicationId, listingId], references: [id, listingId], onDelete: Cascade, onUpdate: NoAction, map: "notification_application")
+  sourceActivity ApplicationActivity @relation(fields: [sourceActivityId, applicationId], references: [id, applicationId], onDelete: Cascade, onUpdate: NoAction, map: "notification_activity")
+  @@unique([sourceActivityId, recipientId])
+  @@index([recipientId, createdAt, id])
+  @@index([recipientId, readAt])
+  @@index([expiresAt])
+  @@map("notifications")
 }
 
 model ApplicationConversation {
@@ -529,8 +768,10 @@ model OutboxEvent {
   id             String    @id @default(uuid()) @db.Uuid
   type           String    @db.VarChar(120)
   schemaVersion  Int       @default(1) @map("schema_version")
-  applicationId  String    @map("application_id") @db.Uuid
-  conversationId String    @map("conversation_id") @db.Uuid
+  applicationId  String?   @map("application_id") @db.Uuid
+  userId         String?   @map("user_id") @db.Uuid
+  conversationId String?   @map("conversation_id") @db.Uuid
+  deduplicationKey String?  @unique @map("deduplication_key") @db.VarChar(200)
   payload        Json      @db.JsonB
   occurredAt     DateTime  @map("occurred_at") @db.Timestamp(3)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
@@ -543,4 +784,20 @@ model OutboxEvent {
 
   @@index([nextAttemptAt, createdAt], map: "outbox_events_dispatch_queue_idx")
   @@map("outbox_events")
+}
+
+// Immutable result of one application-scoped command, including expiry conflicts.
+model ViewingCommandReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  requestKey String @map("request_key") @db.Uuid
+  actorUserId String @map("actor_user_id") @db.Uuid
+  actorSide ViewingParticipantSide @map("actor_side")
+  command String @db.VarChar(64)
+  requestHash String @map("request_hash") @db.Char(64)
+  outcome Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([applicationId, requestKey])
+  @@map("viewing_command_receipts")
 }

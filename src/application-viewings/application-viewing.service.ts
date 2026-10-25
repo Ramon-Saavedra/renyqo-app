@@ -52,6 +52,7 @@ export class ApplicationViewingService {
         userId,
         'provider',
       );
+      await this.access.assertLegacy(tx, applicationId);
       const now = this.clock.now();
       const canonical = {
         command: previousId ? 'reschedule' : 'propose',
@@ -136,77 +137,114 @@ export class ApplicationViewingService {
     action: ResponseAction,
     dto: RequestViewingChangeDto = {},
   ): Promise<ViewingResponseDto> {
+    return runSerializableTransaction(this.prisma, (tx) =>
+      action === 'cancel'
+        ? this.cancelWithinTransaction(tx, applicationId, viewingId, userId)
+        : this.respondWithinTransaction(
+            tx,
+            applicationId,
+            viewingId,
+            userId,
+            action,
+            dto,
+          ),
+    );
+  }
+
+  /** Existing provider cancellation only. The caller owns the Serializable transaction. */
+  cancelWithinTransaction(
+    tx: Prisma.TransactionClient,
+    applicationId: string,
+    viewingId: string,
+    providerId: string,
+  ): Promise<ViewingResponseDto> {
+    return this.respondWithinTransaction(
+      tx,
+      applicationId,
+      viewingId,
+      providerId,
+      'cancel',
+    );
+  }
+
+  private async respondWithinTransaction(
+    tx: Prisma.TransactionClient,
+    applicationId: string,
+    viewingId: string,
+    userId: string,
+    action: ResponseAction,
+    dto: RequestViewingChangeDto = {},
+  ): Promise<ViewingResponseDto> {
     const side: ViewingAudience =
       action === 'cancel' ? 'provider' : 'applicant';
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const application = await this.access.mutation(
-        tx,
-        applicationId,
-        userId,
-        side,
-      );
-      const row = await this.query.find(tx, applicationId, viewingId);
-      const now = this.clock.now();
-      const target = {
-        accept: Status.ACCEPTED,
-        decline: Status.DECLINED,
-        'request-change': Status.CHANGE_REQUESTED,
-        cancel: Status.CANCELLED,
-      }[action];
-      const message =
-        action === 'request-change' ? this.policy.text(dto.message) : null;
-      if (row.status === target) {
-        if (action === 'request-change' && row.changeRequestMessage !== message)
-          throw new ConflictException('Change response is final');
-        return this.query.response(tx, application, side, row.id);
-      }
-      const latest = await tx.applicationViewing.findFirst({
-        where: { applicationId },
-        orderBy: { round: 'desc' },
-        select: { id: true },
-      });
-      const flags = this.policy.capabilities(
-        row,
-        side,
-        true,
-        latest?.id === row.id,
-        now,
-      );
-      const allowed = {
-        accept: flags.canAccept,
-        decline: flags.canDecline,
-        'request-change': flags.canRequestAnotherTime,
-        cancel: flags.canCancel,
-      }[action];
-      if (!allowed)
-        throw new ConflictException('Viewing does not allow this action');
-      const data: Prisma.ApplicationViewingUpdateInput = { status: target };
-      if (action === 'accept') data.acceptedAt = now;
-      if (action === 'decline') data.declinedAt = now;
-      if (action === 'cancel') data.cancelledAt = now;
-      if (action === 'request-change') {
-        data.changeRequestedAt = now;
-        data.changeRequestMessage = message;
-      }
-      await tx.applicationViewing.update({ where: { id: viewingId }, data });
-      const event = {
-        accept: Event.VIEWING_ACCEPTED,
-        decline: Event.VIEWING_DECLINED,
-        'request-change': Event.VIEWING_CHANGE_REQUESTED,
-        cancel: Event.VIEWING_CANCELLED,
-      }[action];
-      await this.append(
-        tx,
-        applicationId,
-        userId,
-        side,
-        event,
-        row.id,
-        row.round,
-        now,
-      );
+    const application = await this.access.mutation(
+      tx,
+      applicationId,
+      userId,
+      side,
+    );
+    await this.access.assertLegacy(tx, applicationId);
+    const row = await this.query.find(tx, applicationId, viewingId);
+    const now = this.clock.now();
+    const target = {
+      accept: Status.ACCEPTED,
+      decline: Status.DECLINED,
+      'request-change': Status.CHANGE_REQUESTED,
+      cancel: Status.CANCELLED,
+    }[action];
+    const message =
+      action === 'request-change' ? this.policy.text(dto.message) : null;
+    if (row.status === target) {
+      if (action === 'request-change' && row.changeRequestMessage !== message)
+        throw new ConflictException('Change response is final');
       return this.query.response(tx, application, side, row.id);
+    }
+    const latest = await tx.applicationViewing.findFirst({
+      where: { applicationId },
+      orderBy: { round: 'desc' },
+      select: { id: true },
     });
+    const flags = this.policy.capabilities(
+      row,
+      side,
+      true,
+      latest?.id === row.id,
+      now,
+    );
+    const allowed = {
+      accept: flags.canAccept,
+      decline: flags.canDecline,
+      'request-change': flags.canRequestAnotherTime,
+      cancel: flags.canCancel,
+    }[action];
+    if (!allowed)
+      throw new ConflictException('Viewing does not allow this action');
+    const data: Prisma.ApplicationViewingUpdateInput = { status: target };
+    if (action === 'accept') data.acceptedAt = now;
+    if (action === 'decline') data.declinedAt = now;
+    if (action === 'cancel') data.cancelledAt = now;
+    if (action === 'request-change') {
+      data.changeRequestedAt = now;
+      data.changeRequestMessage = message;
+    }
+    await tx.applicationViewing.update({ where: { id: viewingId }, data });
+    const event = {
+      accept: Event.VIEWING_ACCEPTED,
+      decline: Event.VIEWING_DECLINED,
+      'request-change': Event.VIEWING_CHANGE_REQUESTED,
+      cancel: Event.VIEWING_CANCELLED,
+    }[action];
+    await this.append(
+      tx,
+      applicationId,
+      userId,
+      side,
+      event,
+      row.id,
+      row.round,
+      now,
+    );
+    return this.query.response(tx, application, side, row.id);
   }
 
   append(
