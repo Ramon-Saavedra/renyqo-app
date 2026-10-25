@@ -1,3 +1,4 @@
+import { ViewingLifecycleService } from './viewing-lifecycle.service';
 import {
   ConflictException,
   HttpException,
@@ -6,6 +7,10 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  activeConsiderationOrder,
+  ApplicationConsiderationReadService,
+} from './application-consideration-read';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 
 import type {
@@ -181,6 +186,22 @@ describe('ApplicationsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: ApplicationConsiderationReadService,
+          useValue: {
+            batch: jest
+              .fn<ApplicationConsiderationReadService['batch']>()
+              .mockResolvedValue(new Map()),
+          },
+        },
+        {
+          provide: ViewingLifecycleService,
+          useValue: {
+            closeWithinTransaction: jest.fn(),
+            closeListingWithinTransaction: jest.fn(),
+            restoreWithinTransaction: jest.fn(),
+          },
+        },
         {
           provide: ApplicationActivityService,
           useValue: activityService,
@@ -1185,6 +1206,7 @@ describe('ApplicationsService', () => {
           listingId: rawApplications[0].listingId,
           status: rawApplications[0].status,
           activeAt: null,
+          consideration: { position: null, revision: 0, applicantNoShow: null },
           applicant: {
             name: 'Anna Applicant',
             profile: {
@@ -1210,7 +1232,7 @@ describe('ApplicationsService', () => {
           listingId: LISTING_ID,
           status: ApplicationStatus.ACTIVE,
         },
-        orderBy: [{ activeAt: 'asc' }, { id: 'asc' }],
+        orderBy: activeConsiderationOrder,
         take: 5,
         select: {
           id: true,

@@ -210,6 +210,7 @@ describe('ApplicationViewingPolicy', () => {
         viewingId: viewing.id,
         revision: 1,
         outcome: ViewingOutcome.COMPLETED,
+        absenceSide: null,
         correctionReason: null,
         recordedAt: now,
       },

@@ -218,6 +218,7 @@ describe('Application conversation E2E', () => {
     }
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
+    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
     await prisma.application.deleteMany();
     await prisma.listingReport.deleteMany();
     await prisma.savedListing.deleteMany();

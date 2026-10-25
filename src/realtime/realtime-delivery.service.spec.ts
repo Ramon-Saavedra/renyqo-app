@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
-import { ConversationEventRouter } from './conversation-event-router.service';
+import { RealtimeEventRouter } from './realtime-event-router.service';
 import { RealtimeConfigService } from './realtime-config.service';
 import { RealtimeConnectionsService } from './realtime-connections.service';
 import { RealtimeDeliveryService } from './realtime-delivery.service';
@@ -41,7 +41,13 @@ describe('Realtime delivery lifecycle', () => {
           provide: RealtimeConnectionsService,
           useValue: { eligible, isStopped },
         },
-        { provide: ConversationEventRouter, useValue: { recipients } },
+        {
+          provide: RealtimeEventRouter,
+          useValue: {
+            routes: async () =>
+              (await recipients()).map((userId) => ({ userId, event })),
+          },
+        },
       ],
     }).compile();
     delivery = module.get(RealtimeDeliveryService);

@@ -39,6 +39,21 @@ const evaluate = (
 ) => service.evaluate(history, status, eligible, asOf);
 
 describe('Application admission', () => {
+  it('system post-viewing timeout permits eligible reapplication without inventing provider cooldown', () => {
+    expect(
+      evaluate([
+        row({
+          publicReason:
+            ApplicationRejectionReason.POST_VIEWING_RESPONSE_EXPIRED,
+          listingEvents: [],
+        }),
+      ]),
+    ).toMatchObject({
+      canSubmitApplication: true,
+      submissionBlockReason: null,
+      reapplyAvailableAt: null,
+    });
+  });
   it('loads the latest provider curation event separately for each attempt', async () => {
     const rows = [row(), row({ id: 'attempt-2' })];
     const findMany = jest

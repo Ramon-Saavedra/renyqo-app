@@ -92,6 +92,7 @@ describe('newest blocking application selection', () => {
       { application: { findMany } } as unknown as PrismaService,
       {} as never,
       {} as never,
+      {} as never,
     );
     const batch = jest.fn().mockResolvedValue({
       items: [

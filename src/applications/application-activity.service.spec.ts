@@ -1,3 +1,4 @@
+import { ApplicationOutboxProducer } from '../outbox/application-outbox.producer';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ApplicationActivity, Prisma } from '../generated/prisma/client';
 import {
@@ -30,6 +31,13 @@ const makeActivity = (
 describe('ApplicationActivityService', () => {
   let service: ApplicationActivityService;
   let prismaMock: {
+    $transaction: jest.MockedFunction<
+      (
+        operation: (
+          tx: Prisma.TransactionClient,
+        ) => Promise<ApplicationActivity>,
+      ) => Promise<ApplicationActivity>
+    >;
     application: {
       findUnique: jest.MockedFunction<
         (args?: unknown) => Promise<{
@@ -55,6 +63,9 @@ describe('ApplicationActivityService', () => {
 
   beforeEach(() => {
     prismaMock = {
+      $transaction: jest.fn(async (operation) =>
+        operation(prismaMock as never),
+      ),
       application: {
         findUnique: jest.fn(),
       },
@@ -66,6 +77,13 @@ describe('ApplicationActivityService', () => {
     };
     service = new ApplicationActivityService(
       prismaMock as unknown as PrismaService,
+      {
+        activity: jest.fn(() => Promise.resolve()),
+        listing: jest.fn(() => Promise.resolve()),
+      } as unknown as ApplicationOutboxProducer,
+      {
+        activity: jest.fn(() => Promise.resolve()),
+      },
     );
   });
 
@@ -82,6 +100,13 @@ describe('ApplicationActivityService', () => {
         payload: {
           viewingId: ACTOR_ID,
           viewingRound: 1,
+          workflowId: APPLICATION_ID,
+          workflowRevision: 4,
+          proposalId: ACTOR_ID,
+          appointmentId: ACTOR_ID,
+          cancellationReason: 'APPLICANT_CANCELLED',
+          providerConsideration: 'CONTINUE_CONSIDERING',
+          message: 'not part of public activity metadata',
           startsAt: '2027-01-01T11:00:00.000Z',
           outcomeRevision: 2,
           providerNote: 'private note',
@@ -100,6 +125,12 @@ describe('ApplicationActivityService', () => {
     expect(timeline[0].payload).toEqual({
       viewingId: ACTOR_ID,
       viewingRound: 1,
+      workflowId: APPLICATION_ID,
+      workflowRevision: 4,
+      proposalId: ACTOR_ID,
+      appointmentId: ACTOR_ID,
+      cancellationReason: 'APPLICANT_CANCELLED',
+      providerConsideration: 'CONTINUE_CONSIDERING',
       startsAt: '2027-01-01T11:00:00.000Z',
       outcomeRevision: 2,
     });

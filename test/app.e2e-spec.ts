@@ -375,6 +375,7 @@ async function clearDatabase(): Promise<void> {
     throw new Error('Prisma service has not been initialized.');
   }
 
+  await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
   await prisma.application.deleteMany();
   await prisma.listingReport.deleteMany();
   await prisma.savedListing.deleteMany();

@@ -1,12 +1,12 @@
 # Application Viewings
 
-Viewings are internal Renyqo appointments scoped to an application. Providers control schedules; applicants respond without editing them. Calendar integrations and notification delivery are not part of this module.
+This document describes the legacy endpoint/ledger contract. CURRENT workflows use [negotiated commands](viewing-workflow-commands.md), [read models](viewing-workflow-read-models.md) and [rollout rules](viewing-workflow-rollout.md). Legacy writers are blocked after CURRENT cutover. Durable notifications are implemented separately; external calendar integration remains deferred.
 
 ## Access and lifecycle
 
 Provider access requires listing ownership, a non-WAITING application, and current or previous ACTIVE visibility. WAITING and never-active hidden applications return the same 404 as inaccessible applications, including history and summaries. Applicants access only their own application. Every viewing lookup is scoped by both applicationId and viewingId.
 
-All writes require ACTIVE and a PUBLISHED or PAUSED listing, including interest and corrections. Terminal applications retain authorized historical reads with capabilities disabled. Restoring ACTIVE resumes an unresolved round when its timing permits the action; restoring WAITING hides it from the provider. A new application ID starts independent history.
+Legacy calendar writes require ACTIVE and a PUBLISHED or PAUSED listing. CURRENT workflows also support attendance/correction for an already-started visit after lifecycle termination. Restore never revives old proposals, appointments or unresolved interest: restored ACTIVE needs a new provider invitation; restored WAITING remains hidden from the provider. A new application ID starts independent history.
 
 ## Proposal rounds and group viewings
 
@@ -58,7 +58,7 @@ Writes authorize, lock listing then application, reread authorization/lifecycle,
 
 Proposal/reschedule retries match the canonical command, source round, instants, zone and trimmed note hash. Matching keys return the original round's current representation; changed inputs return 409. Authorization and lifecycle checks precede replay lookup; replay precedes fresh time/current-round checks. Keys are scoped per application. A previously successful operation may therefore return a subsequently superseded round without creating a new proposal. Final-state retries add no activities.
 
-Activity types cover proposed, accepted, declined, change requested, rescheduled, cancelled, completed, no-show, corrected outcomes and both interest responses. Metadata includes only allowlisted viewing identifiers, rounds, schedule timestamps and outcome revisions, never notes or profiles. Notifications can consume these events later without changing domain states.
+Activity types cover proposed, accepted, declined, change requested, rescheduled, cancelled, completed, no-show, corrected outcomes and both interest responses. Metadata includes only allowlisted viewing identifiers, rounds, schedule timestamps and outcome revisions, never notes or profiles. Current activity producers write transactional invalidation and selected durable notifications without making either authoritative for domain state.
 
 ## Validation
 

@@ -14,7 +14,11 @@ import { jest } from '@jest/globals';
 import { ViewingClock } from '../src/application-viewings/application-viewing.policy';
 import { AppModule } from '../src/app.module';
 import { ApplicationActivityService } from '../src/applications/application-activity.service';
+import { ApplicationLifecycleService } from '../src/applications/application-lifecycle.service';
+import { ProviderApplicationCurationService } from '../src/applications/provider-application-curation.service';
+import { ApplicationViewingService } from '../src/application-viewings/application-viewing.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { runSerializableTransaction } from '../src/prisma/run-serializable-transaction';
 import {
   ApplicationStatus,
   ApplicationActivityType,
@@ -214,7 +218,7 @@ describe('Application viewings E2E', () => {
     }
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_viewing_interests, application_viewing_outcomes, application_viewings`;
+    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
     await prisma.application.deleteMany();
     await prisma.listingReport.deleteMany();
     await prisma.savedListing.deleteMany();
@@ -668,7 +672,7 @@ describe('Application viewings E2E', () => {
       .expect(200);
     await applicant.agent
       .patch(path('applicant', `/${id}/interest`))
-      .send({ interest: 'NOT_INTERESTED' })
+      .send({ interest: 'NOT_INTERESTED', confirmWithdrawal: true })
       .expect(409);
     await provider.agent
       .patch(path('provider', `/${id}/correct-outcome`))
@@ -701,7 +705,7 @@ describe('Application viewings E2E', () => {
       .expect(200);
     await applicant.agent
       .patch(path('applicant', `/${id}/interest`))
-      .send({ interest: 'NOT_INTERESTED' })
+      .send({ interest: 'NOT_INTERESTED', confirmWithdrawal: true })
       .expect(409);
     const correction = {
       outcome: 'COMPLETED',
@@ -734,7 +738,7 @@ describe('Application viewings E2E', () => {
       .expect(409);
     await applicant.agent
       .patch(path('applicant', `/${id}/interest`))
-      .send({ interest: 'NOT_INTERESTED' })
+      .send({ interest: 'NOT_INTERESTED', confirmWithdrawal: true })
       .expect(200);
     expect(
       await prisma.applicationActivity.count({
@@ -881,9 +885,7 @@ describe('Application viewings E2E', () => {
       canCancel: false,
       canReschedule: false,
     });
-    expect(row.status).toBe(
-      results[0].status === 200 ? 'ACCEPTED' : 'PROPOSED',
-    );
+    expect(row.status).toBe('CANCELLED');
     const events = await prisma.applicationActivity.findMany({
       where: { applicationId },
     });
@@ -1001,4 +1003,286 @@ describe('Application viewings E2E', () => {
         .status,
     ).toBe('PROPOSED');
   });
+
+  describe.each(['reject', 'withdraw'] as const)(
+    'caller-owned %s transaction',
+    (operation) => {
+      it.each([false, true])(
+        'composes cancellation, lifecycle and promotion atomically (rollback=%s)',
+        async (rollback) => {
+          const id = await propose();
+          await accept(id);
+          // Fill all five ACTIVE slots, then add one eligible waiting applicant.
+          const candidates = [];
+          for (let index = 0; index < 5; index++) {
+            const candidate = await prisma.user.create({
+              data: {
+                name: 'Transaction fixture',
+                email: `${randomUUID()}@e2e.renyqo.test`,
+                passwordHash: 'unusable-test-hash',
+                acceptedTermsAt: new Date(),
+                acceptedPrivacyAt: new Date(),
+                applications: {
+                  create: {
+                    listingId,
+                    status:
+                      index < 4
+                        ? ApplicationStatus.ACTIVE
+                        : ApplicationStatus.WAITING,
+                    activeAt: index < 4 ? new Date() : null,
+                  },
+                },
+              },
+              include: { applications: true },
+            });
+            candidates.push(candidate.applications[0]);
+          }
+          const waiting = candidates[4];
+          const before = await prisma.application.findUniqueOrThrow({
+            where: { id: applicationId },
+          });
+          const applicationIds = [
+            applicationId,
+            ...candidates.map((a) => a.id),
+          ];
+          const expectedActivities = [
+            ApplicationActivityType.VIEWING_CANCELLED,
+            ApplicationActivityType.VIEWING_WORKFLOW_CLOSED,
+            operation === 'reject'
+              ? ApplicationActivityType.APPLICATION_REJECTED
+              : ApplicationActivityType.APPLICATION_WITHDRAWN,
+            ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+          ];
+          async function durableSnapshot() {
+            return {
+              activities: await prisma.applicationActivity.findMany({
+                where: { applicationId: { in: applicationIds } },
+                orderBy: { id: 'asc' },
+              }),
+              outbox: await prisma.outboxEvent.findMany({
+                where: { applicationId: { in: applicationIds } },
+                // Delivery metadata may change independently of the domain transaction.
+                select: {
+                  id: true,
+                  type: true,
+                  applicationId: true,
+                  payload: true,
+                  occurredAt: true,
+                },
+                orderBy: { id: 'asc' },
+              }),
+              notifications: await prisma.notification.findMany({
+                where: { applicationId: { in: applicationIds } },
+                orderBy: { id: 'asc' },
+              }),
+              applications: await prisma.application.findMany({
+                where: { id: { in: applicationIds } },
+                orderBy: { id: 'asc' },
+              }),
+              viewing: await prisma.applicationViewing.findUniqueOrThrow({
+                where: { id },
+              }),
+              workflow: await prisma.viewingWorkflow.findUnique({
+                where: { applicationId },
+              }),
+              positions: await prisma.applicationConsiderationPosition.findMany(
+                {
+                  where: { applicationId: { in: applicationIds } },
+                  orderBy: { applicationId: 'asc' },
+                },
+              ),
+              listingEvents: await prisma.listingEvent.findMany({
+                where: { listingId },
+                orderBy: { id: 'asc' },
+              }),
+            };
+          }
+          const beforeEffects = await durableSnapshot();
+          const viewings = app.get(ApplicationViewingService);
+          const curation = app.get(ProviderApplicationCurationService);
+          const lifecycle = app.get(ApplicationLifecycleService);
+          const activity = app.get(ApplicationActivityService);
+          const activities = jest.spyOn(activity, 'appendWithinTransaction');
+          const transactions = jest.spyOn(prisma, '$transaction');
+          const failure = new Error('outer command failed after promotion');
+          const attempts: object[] = [];
+          const command = runSerializableTransaction(prisma, async (tx) => {
+            attempts.push(tx);
+            const transactionCalls = transactions.mock.calls.length;
+            const activityOffset = activities.mock.calls.length;
+            await viewings.cancelWithinTransaction(
+              tx,
+              applicationId,
+              id,
+              provider.id,
+            );
+            if (operation === 'reject') {
+              await curation.rejectWithinTransaction(
+                tx,
+                applicationId,
+                provider.id,
+              );
+            } else {
+              await lifecycle.withdrawWithinTransaction(
+                tx,
+                applicationId,
+                applicant.id,
+              );
+            }
+            expect(
+              (
+                await tx.application.findUniqueOrThrow({
+                  where: { id: waiting.id },
+                })
+              ).status,
+            ).toBe(ApplicationStatus.ACTIVE);
+            expect(transactions.mock.calls.length).toBe(transactionCalls);
+            const attemptActivities =
+              activities.mock.calls.slice(activityOffset);
+            // Compare primitives so a failed assertion never formats Prisma proxies.
+            expect(attemptActivities.map(([, input]) => input.type)).toEqual(
+              expectedActivities,
+            );
+            expect(
+              attemptActivities.map(([activityTx]) => activityTx === tx),
+            ).toEqual([true, true, true, true]);
+            if (rollback) throw failure;
+          });
+          if (rollback) await expect(command).rejects.toBe(failure);
+          else await command;
+
+          // No helper opens its own transaction, and every activity uses the same tx.
+          expect(transactions.mock.calls.length).toBe(attempts.length);
+          expect(
+            transactions.mock.calls.map(
+              ([, options]) => options?.isolationLevel,
+            ),
+          ).toEqual(attempts.map(() => 'Serializable'));
+          const activityTransactions = activities.mock.calls.map(([tx]) => tx);
+          expect(
+            activityTransactions.every((tx) => attempts.includes(tx)),
+          ).toBe(true);
+          expect(activityTransactions[0] !== prisma).toBe(true);
+          const afterEffects = await durableSnapshot();
+          if (rollback) {
+            // Includes all applications, ordering, closure, history and durable side effects.
+            expect(afterEffects).toEqual(beforeEffects);
+          } else {
+            const oldActivityIds = new Set(
+              beforeEffects.activities.map((a) => a.id),
+            );
+            expect(
+              afterEffects.activities
+                .filter((a) => !oldActivityIds.has(a.id))
+                .map((a) => a.type)
+                .sort(),
+            ).toEqual([...expectedActivities].sort());
+            expect(afterEffects.workflow).toMatchObject({
+              state: 'CLOSED',
+              closureReason:
+                operation === 'reject'
+                  ? 'APPLICATION_REJECTED'
+                  : 'APPLICATION_WITHDRAWN',
+            });
+            const oldOutboxIds = new Set(
+              beforeEffects.outbox.map((event) => event.id),
+            );
+            expect(
+              afterEffects.outbox
+                .filter((event) => !oldOutboxIds.has(event.id))
+                .map((event) => `${event.applicationId}:${event.type}`)
+                .sort(),
+            ).toEqual(
+              [
+                `${applicationId}:application.viewing.changed`,
+                `${applicationId}:application.lifecycle.changed`,
+                `${waiting.id}:application.lifecycle.changed`,
+              ].sort(),
+            );
+          }
+          expect(
+            (
+              await prisma.applicationViewing.findUniqueOrThrow({
+                where: { id },
+              })
+            ).status,
+          ).toBe(rollback ? 'ACCEPTED' : 'CANCELLED');
+          const after = await prisma.application.findUniqueOrThrow({
+            where: { id: applicationId },
+          });
+          if (rollback) expect(after).toEqual(before);
+          else
+            expect(after.status).toBe(
+              operation === 'reject'
+                ? ApplicationStatus.REJECTED
+                : ApplicationStatus.WITHDRAWN,
+            );
+          expect(
+            (
+              await prisma.application.findUniqueOrThrow({
+                where: { id: waiting.id },
+              })
+            ).status,
+          ).toBe(
+            rollback ? ApplicationStatus.WAITING : ApplicationStatus.ACTIVE,
+          );
+          expect(
+            await prisma.application.count({
+              where: { listingId, status: ApplicationStatus.ACTIVE },
+            }),
+          ).toBe(5);
+          expect(
+            await prisma.applicationActivity.count({
+              where: {
+                applicationId: { in: [applicationId, waiting.id] },
+                type: {
+                  in: [
+                    ApplicationActivityType.VIEWING_CANCELLED,
+                    ApplicationActivityType.VIEWING_WORKFLOW_CLOSED,
+                    ApplicationActivityType.APPLICATION_REJECTED,
+                    ApplicationActivityType.APPLICATION_WITHDRAWN,
+                    ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,
+                  ],
+                },
+              },
+            }),
+          ).toBe(rollback ? 0 : 4);
+          expect(
+            await prisma.listingEvent.count({ where: { applicationId } }),
+          ).toBe(!rollback && operation === 'reject' ? 1 : 0);
+        },
+      );
+
+      it('rolls back prior work when the lifecycle helper rejects ownership', async () => {
+        const id = await propose();
+        const command = runSerializableTransaction(prisma, async (tx) => {
+          await app
+            .get(ApplicationViewingService)
+            .cancelWithinTransaction(tx, applicationId, id, provider.id);
+          if (operation === 'reject') {
+            await app
+              .get(ProviderApplicationCurationService)
+              .rejectWithinTransaction(tx, applicationId, applicant.id);
+          } else {
+            await app
+              .get(ApplicationLifecycleService)
+              .withdrawWithinTransaction(tx, applicationId, provider.id);
+          }
+        });
+        await expect(command).rejects.toMatchObject({ status: 404 });
+        expect(
+          (await prisma.applicationViewing.findUniqueOrThrow({ where: { id } }))
+            .status,
+        ).toBe('PROPOSED');
+        expect(
+          await prisma.applicationActivity.count({
+            where: {
+              applicationId,
+              type: ApplicationActivityType.VIEWING_CANCELLED,
+            },
+          }),
+        ).toBe(0);
+      });
+    },
+  );
 });

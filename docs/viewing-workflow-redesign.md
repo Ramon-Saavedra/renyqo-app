@@ -1,0 +1,41 @@
+# Viewing workflow redesign roadmap
+
+Phases 1–9 are implemented. This document preserves their approved staged scope. Current deployment/schema rules are in [rollout finalization](viewing-workflow-rollout.md); the linked phase documents describe the CURRENT workflow. [Application Viewings](application-viewings.md) preserves the legacy endpoint contract.
+
+## Phase 1: transaction prerequisites
+
+Provider rejection and applicant withdrawal now expose `rejectWithinTransaction(tx, applicationId, providerId)` and `withdrawWithinTransaction(tx, applicationId, applicantId)`. Existing HTTP commands still open Serializable transactions and delegate to those same operations. Ownership/privacy checks, listing-before-application locks, provider cooldown, history and waiting promotion remain inside the operations.
+
+Existing provider viewing cancellation exposes `cancelWithinTransaction(tx, applicationId, viewingId, providerId)`. It retains application authorization, active-process gating, current-round capability checks, retry behavior and transactional activity. This is the existing provider cancellation operation, not an unrestricted system/lifecycle closure API. It must run before rejection/withdrawal if composed with them, because cancellation requires an active application. Automatic lifecycle closure will be added in Phase 4.
+
+The caller owns the Serializable transaction, retries and commit/rollback. Helpers use only the supplied transaction and never start or commit another one. Exceptions must propagate to the transaction owner. Do not acquire an application/profile lock before a listing lock; a multi-listing caller must establish a consistent listing lock order before composing operations. Modules export the existing services for composition without adding endpoints or dependency cycles. The applications module must not import the viewing module (which already imports applications); future shared closure persistence must live below those orchestration modules.
+
+No schema, state, deadline, queue, notification, realtime or automatic lifecycle behavior changes are included in Phase 1.
+
+## Approved roadmap after Phase 1
+
+Phase 2 model, migration mapping, compatibility boundary and database invariants are documented in [Viewing workflow model](viewing-workflow-model.md). Phase 3 commands, contracts, cutover and rollout restrictions are documented in [Viewing workflow commands](viewing-workflow-commands.md). Phase 4 lifecycle closure, restore, decisions and timeout support are documented in [Viewing lifecycle integration](viewing-workflow-lifecycle.md). Phase 5 ordering, applicant absence and correction are documented in [ACTIVE consideration priority](active-consideration-priority.md). Phase 6 contracts, attention, time boundaries and compatibility are documented in [Viewing read models](viewing-workflow-read-models.md). Phase 7 events, transactional producers, privacy routing and deployment constraints are documented in [Viewing realtime invalidation](viewing-workflow-realtime.md). Phase 8 durable deadlines, races and operations are documented in [Viewing expiry](viewing-workflow-expiry.md). Phase 9 durable inbox, event policy and rollout review are documented in [Durable notifications and rollout](viewing-workflow-notifications.md).
+
+Each phase requires explicit approval before proceeding.
+
+1. **Transaction prerequisites:** reusable caller-owned transaction operations and composition/rollback tests.
+2. **Model and additive migration:** versioned workflow, separate confirmed appointment and pending proposal, immutable rounds, attributed outcomes/cancellation, deadlines and ACTIVE consideration order. Preserve historical identifiers, activities and outcome correction; never infer attribution or retrospectively penalize legacy records.
+3. **Commands and concurrency:** structured alternative proposals, accept/reject/counterproposal, applicant cancellation, exact target IDs, idempotency and expected workflow revision. Retain confirmed commitments until a replacement is accepted.
+4. **Lifecycle and decisions:** automatic closure on process termination; restore never revives old appointments. Explicit applicant disinterest atomically withdraws the application after confirmation. Provider non-selection uses actual `NOT_SELECTED` rejection. Timed-out applicant interest uses the system transition below.
+5. **ACTIVE priority:** applicant absence moves to the end of ACTIVE consideration without WAITING demotion, slot release or global reputation. Outcome correction reconciles the attributable ordering consequence without undoing later legitimate changes.
+6. **Read models and attention:** authoritative workflow projection, action ownership/capabilities, deadlines/revalidation and precise application/workflow/proposal/appointment deep-link targets across existing cards/workspaces/topbar.
+7. **Outbox/realtime:** application-scoped invalidation without a mandatory conversation ID. Lifecycle invalidation refreshes chat availability, effective reply permissions, unread relevance, attention, workspace/cards and viewing. Reject/restore preserves unread messages and stored reply settings. HTTP remains authoritative; handle reconnect and multi-instance delivery.
+8. **Expiry:** durable deadline processing, exact-once domain effects under transactional retries, immediate deadline enforcement by reads/commands, and persisted expiry history/invalidation.
+9. **Durable viewing notifications:** persist authorized recipient notifications in the domain transaction, with stable source-event deduplication, typed deep-link targets and read/dismissal state. Notifications remain available after offline periods. Pending attention resolves independently of notification/history retention. Cover invitations, alternative responses, expiry, cancellations, attendance, interest and provider decisions; respect WAITING/privacy and later access changes. Socket events invalidate the notification inbox. External email/push delivery is optional and separate from this required in-app durability.
+10. **Operational compatibility and rollout checklist:** reviewed with Phase 9 in [Durable notifications and rollout](viewing-workflow-notifications.md). Backend durability is implemented; frontend integration, target-database migration review and actual deployment/legacy-client retirement remain operational rollout gates. This task stops after Phase 9.
+
+## Approved timing and timeout correction
+
+- Normal invitation: 12-hour response window and at least 18 hours of lead time.
+- Short-notice invitations are explicit, with a disclosed shorter response deadline before appointment start.
+- Normal applicant rescheduling stops six hours before the confirmed appointment. A pending replacement never silently removes that appointment.
+- Post-viewing interest: 48 elapsed hours from recorded completion. No response closes the interest request **and removes the application from active consideration**; it must not leave the application ACTIVE indefinitely.
+
+The safest existing terminal status for that timeout is `REJECTED`, with actor `SYSTEM` and a new dedicated reason such as `POST_VIEWING_RESPONSE_EXPIRED`. None of the current reasons (`NOT_SELECTED`, `LISTING_RENTED`, `PROFILE_NO_LONGER_ELIGIBLE`) describes non-response. Add the reason in the model/migration phase; never reuse voluntary `WITHDRAWN` or provider `NOT_SELECTED`. At expiry, verify the exact still-pending interest request and current application state under locks, then atomically record expiry, reject, close future commitments, release/promote capacity and write history/outbox/notifications. An already terminal application is not overwritten. Define admission/restore projections for this reason explicitly; do not inherit the provider rejection's 720-hour cooldown or provider actor attribution. The proposed default is fresh eligible reapplication without that cooldown, consistent with other non-provider system rejection.
+
+Phase 8 processes only the latest completed viewing interest request. A newer completion closes earlier pending requests; correction from absence to completion starts a new 48-hour request at recording time. A stale older request cannot reject an application after a newer valid response.

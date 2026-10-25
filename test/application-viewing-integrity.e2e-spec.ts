@@ -54,7 +54,7 @@ describe('Application viewing PostgreSQL integrity', () => {
   afterEach(async () => {
     await client.query('ROLLBACK');
     await client.query(
-      'TRUNCATE application_viewing_interests, application_viewing_outcomes, application_viewings',
+      'TRUNCATE application_no_show_consequences, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings',
     );
     await client.query('DELETE FROM applications WHERE id=$1', [applicationId]);
     await client.query('DELETE FROM listings WHERE id=$1', [listingId]);
