@@ -3,6 +3,10 @@ import type {
   ApplicationAttentionSummaryDto,
   AttentionTotalsDto,
 } from '../../application-attention/dto/attention-response.dto';
+import {
+  considerationSummary,
+  type ApplicationConsiderationSummary,
+} from '../../applications/application-consideration-read';
 import type { CompactConversationSummaryDto } from '../../application-conversation/dto/compact-conversation-summary.dto';
 import type { ApplicationDocumentReadService } from '../../application-documents/application-document-read.service';
 import type { ApplicationViewingReadService } from '../../application-viewings/application-viewing-read.service';
@@ -80,6 +84,8 @@ export class ReadModelPageDto<T> {
 }
 
 export class ProviderApplicationCardDto {
+  readonly viewing: ApplicationAttentionSummaryDto['viewing'];
+  readonly consideration: ApplicationConsiderationSummary;
   readonly applicationId: string;
   readonly status: ReadModelApplication['status'];
   readonly activeAt: Date | null;
@@ -100,8 +106,11 @@ export class ProviderApplicationCardDto {
       | 'applicant'
     >,
     readonly attention: ApplicationAttentionSummaryDto,
+    consideration: ApplicationConsiderationSummary = considerationSummary(),
   ) {
     this.applicationId = application.id;
+    this.viewing = attention.viewing;
+    this.consideration = consideration;
     this.status = application.status;
     this.activeAt = application.activeAt;
     this.submittedAt = application.createdAt;
@@ -234,6 +243,7 @@ export class ProviderApplicationWorkspaceDto extends ApplicationWorkspaceDto {
   constructor(
     workspace: ApplicationWorkspaceDto,
     readonly applicant: CompactApplicantDto,
+    readonly consideration: ApplicationConsiderationSummary,
   ) {
     super(
       workspace.asOf,

@@ -1,4 +1,10 @@
+import {
+  ApplicationOutboxProducer,
+  applicationInvalidationType,
+} from '../outbox/application-outbox.producer';
 import { toPublicActivityPayload } from './application-activity.policy';
+import { randomUUID } from 'node:crypto';
+import { NotificationProducer } from '../notifications/notification-producer.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ApplicationActivity, Prisma } from '../generated/prisma/client';
 import {
@@ -8,10 +14,22 @@ import {
   ApplicationRejectionReason,
   ApplicationStatus,
   ApplicationDocumentType,
+  ViewingCancellationReason,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type ApplicationActivityMetadata = {
+  viewingLifecycleContext?: 'RESTORE_CLEANUP';
+  counterproposal?: boolean;
+  providerConsideration?: import('../generated/prisma/enums').ViewingProviderConsideration;
+  viewingClosureReason?: import('../generated/prisma/enums').ViewingClosureReason;
+  workflowId?: string;
+  workflowRevision?: number;
+  proposalId?: string;
+  previousProposalId?: string;
+  appointmentId?: string;
+  previousAppointmentId?: string;
+  cancellationReason?: ViewingCancellationReason;
   viewingId?: string;
   viewingRound?: number;
   previousViewingId?: string;
@@ -49,20 +67,37 @@ type PublicActivityAudience =
 
 @Injectable()
 export class ApplicationActivityService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly invalidation: ApplicationOutboxProducer,
+    private readonly notifications: NotificationProducer,
+  ) {}
 
   append(input: AppendApplicationActivityInput): Promise<ApplicationActivity> {
+    if (applicationInvalidationType(input.type))
+      return this.prisma.$transaction((tx) =>
+        this.appendWithinTransaction(tx, input),
+      );
     return this.create(this.prisma, input);
   }
 
-  appendWithinTransaction(
+  async appendWithinTransaction(
     tx: Prisma.TransactionClient,
     input: AppendApplicationActivityInput,
   ): Promise<ApplicationActivity> {
-    return this.create(tx, input);
+    const row = await this.create(tx, input);
+    await this.invalidation.activity(tx, {
+      ...input,
+      occurredAt: row.occurredAt,
+    });
+    await this.notifications.activity(tx, row.id, {
+      ...input,
+      occurredAt: row.occurredAt,
+    });
+    return row;
   }
 
-  appendManyWithinTransaction(
+  async appendManyWithinTransaction(
     tx: Prisma.TransactionClient,
     inputs: AppendApplicationActivityInput[],
   ): Promise<Prisma.BatchPayload> {
@@ -70,8 +105,15 @@ export class ApplicationActivityService {
       return Promise.resolve({ count: 0 });
     }
 
-    return tx.applicationActivity.createMany({
-      data: inputs.map((input) => ({
+    const ids = inputs.map(() => randomUUID());
+    const occurredAt = new Date();
+    const events = inputs.map((input) => ({
+      ...input,
+      occurredAt: input.occurredAt ?? occurredAt,
+    }));
+    const result = await tx.applicationActivity.createMany({
+      data: events.map((input, index) => ({
+        id: ids[index],
         applicationId: input.applicationId,
         type: input.type,
         actorUserId: input.actorUserId,
@@ -81,6 +123,19 @@ export class ApplicationActivityService {
         payload: input.metadata,
       })),
     });
+    for (const [index, input] of events.entries()) {
+      await this.invalidation.activity(tx, input);
+      await this.notifications.activity(tx, ids[index], input);
+    }
+    return result;
+  }
+
+  lifecycleChangedForListingWithinTransaction(
+    tx: Prisma.TransactionClient,
+    listingId: string,
+    occurredAt: Date,
+  ) {
+    return this.invalidation.listing(tx, listingId, occurredAt);
   }
 
   findForAudience(

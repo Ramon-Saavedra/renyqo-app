@@ -1,4 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  activeConsiderationOrder,
+  considerationSummary,
+  ApplicationConsiderationReadService,
+} from './application-consideration-read';
 import type { ApplicantProfile, Application } from '../generated/prisma/client';
 import {
   ApplicationStatus,
@@ -57,6 +62,7 @@ export class ApplicationProcessQueryService {
     private readonly prisma: PrismaService,
     private readonly admissionService: ApplicationAdmissionService,
     private readonly recentExits: ProviderRecentExitsQueryService,
+    private readonly consideration: ApplicationConsiderationReadService,
   ) {}
 
   async findAdmissionForListings(
@@ -102,7 +108,12 @@ export class ApplicationProcessQueryService {
             coldRent: true,
             images: {
               select: { secureUrl: true, isCover: true, position: true },
-              orderBy: { position: 'asc' },
+              orderBy: [
+                { isCover: 'desc' },
+                { position: 'asc' },
+                { id: 'asc' },
+              ],
+              take: 1,
             },
           },
         },
@@ -190,62 +201,73 @@ export class ApplicationProcessQueryService {
     listingId: string,
     providerId: string,
   ): Promise<ProviderActiveApplicationRecord[]> {
-    const listing = await this.prisma.listing.findFirst({
-      where: { id: listingId, providerId },
-      select: { id: true, petsPolicy: true, smokingPolicy: true },
-    });
+    return this.prisma.$transaction(
+      async (tx) => {
+        const listing = await tx.listing.findFirst({
+          where: { id: listingId, providerId },
+          select: { id: true, petsPolicy: true, smokingPolicy: true },
+        });
 
-    if (!listing) {
-      throw new NotFoundException('Listing not found');
-    }
+        if (!listing) {
+          throw new NotFoundException('Listing not found');
+        }
 
-    const applications = await this.prisma.application.findMany({
-      where: {
-        listingId,
-        status: ApplicationStatus.ACTIVE,
-      },
-      orderBy: [{ activeAt: 'asc' }, { id: 'asc' }],
-      take: ACTIVE_APPLICATIONS_LIMIT,
-      select: {
-        id: true,
-        listingId: true,
-        status: true,
-        activeAt: true,
-        applicant: {
+        const applications = await tx.application.findMany({
+          where: {
+            listingId,
+            status: ApplicationStatus.ACTIVE,
+          },
+          orderBy: activeConsiderationOrder,
+          take: ACTIVE_APPLICATIONS_LIMIT,
           select: {
-            name: true,
-            profile: {
+            id: true,
+            listingId: true,
+            status: true,
+            activeAt: true,
+            applicant: {
               select: {
-                peopleCount: true,
-                introduction: true,
-                hasPets: true,
-                isSmoker: true,
+                name: true,
+                profile: {
+                  select: {
+                    peopleCount: true,
+                    introduction: true,
+                    hasPets: true,
+                    isSmoker: true,
+                  },
+                },
               },
             },
           },
-        },
-      },
-    });
+        });
 
-    return applications.map((application) => ({
-      id: application.id,
-      listingId: application.listingId,
-      status: application.status,
-      activeAt: application.activeAt,
-      applicant: {
-        name: application.applicant.name,
-        profile: application.applicant.profile
-          ? {
-              peopleCount: application.applicant.profile.peopleCount,
-              introduction: application.applicant.profile.introduction,
-            }
-          : null,
+        const considerations = await this.consideration.batch(
+          tx,
+          applications.map((row) => row.id),
+        );
+        return applications.map((application) => ({
+          id: application.id,
+          listingId: application.listingId,
+          status: application.status,
+          activeAt: application.activeAt,
+          consideration:
+            considerations.get(application.id) ?? considerationSummary(),
+          applicant: {
+            name: application.applicant.name,
+            profile: application.applicant.profile
+              ? {
+                  peopleCount: application.applicant.profile.peopleCount,
+                  introduction: application.applicant.profile.introduction,
+                }
+              : null,
+          },
+          warnings: computeProviderActiveApplicantWarnings(
+            application.applicant.profile,
+            listing,
+          ),
+        }));
       },
-      warnings: computeProviderActiveApplicantWarnings(
-        application.applicant.profile,
-        listing,
-      ),
-    }));
+      { isolationLevel: 'RepeatableRead' },
+    );
   }
 
   async findExitedByListing(

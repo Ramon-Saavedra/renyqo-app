@@ -20,6 +20,7 @@ import {
   ListingStatus,
 } from '../generated/prisma/enums';
 import { ApplicationActivityService } from '../applications/application-activity.service';
+import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
@@ -74,6 +75,7 @@ export class ListingsService {
     private readonly listingInputRules: ListingInputRules,
     private readonly listingResponseMapper: ListingResponseMapper,
     private readonly activityService: ApplicationActivityService,
+    private readonly viewingLifecycle: ViewingLifecycleService,
   ) {}
 
   async create(
@@ -269,6 +271,13 @@ export class ListingsService {
         );
       }
 
+      await this.viewingLifecycle.closeListingWithinTransaction(
+        tx,
+        id,
+        'LISTING_RENTED',
+        providerId,
+        dto.selectedApplicationId,
+      );
       const nonSelectedApplications = await tx.application.findMany({
         where: {
           listingId: id,
@@ -331,10 +340,16 @@ export class ListingsService {
         },
       });
 
-      return tx.listing.update({
+      const result = await tx.listing.update({
         where: { id },
         data: { status: ListingStatus.RENTED, rentedAt: new Date() },
       });
+      await this.activityService.lifecycleChangedForListingWithinTransaction(
+        tx,
+        id,
+        new Date(),
+      );
+      return result;
     });
   }
 
@@ -442,27 +457,52 @@ export class ListingsService {
       throw new ConflictException(conflictMessage);
     }
 
-    const updated = await this.prisma.listing.updateMany({
-      where: {
-        id: listing.id,
-        providerId,
-        status: listing.status,
-        ...(data.publishedAt !== undefined ? { publishedAt: null } : {}),
-      },
-      data,
-    });
-
-    if (updated.count !== 1) {
-      const current = await this.prisma.listing.findFirst({
-        where: { id: listing.id, providerId },
+    return runSerializableTransaction(this.prisma, async (tx) => {
+      await tx.$queryRaw`SELECT id FROM listings WHERE id=${listing.id}::uuid FOR UPDATE`;
+      const updated = await tx.listing.updateMany({
+        where: {
+          id: listing.id,
+          providerId,
+          status: listing.status,
+          ...(data.publishedAt !== undefined ? { publishedAt: null } : {}),
+        },
+        data,
       });
-      if (!current) {
-        throw new NotFoundException('Listing not found');
-      }
-      throw new ConflictException(conflictMessage);
-    }
 
-    return this.findOneByProvider(listing.id, providerId);
+      if (updated.count !== 1) {
+        const current = await tx.listing.findFirst({
+          where: { id: listing.id, providerId },
+        });
+        if (!current) {
+          throw new NotFoundException('Listing not found');
+        }
+        throw new ConflictException(conflictMessage);
+      }
+
+      if (
+        data.status === ListingStatus.ARCHIVED ||
+        data.status === ListingStatus.DRAFT
+      )
+        await this.viewingLifecycle.closeListingWithinTransaction(
+          tx,
+          listing.id,
+          data.status === ListingStatus.ARCHIVED
+            ? 'LISTING_ARCHIVED'
+            : 'LISTING_UNPUBLISHED',
+          providerId,
+        );
+      const result = await tx.listing.findFirst({
+        where: { id: listing.id, providerId },
+        include: { images: { orderBy: { position: 'asc' } } },
+      });
+      if (!result) throw new NotFoundException('Listing not found');
+      await this.activityService.lifecycleChangedForListingWithinTransaction(
+        tx,
+        listing.id,
+        new Date(),
+      );
+      return result;
+    });
   }
 
   private async deleteUploadedAssetAfterFailure(

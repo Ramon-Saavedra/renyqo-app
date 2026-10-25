@@ -27,6 +27,7 @@ import { ApplicationWaitingPromotionService } from './application-waiting-promot
 import { ApplicationActivityService } from './application-activity.service';
 import { providerCurationAllowed } from './application-process.policy';
 import { ApplicationAdmissionService } from './application-admission.service';
+import { ViewingLifecycleService } from './viewing-lifecycle.service';
 
 @Injectable()
 export class ProviderApplicationCurationService {
@@ -37,92 +38,111 @@ export class ProviderApplicationCurationService {
     private readonly promotionService: ApplicationWaitingPromotionService,
     private readonly activityService: ApplicationActivityService,
     private readonly admissionService: ApplicationAdmissionService,
+    private readonly viewingLifecycle: ViewingLifecycleService,
   ) {}
 
   async reject(
     applicationId: string,
     providerId: string,
   ): Promise<Application> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const application = await tx.application.findUnique({
-        where: { id: applicationId },
-        include: {
-          listing: { select: { id: true, providerId: true, status: true } },
-        },
-      });
+    return runSerializableTransaction(this.prisma, (tx) =>
+      this.rejectWithinTransaction(tx, applicationId, providerId),
+    );
+  }
 
-      if (!application) {
-        throw new NotFoundException('Application not found');
-      }
+  /** Joins a caller-owned Serializable transaction; authorization, locks and promotion stay here. */
+  async rejectWithinTransaction(
+    tx: ApplicationTransactionClient,
+    applicationId: string,
+    providerId: string,
+    postViewingDecision = false,
+  ): Promise<Application> {
+    const application = await tx.application.findUnique({
+      where: { id: applicationId },
+      include: {
+        listing: { select: { id: true, providerId: true, status: true } },
+      },
+    });
 
-      if (application.listing.providerId !== providerId) {
-        throw new NotFoundException('Application not found');
-      }
+    if (!application) {
+      throw new NotFoundException('Application not found');
+    }
 
-      if (application.status === ApplicationStatus.WAITING) {
-        throw new NotFoundException('Application not found');
-      }
+    if (application.listing.providerId !== providerId) {
+      throw new NotFoundException('Application not found');
+    }
 
-      if (application.status !== ApplicationStatus.ACTIVE) {
-        throw new ConflictException('This application cannot be rejected');
-      }
+    if (application.status === ApplicationStatus.WAITING) {
+      throw new NotFoundException('Application not found');
+    }
 
-      await this.transactionService.lockListing(tx, application.listingId);
-      await this.transactionService.lockApplication(tx, applicationId);
-      const now = new Date();
-      await this.assertProviderCurationCooldown(tx, applicationId, now);
+    if (application.status !== ApplicationStatus.ACTIVE) {
+      throw new ConflictException('This application cannot be rejected');
+    }
 
-      const rejected = await tx.application.update({
-        where: { id: applicationId },
-        data: {
-          status: ApplicationStatus.REJECTED,
-          rejectedAt: now,
-          publicReason: ApplicationRejectionReason.NOT_SELECTED,
-        },
-      });
+    await this.transactionService.lockListing(tx, application.listingId);
+    await this.transactionService.lockApplication(tx, applicationId);
+    const now = new Date();
+    await this.assertProviderCurationCooldown(tx, applicationId, now);
 
-      await this.activityService.appendWithinTransaction(tx, {
+    await this.viewingLifecycle.closeWithinTransaction(
+      tx,
+      applicationId,
+      'APPLICATION_REJECTED',
+      ApplicationActivityActorType.PROVIDER,
+      providerId,
+      { consideration: postViewingDecision ? 'DO_NOT_CONTINUE' : undefined },
+    );
+    const rejected = await tx.application.update({
+      where: { id: applicationId },
+      data: {
+        status: ApplicationStatus.REJECTED,
+        rejectedAt: now,
+        publicReason: ApplicationRejectionReason.NOT_SELECTED,
+      },
+    });
+
+    await this.activityService.appendWithinTransaction(tx, {
+      applicationId,
+      type: ApplicationActivityType.APPLICATION_REJECTED,
+      actorUserId: providerId,
+      actorType: ApplicationActivityActorType.PROVIDER,
+      visibility: ApplicationActivityVisibility.BOTH,
+      occurredAt: now,
+      metadata: {
+        fromStatus: ApplicationStatus.ACTIVE,
+        toStatus: ApplicationStatus.REJECTED,
+        reason: ApplicationRejectionReason.NOT_SELECTED,
+      },
+    });
+
+    await tx.listingEvent.create({
+      data: {
+        listingId: application.listingId,
         applicationId,
-        type: ApplicationActivityType.APPLICATION_REJECTED,
+        type: ListingEventType.REJECTED_BY_PROVIDER,
+        source: ListingEventSource.PROVIDER,
         actorUserId: providerId,
-        actorType: ApplicationActivityActorType.PROVIDER,
-        visibility: ApplicationActivityVisibility.BOTH,
-        occurredAt: now,
-        metadata: {
+        reason: ApplicationRejectionReason.NOT_SELECTED,
+        payload: {
           fromStatus: ApplicationStatus.ACTIVE,
           toStatus: ApplicationStatus.REJECTED,
-          reason: ApplicationRejectionReason.NOT_SELECTED,
         },
-      });
-
-      await tx.listingEvent.create({
-        data: {
-          listingId: application.listingId,
-          applicationId,
-          type: ListingEventType.REJECTED_BY_PROVIDER,
-          source: ListingEventSource.PROVIDER,
-          actorUserId: providerId,
-          reason: ApplicationRejectionReason.NOT_SELECTED,
-          payload: {
-            fromStatus: ApplicationStatus.ACTIVE,
-            toStatus: ApplicationStatus.REJECTED,
-          },
-          occurredAt: now,
-        },
-      });
-
-      if (application.listing.status === ListingStatus.PUBLISHED) {
-        const listing = await tx.listing.findUnique({
-          where: { id: application.listingId },
-        });
-
-        if (listing) {
-          await this.promotionService.promoteWithinTransaction(tx, listing);
-        }
-      }
-
-      return rejected;
+        occurredAt: now,
+      },
     });
+
+    if (application.listing.status === ListingStatus.PUBLISHED) {
+      const listing = await tx.listing.findUnique({
+        where: { id: application.listingId },
+      });
+
+      if (listing) {
+        await this.promotionService.promoteWithinTransaction(tx, listing);
+      }
+    }
+
+    return rejected;
   }
 
   async restore(
@@ -202,6 +222,11 @@ export class ProviderApplicationCurationService {
       });
       const restoreToActive = activeCount < ACTIVE_APPLICATIONS_LIMIT;
 
+      await this.viewingLifecycle.restoreWithinTransaction(
+        tx,
+        applicationId,
+        providerId,
+      );
       let restored: Application;
       if (restoreToActive) {
         restored = await tx.application.update({

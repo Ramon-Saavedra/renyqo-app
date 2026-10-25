@@ -41,6 +41,7 @@ export type DocumentAttentionFact = {
 };
 
 export type ViewingAttentionFact = {
+  workflowTarget?: import('../application-viewings/viewing-workflow-projection').ViewingWorkflowProjection['obligations'][number]['target'];
   viewingId: string;
   nextAction: ViewingNextAction;
   pendingSince: Date;
@@ -54,6 +55,10 @@ const viewingActions: Partial<
     { audience: AttentionAudience; type: ViewingPendingActionType }
   >
 > = {
+  PROVIDER_DECIDE_CONSIDERATION: {
+    audience: 'provider',
+    type: Action.DECIDE_VIEWING_CONSIDERATION,
+  },
   APPLICANT_RESPOND_TO_VIEWING: {
     audience: 'applicant',
     type: Action.RESPOND_TO_VIEWING,
@@ -130,7 +135,7 @@ export class ApplicationPendingActionService {
         candidates.push({
           dto: new ViewingPendingActionDto(
             action.type,
-            new ViewingTargetDto(viewing.viewingId),
+            new ViewingTargetDto(viewing.viewingId, viewing.workflowTarget),
           ),
           pendingSince: viewing.pendingSince,
           target: viewing.viewingId,
