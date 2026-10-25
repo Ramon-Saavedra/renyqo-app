@@ -21,6 +21,7 @@ import { ApplicationViewingQueryService } from './application-viewing-query.serv
 import {
   ApplicationViewingPolicy,
   ViewingClock,
+  legacyInterestClosedByLifecycle,
 } from './application-viewing.policy';
 import type { CorrectViewingOutcomeDto } from './dto/viewing-input.dto';
 import type { ViewingResponseDto } from './dto/viewing-response.dto';
@@ -148,9 +149,13 @@ export class ApplicationViewingOutcomeService {
       }
       const workflow = await tx.viewingWorkflow.findUnique({
         where: { applicationId },
-        select: { state: true },
+        select: { state: true, closedAt: true, updatedAt: true },
       });
-      if (workflow?.state === 'CLOSED')
+      const appointment = await tx.viewingAppointment.findUnique({
+        where: { viewingId },
+        select: { interestState: true },
+      });
+      if (legacyInterestClosedByLifecycle(workflow, { ...row, appointment }))
         throw new ConflictException(
           'Post-viewing interest was closed by the application lifecycle',
         );

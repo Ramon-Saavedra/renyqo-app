@@ -458,20 +458,26 @@ describe('authoritative viewing projection', () => {
         mode: 'LEGACY',
         state: 'CLOSED',
         closureReason: 'APPLICATION_REJECTED',
-        closedAt: now,
+        closedAt: end,
         confirmedAppointmentId: null,
       });
+      const liveStart = new Date('2027-01-05T10:00:00Z');
+      const liveEnd = new Date('2027-01-05T10:30:00Z');
       const live = appointment({
         id: 'new',
         round: 2,
         status,
+        startsAt: liveStart,
+        endsAt: liveEnd,
         appointment: null,
         acceptedAt:
           status === 'ACCEPTED' || status === 'OUTCOME_PENDING' ? now : null,
       });
       s.appointments.push(live);
       const at =
-        status === 'PROPOSED' || status === 'CHANGE_REQUESTED' ? now : end;
+        status === 'PROPOSED' || status === 'CHANGE_REQUESTED'
+          ? new Date('2027-01-04T10:00:00Z')
+          : liveEnd;
       expect(project(s, at).obligations.map((o) => o.action)).toEqual([action]);
       expect(project(s, at, 'provider', false).obligations).toEqual([]);
       const reads = new ApplicationViewingReadService(
@@ -495,6 +501,108 @@ describe('authoritative viewing projection', () => {
         expect(summary.latest?.capabilities.canMarkCompleted).toBe(true);
     },
   );
+
+  it.each([false, true])(
+    'allows the new completed LEGACY visit after closure (responded=%s)',
+    (responded) => {
+      const s = completed();
+      s.workflow = workflow({
+        mode: 'LEGACY',
+        state: 'CLOSED',
+        closedAt: now,
+        closureReason: 'APPLICATION_REJECTED',
+        confirmedAppointmentId: null,
+      });
+      s.appointments[0].appointment = null;
+      if (responded)
+        s.appointments[0].interest = {
+          id: 'response',
+          viewingId: 'appointment',
+          interest: 'STILL_INTERESTED',
+          respondedAt: end,
+        };
+      const p = project(s, end, 'applicant');
+      expect(p.applicantInterest).toMatchObject({
+        state: responded ? 'STILL_INTERESTED' : 'LEGACY_UNANSWERED',
+        deadlineAt: null,
+      });
+      expect(p.obligations.map((o) => o.action)).toEqual(
+        responded ? [] : ['APPLICANT_CONFIRM_POST_VIEWING_INTEREST'],
+      );
+      const reads = new ApplicationViewingReadService(
+        new ApplicationViewingPolicy(),
+      );
+      expect(
+        reads.summary(s.appointments, true, 1, end, 'applicant', s)
+          .pendingInterest?.capabilities.canSubmitInterest ?? false,
+      ).toBe(!responded);
+      expect(project(s, end, 'applicant', false).obligations).toEqual([]);
+    },
+  );
+
+  it.each(['OPEN', 'CLOSED'] as const)(
+    'keeps explicitly closed LEGACY appointment interest blocked on %s workflow',
+    (state) => {
+      const s = completed();
+      s.workflow = workflow({
+        mode: 'LEGACY',
+        state,
+        closedAt: state === 'CLOSED' ? now : null,
+        confirmedAppointmentId: null,
+      });
+      s.appointments[0].appointment!.interestState = 'CLOSED';
+      const p = project(s, end, 'applicant');
+      expect(p.obligations).toEqual([]);
+      expect(p.applicantInterest?.state).toBe('CLOSED');
+      expect(
+        new ApplicationViewingReadService(
+          new ApplicationViewingPolicy(),
+        ).summary(s.appointments, true, 1, end, 'applicant', s).pendingInterest
+          ?.capabilities.canSubmitInterest,
+      ).toBe(false);
+    },
+  );
+
+  it.each([-1, 0, 1])(
+    'does not reopen old LEGACY interest when attendance is recorded around closure (%s ms)',
+    (offset) => {
+      const s = completed();
+      s.workflow = workflow({
+        mode: 'LEGACY',
+        state: 'CLOSED',
+        closedAt: end,
+        confirmedAppointmentId: null,
+      });
+      s.appointments[0].appointment = null;
+      s.appointments[0].outcomes[0].recordedAt = new Date(
+        end.getTime() + offset,
+      );
+      expect(
+        project(s, new Date(end.getTime() + 1000), 'applicant').obligations,
+      ).toEqual([]);
+      expect(project(s, end, 'applicant').applicantInterest?.state).toBe(
+        'CLOSED',
+      );
+    },
+  );
+
+  it('closes an unanswered new LEGACY visit on a later restore without rewriting historical closedAt', () => {
+    const s = completed();
+    s.workflow = workflow({
+      mode: 'LEGACY',
+      state: 'CLOSED',
+      closedAt: now,
+      updatedAt: new Date(end.getTime() + 3600000),
+      confirmedAppointmentId: null,
+    });
+    s.appointments[0].appointment = null;
+    expect(project(s, s.workflow.updatedAt, 'applicant').obligations).toEqual(
+      [],
+    );
+    expect(
+      project(s, s.workflow.updatedAt, 'applicant').applicantInterest?.state,
+    ).toBe('CLOSED');
+  });
 
   it('does not revive legacy post-viewing obligations after lifecycle closure or restore', () => {
     const s = completed();

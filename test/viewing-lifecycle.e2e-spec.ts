@@ -1400,9 +1400,14 @@ describe('Viewing lifecycle integration E2E', () => {
     },
   );
 
-  it.each([true, false])(
-    'shows a fresh legacy invitation after reject/restore and preserves closed interest (imported=%s)',
-    async (imported) => {
+  it.each([
+    [true, 'STILL_INTERESTED'],
+    [false, 'STILL_INTERESTED'],
+    [true, 'NOT_INTERESTED'],
+    [false, 'NOT_INTERESTED'],
+  ] as const)(
+    'supports new legacy interest after reject/restore without reviving history (imported=%s, interest=%s)',
+    async (imported, decision) => {
       const old = await legacyProposal();
       if (imported) await legacySnapshot(old);
       await applicant.agent
@@ -1492,8 +1497,158 @@ describe('Viewing lifecycle integration E2E', () => {
           where: { viewingId: old },
         }),
       ).toBe(0);
+      now = new Date('2027-01-05T10:30:00Z');
+      const complete = () =>
+        provider.agent
+          .patch(path('provider', `/${invitation}/complete`))
+          .send({});
+      await complete().expect(200);
+      const afterCompletion = await effects();
+      await complete().expect(200);
+      expect(await effects()).toEqual(afterCompletion);
+      const interestProjection = await snapshot('applicant');
+      expect(interestProjection.obligations).toMatchObject([
+        {
+          action: 'APPLICANT_CONFIRM_POST_VIEWING_INTEREST',
+          target: { appointmentId: invitation },
+        },
+      ]);
+      expect(interestProjection.applicantInterest).toMatchObject({
+        appointmentId: invitation,
+        state: 'LEGACY_UNANSWERED',
+        deadlineAt: null,
+      });
+      const interestWorkspace = body(
+        await applicant.agent
+          .get(`/api/v1/applicant/applications/${applicationId}/workspace`)
+          .expect(200),
+      );
+      expect(
+        nested(interestWorkspace, 'attention').pendingActions,
+      ).toMatchObject([{ type: 'CONFIRM_POST_VIEWING_INTEREST' }]);
+      const pending = nested(
+        nested(interestWorkspace, 'viewingSummary'),
+        'pendingInterest',
+      );
+      expect(pending).toMatchObject({
+        viewingId: invitation,
+        capabilities: { canSubmitInterest: true },
+      });
+      const beforeOldMutation = await effects();
+      await applicant.agent
+        .patch(path('applicant', `/${old}/interest`))
+        .send({ interest: 'STILL_INTERESTED' })
+        .expect(409);
+      expect(await effects()).toEqual(beforeOldMutation);
+      const respond = () =>
+        applicant.agent
+          .patch(path('applicant', `/${invitation}/interest`))
+          .send({
+            interest: decision,
+            ...(decision === 'NOT_INTERESTED'
+              ? { confirmWithdrawal: true }
+              : {}),
+          });
+      await respond().expect(200);
+      const afterDecision = await effects();
+      if (decision === 'STILL_INTERESTED') await respond().expect(200);
+      else await respond().expect(409); // The real withdrawal has ended the active process.
+      expect(await effects()).toEqual(afterDecision);
+      expect(
+        await prisma.applicationViewingInterest.count({
+          where: { viewingId: invitation },
+        }),
+      ).toBe(1);
+      expect(
+        await prisma.applicationViewingInterest.count({
+          where: { viewingId: old },
+        }),
+      ).toBe(0);
+      expect(
+        await prisma.applicationActivity.count({
+          where: { applicationId, type: 'VIEWING_WORKFLOW_CLOSED' },
+        }),
+      ).toBe(1);
+      expect((await application()).status).toBe(
+        decision === 'NOT_INTERESTED' ? 'WITHDRAWN' : 'ACTIVE',
+      );
+      expect(await state()).toMatchObject({
+        state: 'CLOSED',
+        closedAt: closed.closedAt,
+        closureReason: closed.closureReason,
+      });
     },
   );
+
+  it('keeps an unanswered legacy decision closed across another restore while allowing the next visit', async () => {
+    async function completeLegacyAt(day: number) {
+      now = new Date(`2027-01-${String(day - 1).padStart(2, '0')}T10:00:00Z`);
+      const date = `2027-01-${String(day).padStart(2, '0')}`;
+      const id = getString(
+        body(
+          await provider.agent
+            .post(path('provider'))
+            .send({
+              requestKey: randomUUID(),
+              startsAt: `${date}T10:00:00Z`,
+              endsAt: `${date}T10:30:00Z`,
+              timeZone: 'Europe/Berlin',
+            })
+            .expect(201),
+        ),
+        'viewingId',
+      );
+      await applicant.agent
+        .patch(path('applicant', `/${id}/accept`))
+        .send({})
+        .expect(200);
+      now = new Date(`${date}T10:30:00Z`);
+      await provider.agent
+        .patch(path('provider', `/${id}/complete`))
+        .send({})
+        .expect(200);
+      return id;
+    }
+    const first = await completeLegacyAt(3);
+    await curation().reject(applicationId, provider.id);
+    const historical = await state();
+    await releaseCooldown();
+    now = new Date('2027-01-04T10:00:00Z');
+    await curation().restore(applicationId, provider.id);
+    const second = await completeLegacyAt(5);
+    expect((await snapshot('applicant')).obligations).toMatchObject([
+      { action: 'APPLICANT_CONFIRM_POST_VIEWING_INTEREST' },
+    ]);
+    await releaseCooldown();
+    await curation().reject(applicationId, provider.id);
+    await releaseCooldown();
+    now = new Date('2027-01-06T10:00:00Z');
+    await curation().restore(applicationId, provider.id);
+    expect((await snapshot('applicant')).applicantInterest).toMatchObject({
+      appointmentId: second,
+      state: 'CLOSED',
+    });
+    expect((await snapshot('applicant')).obligations).toEqual([]);
+    for (const id of [first, second])
+      await applicant.agent
+        .patch(path('applicant', `/${id}/interest`))
+        .send({ interest: 'STILL_INTERESTED' })
+        .expect(409);
+    const third = await completeLegacyAt(8);
+    await applicant.agent
+      .patch(path('applicant', `/${third}/interest`))
+      .send({ interest: 'STILL_INTERESTED' })
+      .expect(200);
+    expect(await state()).toMatchObject({
+      closedAt: historical.closedAt,
+      closureReason: historical.closureReason,
+    });
+    expect(
+      await prisma.applicationViewingInterest.count({
+        where: { viewingId: { in: [first, second] } },
+      }),
+    ).toBe(0);
+  });
 
   it('preserves unread messages and stored reply settings across reject/restore while HTTP surfaces recompute permissions', async () => {
     await confirmed();

@@ -4,6 +4,7 @@ import { Prisma } from '../generated/prisma/client';
 import {
   ApplicationViewingPolicy,
   legacyViewingAllowsActions,
+  legacyInterestClosedByLifecycle,
 } from './application-viewing.policy';
 import type { ViewingAudience } from './application-viewing-access.service';
 import {
@@ -32,6 +33,10 @@ type LegacySummaryRow = Pick<
     ProjectionAppointment['outcomes'][number],
     'recordedAt' | 'revision' | 'outcome'
   >[];
+  appointment?: Pick<
+    NonNullable<ProjectionAppointment['appointment']>,
+    'interestState'
+  > | null;
 };
 
 @Injectable()
@@ -61,6 +66,7 @@ export class ApplicationViewingReadService {
         mutable,
         source?.workflow?.state === 'CLOSED',
         row.status,
+        legacyInterestClosedByLifecycle(source?.workflow, row),
       );
     const ordered = [...rows].sort((a, b) => b.round - a.round);
     const latest = ordered.find((row) => row.round === latestRound);

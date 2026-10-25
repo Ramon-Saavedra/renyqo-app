@@ -10,6 +10,7 @@ import {
   ApplicationViewingPolicy,
   CORRECTION_WINDOW_MS,
   legacyViewingAllowsActions,
+  legacyInterestClosedByLifecycle,
 } from './application-viewing.policy';
 import { VIEWING_CHANGE_CUTOFF_MS } from './viewing-workflow-command.policy';
 import type { ViewingAudience } from './application-viewing-access.service';
@@ -220,7 +221,12 @@ export function projectViewingWorkflow(
   // Reuse the legacy policy against the live ledger, never the imported pointers.
   const legacyPolicy = new ApplicationViewingPolicy();
   const legacyMutable = (a: ProjectionAppointment) =>
-    legacyViewingAllowsActions(mutable, w?.state === 'CLOSED', a.status);
+    legacyViewingAllowsActions(
+      mutable,
+      w?.state === 'CLOSED',
+      a.status,
+      legacyInterestClosedByLifecycle(w, a),
+    );
   if (legacy)
     for (const a of ordered) {
       const action = legacyPolicy.nextAction(
@@ -504,7 +510,13 @@ export function projectViewingWorkflow(
             ? 'EXPIRED'
             : (interestMetadata?.interestState ??
               completed.interest?.interest ??
-              (w?.state === 'CLOSED' ? 'CLOSED' : 'LEGACY_UNANSWERED')),
+              ((
+                legacy
+                  ? legacyInterestClosedByLifecycle(w, completed)
+                  : w?.state === 'CLOSED'
+              )
+                ? 'CLOSED'
+                : 'LEGACY_UNANSWERED')),
           storedState: interestMetadata?.interestState ?? null,
           deadlineAt: interestMetadata?.interestDeadlineAt ?? null,
           respondedAt: completed.interest?.respondedAt ?? null,
