@@ -10,6 +10,10 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      - dependency-name: "@nestjs/*"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: github-actions
     directory: /
@@ -22,3 +26,10 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
+      - dependency-name: postgres
+        update-types:
+          - version-update:semver-major
