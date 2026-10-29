@@ -81,6 +81,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify API image user
+        run: |
+          identity="$(docker run --rm --entrypoint id renyqo/backend:ci)"
+          echo "$identity"
+          case "$identity" in
+            uid=1001\(nestjs\)*) ;;
+            *) echo "API image must run as nestjs uid 1001" >&2; exit 1 ;;
+          esac
+
       - name: Smoke test container
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
