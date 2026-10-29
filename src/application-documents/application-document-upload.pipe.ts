@@ -52,13 +52,11 @@ export class ApplicationDocumentUploadPipe implements PipeTransform<
       data[1] === 216 &&
       data[data.length - 2] === 255 &&
       data[data.length - 1] === 217;
-    if (
-      !(
-        (file.mimetype === 'application/pdf' && pdf) ||
-        (file.mimetype === 'image/png' && png) ||
-        (file.mimetype === 'image/jpeg' && jpeg)
-      )
-    )
+    if (!(
+      (file.mimetype === 'application/pdf' && pdf) ||
+      (file.mimetype === 'image/png' && png) ||
+      (file.mimetype === 'image/jpeg' && jpeg)
+    ))
       throw new BadRequestException('Document content does not match its type');
     if (
       !(await new FileTypeValidator({ fileType: file.mimetype }).isValid(file))

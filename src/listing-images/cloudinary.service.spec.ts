@@ -87,8 +87,7 @@ describe('CloudinaryService', () => {
       (cloudinary.uploader.upload_stream as jest.Mock).mockImplementation(
         (...args: unknown[]) => {
           const cb = args[1] as
-            | ((err: null, result: typeof fakeResult) => void)
-            | undefined;
+            ((err: null, result: typeof fakeResult) => void) | undefined;
           cb?.(null, fakeResult);
           return mockStream;
         },
@@ -107,8 +106,7 @@ describe('CloudinaryService', () => {
       (cloudinary.uploader.upload_stream as jest.Mock).mockImplementation(
         (...args: unknown[]) => {
           const cb = args[1] as
-            | ((err: typeof error, result: null) => void)
-            | undefined;
+            ((err: typeof error, result: null) => void) | undefined;
           cb?.(error, null);
           return mockStream;
         },

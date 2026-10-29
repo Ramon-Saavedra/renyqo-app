@@ -206,8 +206,7 @@ export class ApplicationActivityService {
 
   private create(
     client:
-      | Pick<PrismaService, 'applicationActivity'>
-      | Prisma.TransactionClient,
+      Pick<PrismaService, 'applicationActivity'> | Prisma.TransactionClient,
     input: AppendApplicationActivityInput,
   ): Promise<ApplicationActivity> {
     return client.applicationActivity.create({

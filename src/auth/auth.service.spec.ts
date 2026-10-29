@@ -143,7 +143,7 @@ describe('AuthService', () => {
     it('normalizes email to lowercase and trims whitespace', async () => {
       const user = makeUser();
       const safeUser = makeSafeUser(user);
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed');
       usersService.create.mockResolvedValue(safeUser);
 
       await service.register(
@@ -158,7 +158,7 @@ describe('AuthService', () => {
     it('hashes the password before creating the user', async () => {
       const user = makeUser();
       const safeUser = makeSafeUser(user);
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed_pw' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed_pw');
       usersService.create.mockResolvedValue(safeUser);
 
       await service.register(makeRegisterDto());
@@ -171,7 +171,7 @@ describe('AuthService', () => {
     it('returns a SafeUser on success', async () => {
       const user = makeUser();
       const safeUser = makeSafeUser(user);
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed');
       usersService.create.mockResolvedValue(safeUser);
 
       const result = await service.register(makeRegisterDto());
@@ -182,7 +182,7 @@ describe('AuthService', () => {
     it('stores private provider identity with null company name', async () => {
       const user = makeUser();
       const safeUser = makeSafeUser(user);
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed');
       usersService.create.mockResolvedValue(safeUser);
 
       await service.register(
@@ -205,7 +205,7 @@ describe('AuthService', () => {
     it('stores company provider identity with trimmed company name', async () => {
       const user = makeUser();
       const safeUser = makeSafeUser(user);
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed');
       usersService.create.mockResolvedValue(safeUser);
 
       await service.register(
@@ -226,7 +226,7 @@ describe('AuthService', () => {
     });
 
     it('throws BadRequestException when company provider has no company name', async () => {
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed');
 
       await expect(
         service.register(
@@ -242,7 +242,7 @@ describe('AuthService', () => {
     it('does not include passwordHash in the returned user', async () => {
       const user = makeUser();
       const safeUser = makeSafeUser(user);
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed');
       usersService.create.mockResolvedValue(safeUser);
 
       const result = await service.register(makeRegisterDto());
@@ -251,7 +251,7 @@ describe('AuthService', () => {
     });
 
     it('throws ConflictException when email already exists (P2002)', async () => {
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed');
       const prismaError = new PrismaClientKnownRequestError(
         'Unique constraint failed',
         { code: 'P2002', clientVersion: '7.0.0' },
@@ -264,7 +264,7 @@ describe('AuthService', () => {
     });
 
     it('rethrows non-P2002 errors', async () => {
-      jest.mocked(bcrypt.hash).mockResolvedValue('hashed' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('hashed');
       usersService.create.mockRejectedValue(new Error('DB connection lost'));
 
       await expect(service.register(makeRegisterDto())).rejects.toThrow(
@@ -276,7 +276,7 @@ describe('AuthService', () => {
   describe('validateUser', () => {
     it('returns null when user does not exist', async () => {
       usersService.findByEmail.mockResolvedValue(null);
-      jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
+      jest.mocked(bcrypt.compare).mockResolvedValue(false);
 
       const result = await service.validateUser(
         'unknown@example.com',
@@ -289,7 +289,7 @@ describe('AuthService', () => {
     it('returns null when password is wrong', async () => {
       const user = makeUser();
       usersService.findByEmail.mockResolvedValue(user);
-      jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
+      jest.mocked(bcrypt.compare).mockResolvedValue(false);
 
       const result = await service.validateUser(
         'test@example.com',
@@ -303,7 +303,7 @@ describe('AuthService', () => {
       const user = makeUser();
       const safeUser = makeSafeUser(user);
       usersService.findByEmail.mockResolvedValue(user);
-      jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
+      jest.mocked(bcrypt.compare).mockResolvedValue(true);
       usersService.toSafeUser.mockReturnValue(safeUser);
 
       const result = await service.validateUser(
@@ -316,7 +316,7 @@ describe('AuthService', () => {
 
     it('normalizes email before lookup', async () => {
       usersService.findByEmail.mockResolvedValue(null);
-      jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
+      jest.mocked(bcrypt.compare).mockResolvedValue(false);
 
       await service.validateUser('  TEST@EXAMPLE.COM  ', 'password');
 
@@ -325,9 +325,7 @@ describe('AuthService', () => {
 
     it('always calls bcrypt.compare even when user does not exist', async () => {
       usersService.findByEmail.mockResolvedValue(null);
-      const compareMock = jest
-        .mocked(bcrypt.compare)
-        .mockResolvedValue(false as never);
+      const compareMock = jest.mocked(bcrypt.compare).mockResolvedValue(false);
 
       await service.validateUser('unknown@example.com', 'password');
 
@@ -340,7 +338,7 @@ describe('AuthService', () => {
       const user = makeUser();
       const safeUser = makeSafeUser(user);
       usersService.findByEmail.mockResolvedValue(user);
-      jest.mocked(bcrypt.compare).mockResolvedValue(true as never);
+      jest.mocked(bcrypt.compare).mockResolvedValue(true);
       usersService.toSafeUser.mockReturnValue(safeUser);
 
       const result = await service.login('test@example.com', 'correctpassword');
@@ -350,7 +348,7 @@ describe('AuthService', () => {
 
     it('throws UnauthorizedException when credentials are invalid', async () => {
       usersService.findByEmail.mockResolvedValue(null);
-      jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
+      jest.mocked(bcrypt.compare).mockResolvedValue(false);
 
       await expect(
         service.login('unknown@example.com', 'wrongpassword'),
@@ -359,7 +357,7 @@ describe('AuthService', () => {
 
     it('throws UnauthorizedException with generic message', async () => {
       usersService.findByEmail.mockResolvedValue(null);
-      jest.mocked(bcrypt.compare).mockResolvedValue(false as never);
+      jest.mocked(bcrypt.compare).mockResolvedValue(false);
 
       await expect(
         service.login('unknown@example.com', 'wrongpassword'),
@@ -465,7 +463,7 @@ describe('AuthService', () => {
 
   describe('resetPassword', () => {
     it('rejects an invalid token with a clear 400 error', async () => {
-      jest.mocked(bcrypt.hash).mockResolvedValue('new_hash' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('new_hash');
       passwordResetTokensRepository.consumeValidTokenAndUpdatePassword.mockResolvedValue(
         false,
       );
@@ -479,7 +477,7 @@ describe('AuthService', () => {
     });
 
     it('rejects an expired token through the same safe error path', async () => {
-      jest.mocked(bcrypt.hash).mockResolvedValue('new_hash' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('new_hash');
       passwordResetTokensRepository.consumeValidTokenAndUpdatePassword.mockResolvedValue(
         false,
       );
@@ -493,7 +491,7 @@ describe('AuthService', () => {
     });
 
     it('rejects an already-used token through the same safe error path', async () => {
-      jest.mocked(bcrypt.hash).mockResolvedValue('new_hash' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('new_hash');
       passwordResetTokensRepository.consumeValidTokenAndUpdatePassword.mockResolvedValue(
         false,
       );
@@ -507,7 +505,7 @@ describe('AuthService', () => {
     });
 
     it('hashes the new password and consumes the token atomically', async () => {
-      jest.mocked(bcrypt.hash).mockResolvedValue('new_password_hash' as never);
+      jest.mocked(bcrypt.hash).mockResolvedValue('new_password_hash');
       passwordResetTokensRepository.consumeValidTokenAndUpdatePassword.mockResolvedValue(
         true,
       );
