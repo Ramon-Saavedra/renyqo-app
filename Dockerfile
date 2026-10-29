@@ -6,6 +6,21 @@ COPY package*.json ./
 
 RUN npm ci
 
+FROM dependencies AS migrate
+
+RUN addgroup -g 1001 -S nodejs \
+    && adduser -S migrate -u 1001 \
+    && mkdir -p /home/migrate \
+    && chown migrate:nodejs /home/migrate
+
+COPY --chown=migrate:nodejs prisma/ ./prisma/
+COPY --chown=migrate:nodejs prisma.config.ts ./
+
+ENV HOME=/home/migrate
+USER migrate
+
+CMD ["npx", "--no-install", "prisma", "migrate", "deploy"]
+
 FROM dependencies AS builder
 
 COPY prisma/ ./prisma/

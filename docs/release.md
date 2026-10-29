@@ -221,14 +221,12 @@ settings exist; the rest of the API does not.
 These limits are accepted for this preparation phase. Revisit both before a
 mature production deployment. This procedure does not change either one.
 
-The dedicated migration image prepared as the `migrate` target on
-`chore/backend-cd-preparation` runs as root and contains the full development
-dependency tree, because that stage follows a full `npm ci` and sets no
-`USER`. This branch does not define that target. The API image remains the
-production stage and does not contain the Prisma CLI. The CI invocation of
-that target is not the production network setup. Until that target is on the
-release line, run `npx prisma migrate deploy` from the same git revision as
-the API image.
+The dedicated migration image `migrate` target runs as user `migrate` (uid
+1001). It still contains the full development dependency tree, because that
+stage follows a full `npm ci`. The API image remains the production stage and
+does not contain the Prisma CLI. `DATABASE_URL` is supplied only when the
+container runs. The CI `--network host` invocation is not a production network
+setup.
 
 `GET /api/v1/health` is liveness only. The body is `{ "status": "ok", "timestamp" }`.
 It does not query PostgreSQL, the migration ledger, or the document worker.
