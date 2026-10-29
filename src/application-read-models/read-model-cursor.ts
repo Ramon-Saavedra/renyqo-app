@@ -1,11 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 
 export type ReadModelCursorKind =
-  | 'listings'
-  | 'applications'
-  | 'activity'
-  | 'documents'
-  | 'files';
+  'listings' | 'applications' | 'activity' | 'documents' | 'files';
 export type ReadModelCursor = {
   kind: ReadModelCursorKind;
   id: string;

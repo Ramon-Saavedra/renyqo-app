@@ -27,9 +27,7 @@ type EvalCase = {
 };
 
 type OpenAiConfigKey =
-  | 'OPENAI_API_KEY'
-  | 'OPENAI_LISTING_MODEL'
-  | 'OPENAI_TRANSCRIPTION_MODEL';
+  'OPENAI_API_KEY' | 'OPENAI_LISTING_MODEL' | 'OPENAI_TRANSCRIPTION_MODEL';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;

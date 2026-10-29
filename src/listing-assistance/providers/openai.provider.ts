@@ -200,8 +200,6 @@ export class OpenAiProvider implements AiProvider {
 interface OpenAiConfig {
   getOrThrow(
     key:
-      | 'OPENAI_API_KEY'
-      | 'OPENAI_LISTING_MODEL'
-      | 'OPENAI_TRANSCRIPTION_MODEL',
+      'OPENAI_API_KEY' | 'OPENAI_LISTING_MODEL' | 'OPENAI_TRANSCRIPTION_MODEL',
   ): string;
 }

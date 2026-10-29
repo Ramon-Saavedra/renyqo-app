@@ -10,5 +10,4 @@ export type ApplicantOnboardingState = {
 };
 
 export type OnboardingState =
-  | ProviderOnboardingState
-  | ApplicantOnboardingState;
+  ProviderOnboardingState | ApplicantOnboardingState;
