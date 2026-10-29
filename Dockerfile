@@ -6,6 +6,13 @@ COPY package*.json ./
 
 RUN npm ci
 
+FROM dependencies AS migrate
+
+COPY prisma/ ./prisma/
+COPY prisma.config.ts ./
+
+CMD ["npx", "--no-install", "prisma", "migrate", "deploy"]
+
 FROM dependencies AS builder
 
 COPY prisma/ ./prisma/
