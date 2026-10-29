@@ -116,12 +116,10 @@ describe('Private document storage', () => {
     expect(commands[0]).toBeInstanceOf(HeadObjectCommand);
     expect(commands[1]).toBeInstanceOf(GetObjectTaggingCommand);
     for (const command of commands) {
-      if (
-        !(
-          command instanceof HeadObjectCommand ||
-          command instanceof GetObjectTaggingCommand
-        )
-      )
+      if (!(
+        command instanceof HeadObjectCommand ||
+        command instanceof GetObjectTaggingCommand
+      ))
         throw new Error('Invalid metadata command');
       expect(command.input).toEqual({
         Bucket: file.bucket,

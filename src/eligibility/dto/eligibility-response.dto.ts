@@ -9,8 +9,7 @@ export type EligibilityReason =
   | 'smoking_not_allowed';
 
 export type EligibilityWarning =
-  | 'pets_by_arrangement'
-  | 'smoking_by_arrangement';
+  'pets_by_arrangement' | 'smoking_by_arrangement';
 
 export class EligibilityResponseDto {
   readonly canApply!: boolean;

@@ -28,11 +28,7 @@ export class DocumentRequestResponseDto {
     readonly requestedAt: Date,
     readonly supersededAt: Date | null,
     readonly status:
-      | 'UPLOAD_REQUIRED'
-      | 'PROCESSING'
-      | 'RECEIVED'
-      | 'REVIEWED'
-      | 'SUPERSEDED',
+      'UPLOAD_REQUIRED' | 'PROCESSING' | 'RECEIVED' | 'REVIEWED' | 'SUPERSEDED',
     readonly canUpload: boolean,
     readonly canCancel: boolean,
     readonly canRequestReplacement: boolean,

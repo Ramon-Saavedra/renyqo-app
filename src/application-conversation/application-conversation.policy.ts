@@ -6,8 +6,7 @@ import {
 import type { Prisma } from '../generated/prisma/client';
 
 export type ConversationSendBlockReason =
-  | 'LIFECYCLE_READ_ONLY'
-  | 'APPLICANT_REPLIES_DISABLED';
+  'LIFECYCLE_READ_ONLY' | 'APPLICANT_REPLIES_DISABLED';
 export function incomingUnreadMessages(
   side: ConversationSide,
 ): Prisma.ApplicationMessageWhereInput {
