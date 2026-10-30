@@ -1400,6 +1400,130 @@ describe('ApplicationsService', () => {
     });
   });
 
+  describe('WAITING-first allocation', () => {
+    it.each([1, 2])(
+      'serves %s existing candidates before admitting a fresh entrant',
+      async (slots) => {
+        prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+        prismaMock.application.count.mockResolvedValue(5 - slots);
+        const waiting = Array.from({ length: slots }, (_, i) =>
+          makeRawApplication({
+            id: `00000000-0000-4000-8000-${String(50 + i).padStart(12, '0')}`,
+            applicantId: `00000000-0000-4000-8000-${String(70 + i).padStart(12, '0')}`,
+            status: ApplicationStatus.WAITING,
+            queueOrder: BigInt(i + 1),
+          }),
+        );
+        prismaMock.application.findMany
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce(waiting);
+        prismaMock.application.create.mockResolvedValue(
+          makeRawApplication({ status: ApplicationStatus.WAITING }),
+        );
+        await service.apply(LISTING_ID, APPLICANT_ID);
+        expect(
+          prismaMock.application.update.mock.calls.map(
+            ([arg]) => (arg as { where: { id: string } }).where.id,
+          ),
+        ).toEqual(waiting.map((row) => row.id));
+        expect(prismaMock.application.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              status: ApplicationStatus.WAITING,
+            }),
+          }),
+        );
+      },
+    );
+
+    it('scans past 500 ineligible candidates before admitting a fresh entrant', async () => {
+      prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+      prismaMock.application.count.mockResolvedValue(4);
+      prismaMock.application.findMany.mockResolvedValueOnce([]);
+      for (let page = 0; page < 10; page++) {
+        prismaMock.application.findMany.mockResolvedValueOnce(
+          Array.from({ length: 50 }, (_, i) => ({
+            id: `candidate-${page * 50 + i}`,
+            applicantId: `applicant-${page * 50 + i}`,
+            queueOrder: BigInt(page * 50 + i),
+          })),
+        );
+      }
+      prismaMock.application.findMany.mockResolvedValueOnce([
+        { id: 'eligible-501', applicantId: 'eligible', queueOrder: 500n },
+      ]);
+      let evaluations = 0;
+      eligibilityService.evaluate.mockImplementation(
+        () =>
+          new EligibilityResponseDto(
+            ++evaluations === 1 || evaluations === 502,
+            [],
+            [],
+            new Date(),
+          ),
+      );
+      prismaMock.application.create.mockResolvedValue(
+        makeRawApplication({ status: ApplicationStatus.WAITING }),
+      );
+      await service.apply(LISTING_ID, APPLICANT_ID);
+      expect(prismaMock.application.update).toHaveBeenCalledTimes(1);
+      expect(prismaMock.application.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'eligible-501' } }),
+      );
+      expect(prismaMock.application.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: ApplicationStatus.WAITING }),
+        }),
+      );
+    });
+
+    it('advances pages by queueOrder AND id when historical positions tie', async () => {
+      prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
+      prismaMock.application.count.mockResolvedValue(4);
+      const page = Array.from({ length: 50 }, (_, i) => ({
+        id: String(i).padStart(3, '0'),
+        applicantId: `skip-${i}`,
+        queueOrder: 7n,
+      }));
+      prismaMock.application.findMany
+        .mockResolvedValueOnce(page)
+        .mockResolvedValueOnce([
+          { id: '050', applicantId: 'eligible', queueOrder: 7n },
+        ]);
+      let checks = 0;
+      eligibilityService.evaluate.mockImplementation(
+        () => new EligibilityResponseDto(++checks === 51, [], [], new Date()),
+      );
+      await expect(
+        service.promoteWaitingApplications(LISTING_ID),
+      ).resolves.toBe(1);
+      expect(prismaMock.application.findMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: {
+            listingId: LISTING_ID,
+            status: ApplicationStatus.WAITING,
+            OR: [
+              { queueOrder: { gt: 7n } },
+              { queueOrder: 7n, id: { gt: '049' } },
+            ],
+          },
+        }),
+      );
+    });
+
+    it('does not promote or read capacity while PAUSED (Model B)', async () => {
+      prismaMock.listing.findUnique.mockResolvedValue(
+        makeRawListing({ status: ListingStatus.PAUSED }),
+      );
+      await expect(
+        service.promoteWaitingApplications(LISTING_ID),
+      ).resolves.toBe(0);
+      expect(prismaMock.application.count).not.toHaveBeenCalled();
+      expect(prismaMock.application.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('promoteWaitingApplications', () => {
     it('promotes waiting applications in creation order after rechecking eligibility', async () => {
       const listing = makeRawListing();
@@ -1439,7 +1563,7 @@ describe('ApplicationsService', () => {
       ).resolves.toBe(1);
       expect(prismaMock.application.findMany).toHaveBeenCalledWith({
         where: { listingId: LISTING_ID, status: ApplicationStatus.WAITING },
-        orderBy: { queueOrder: 'asc' },
+        orderBy: [{ queueOrder: 'asc' }, { id: 'asc' }],
         take: 50,
         select: { id: true, applicantId: true, queueOrder: true },
       });
@@ -1482,7 +1606,9 @@ describe('ApplicationsService', () => {
       ).resolves.toBe(2);
 
       expect(prismaMock.application.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ orderBy: { queueOrder: 'asc' } }),
+        expect.objectContaining({
+          orderBy: [{ queueOrder: 'asc' }, { id: 'asc' }],
+        }),
       );
       expect(prismaMock.application.update).toHaveBeenNthCalledWith(
         1,

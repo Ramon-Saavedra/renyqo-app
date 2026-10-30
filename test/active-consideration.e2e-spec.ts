@@ -1092,15 +1092,15 @@ describe('ACTIVE consideration priority E2E', () => {
         release();
       }
       await Promise.all([winner, contender]);
-      const promotionWon = first === 'promotion';
+      // Existing eligible WAITING wins even when restoration owns the lock first.
       const restored = await prisma.application.findUniqueOrThrow({
         where: { id: applicationId },
       });
-      expect(restored.status).toBe(promotionWon ? 'WAITING' : 'ACTIVE');
+      expect(restored.status).toBe('WAITING');
       const oldestAfter = await prisma.application.findUniqueOrThrow({
         where: { id: oldest.application.id },
       });
-      expect(oldestAfter.status).toBe(promotionWon ? 'ACTIVE' : 'WAITING');
+      expect(oldestAfter.status).toBe('ACTIVE');
       expect(
         await prisma.application.count({
           where: { listingId, status: 'ACTIVE' },
@@ -1110,13 +1110,12 @@ describe('ACTIVE consideration priority E2E', () => {
         where: { listingId, status: 'WAITING' },
         orderBy: [{ queueOrder: 'asc' }, { id: 'asc' }],
       });
-      expect(queue.map((row) => row.id)).toEqual(
-        promotionWon
-          ? [next.application.id, applicationId]
-          : [oldest.application.id, next.application.id],
-      );
+      expect(queue.map((row) => row.id)).toEqual([
+        next.application.id,
+        applicationId,
+      ]);
       const ordered = await order();
-      const finalId = promotionWon ? oldest.application.id : applicationId;
+      const finalId = oldest.application.id;
       expect(ordered).toHaveLength(5);
       expect(ordered.at(-1)).toBe(finalId);
       const positions = await prisma.applicationConsiderationPosition.findMany({
@@ -1141,7 +1140,7 @@ describe('ACTIVE consideration priority E2E', () => {
             type: 'APPLICATION_PROMOTED_TO_ACTIVE',
           },
         }),
-      ).toBe(promotionWon ? 1 : 0);
+      ).toBe(1);
       expect(
         await prisma.outboxEvent.count({
           where: { applicationId, type: 'application.lifecycle.changed' },
@@ -1154,7 +1153,7 @@ describe('ACTIVE consideration priority E2E', () => {
             type: 'application.lifecycle.changed',
           },
         }),
-      ).toBe(promotionWon ? 1 : 0);
+      ).toBe(1);
       expect(
         await prisma.listingEvent.count({
           where: { applicationId, type: 'RESTORED_BY_PROVIDER' },

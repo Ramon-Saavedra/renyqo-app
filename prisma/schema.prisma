@@ -275,7 +275,7 @@ model Application {
   listingId    String             @map("listing_id") @db.Uuid
   applicantId  String             @map("applicant_id") @db.Uuid
   status       ApplicationStatus  @default(WAITING)
-  queueOrder   BigInt             @default(autoincrement()) @map("queue_order")
+  queueOrder   BigInt             @unique @default(autoincrement()) @map("queue_order")
   rejectedAt   DateTime?                    @map("rejected_at") @db.Timestamptz(6)
   publicReason ApplicationRejectionReason? @map("public_reason")
   activeAt     DateTime?                    @map("active_at") @db.Timestamptz(6)

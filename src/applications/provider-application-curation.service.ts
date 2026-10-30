@@ -21,7 +21,6 @@ import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import type { ApplicationTransactionClient } from './application-lifecycle.service';
-import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicationActivityService } from './application-activity.service';
@@ -214,13 +213,12 @@ export class ProviderApplicationCurationService {
 
       const now = new Date();
       await this.assertProviderCurationCooldown(tx, applicationId, now);
-      const activeCount = await tx.application.count({
-        where: {
-          listingId: application.listingId,
-          status: ApplicationStatus.ACTIVE,
-        },
-      });
-      const restoreToActive = activeCount < ACTIVE_APPLICATIONS_LIMIT;
+      const { remainingCapacity } =
+        await this.promotionService.reconcileWithinTransaction(
+          tx,
+          application.listing,
+        );
+      const restoreToActive = remainingCapacity > 0;
 
       await this.viewingLifecycle.restoreWithinTransaction(
         tx,

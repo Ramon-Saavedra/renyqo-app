@@ -1,4 +1,9 @@
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
+import { ApplicationLifecycleService } from '../src/applications/application-lifecycle.service';
+import { ApplicationTransactionService } from '../src/applications/application-transaction.service';
+import { ProviderApplicationCurationService } from '../src/applications/provider-application-curation.service';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import connectPgSimple from 'connect-pg-simple';
@@ -3132,6 +3137,466 @@ describe('Application Lifecycle E2E', () => {
         where: { id: listing.id },
       });
       expect(stored.publishedAt).toEqual(originalPublishedAt);
+    });
+  });
+  describe('canonical queue fairness (F1/F2)', () => {
+    async function fixture(activeCount = 4, waitingCount = 2) {
+      const { agent: providerAgent, provider } = await registerProvider();
+      const entrant = await registerApplicant();
+      const entrantId = String(
+        responseBody(await entrant.get('/api/v1/auth/me').expect(200))['id'],
+      );
+      const listing = await publishListing(provider.id);
+      const users = await getPrisma().user.createManyAndReturn({
+        data: Array.from({ length: activeCount + waitingCount + 2 }, () => ({
+          id: randomUUID(),
+          name: 'Queue fixture',
+          email: uniqueEmail('queue'),
+          passwordHash: 'unused',
+          acceptedTermsAt: new Date(),
+          acceptedPrivacyAt: new Date(),
+        })),
+      });
+      await getPrisma().application.createMany({
+        data: users.slice(0, activeCount + waitingCount).map((u, i) => ({
+          listingId: listing.id,
+          applicantId: u.id,
+          status:
+            i < activeCount
+              ? ApplicationStatus.ACTIVE
+              : ApplicationStatus.WAITING,
+          activeAt: i < activeCount ? new Date() : null,
+        })),
+      });
+      const rows = await getPrisma().application.findMany({
+        where: { listingId: listing.id },
+        orderBy: [{ queueOrder: 'asc' }, { id: 'asc' }],
+      });
+      return {
+        listing,
+        provider,
+        providerAgent,
+        entrant,
+        entrantId,
+        users,
+        active: rows.filter((a) => a.status === 'ACTIVE'),
+        waiting: rows.filter((a) => a.status === 'WAITING'),
+      };
+    }
+    const path = (id: string) => `/api/v1/listings/${id}/apply`;
+    async function assertCapacity(listingId: string) {
+      expect(
+        await getPrisma().application.count({
+          where: { listingId, status: 'ACTIVE' },
+        }),
+      ).toBe(5);
+      const rows = await getPrisma().application.findMany({
+        where: { listingId },
+      });
+      expect(new Set(rows.map((a) => a.queueOrder)).size).toBe(rows.length);
+    }
+
+    it('keeps PAUSED vacancies, reconciles RESUME atomically, then queues the newcomer', async () => {
+      const f = await fixture(5);
+      await f.providerAgent
+        .patch(`/api/v1/provider/listings/${f.listing.id}/pause`)
+        .expect(200);
+      await app!
+        .get(ApplicationLifecycleService)
+        .withdraw(f.active[0].id, f.active[0].applicantId);
+      expect(
+        await getPrisma().application.count({
+          where: { listingId: f.listing.id, status: 'ACTIVE' },
+        }),
+      ).toBe(4);
+      expect(
+        (
+          await getPrisma().application.findUniqueOrThrow({
+            where: { id: f.waiting[0].id },
+          })
+        ).status,
+      ).toBe('WAITING');
+      await f.entrant.post(path(f.listing.id)).expect(422);
+      await f.providerAgent
+        .patch(`/api/v1/provider/listings/${f.listing.id}/resume`)
+        .expect(200);
+      expect(
+        (
+          await getPrisma().application.findUniqueOrThrow({
+            where: { id: f.waiting[0].id },
+          })
+        ).status,
+      ).toBe('ACTIVE');
+      expect(
+        responseBody(await f.entrant.post(path(f.listing.id)).expect(201))[
+          'status'
+        ],
+      ).toBe('WAITING');
+      await assertCapacity(f.listing.id);
+    });
+
+    it('fills multiple vacancies from WAITING before fresh HTTP admission', async () => {
+      const f = await fixture(2, 4);
+      expect(
+        responseBody(await f.entrant.post(path(f.listing.id)).expect(201))[
+          'status'
+        ],
+      ).toBe('WAITING');
+      const rows = await getPrisma().application.findMany({
+        where: { id: { in: f.waiting.map((a) => a.id) } },
+        orderBy: { queueOrder: 'asc' },
+      });
+      expect(rows.map((a) => a.status)).toEqual([
+        'ACTIVE',
+        'ACTIVE',
+        'ACTIVE',
+        'WAITING',
+      ]);
+      await assertCapacity(f.listing.id);
+    });
+
+    it.each([2, 501])(
+      'skips %s-1 ineligible WAITING entries before admitting anyone newer',
+      async (count) => {
+        const f = await fixture(4, count);
+        await getPrisma().listing.update({
+          where: { id: f.listing.id },
+          data: { minimumHouseholdNetIncome: 100 },
+        });
+        await getPrisma().applicantProfile.createMany({
+          data: [
+            ...f.waiting.map((a, i) => ({
+              applicantId: a.applicantId,
+              householdNetIncome: i === count - 1 ? 1000 : 1,
+            })),
+            { applicantId: f.entrantId, householdNetIncome: 1000 },
+          ],
+        });
+        expect(
+          responseBody(await f.entrant.post(path(f.listing.id)).expect(201))[
+            'status'
+          ],
+        ).toBe('WAITING');
+        expect(
+          (
+            await getPrisma().application.findUniqueOrThrow({
+              where: { id: f.waiting[count - 1].id },
+            })
+          ).status,
+        ).toBe('ACTIVE');
+        expect(
+          (
+            await getPrisma().application.findUniqueOrThrow({
+              where: { id: f.waiting[0].id },
+            })
+          ).status,
+        ).toBe('WAITING');
+        await assertCapacity(f.listing.id);
+      },
+    );
+
+    it.each(['promotion', 'withdrawal', 'rejection', 'restoration'] as const)(
+      'keeps WAITING first when apply races %s in both lock orders',
+      async (operation) => {
+        for (const first of ['apply', 'other']) {
+          const f = await fixture(
+            operation === 'withdrawal' || operation === 'rejection' ? 5 : 4,
+          );
+          const lifecycle = app!.get(ApplicationLifecycleService),
+            curation = app!.get(ProviderApplicationCurationService);
+          const rejected =
+            operation === 'restoration'
+              ? await getPrisma().application.create({
+                  data: {
+                    listingId: f.listing.id,
+                    applicantId: f.users.at(-1)!.id,
+                    status: 'REJECTED',
+                    publicReason: 'NOT_SELECTED',
+                    rejectedAt: new Date(),
+                  },
+                })
+              : null;
+          const locks = app!.get(ApplicationTransactionService),
+            realLock = locks.lockListing.bind(locks);
+          let signalLocked!: () => void,
+            signalContender!: () => void,
+            release!: () => void;
+          const locked = new Promise<void>((r) => {
+              signalLocked = r;
+            }),
+            contender = new Promise<void>((r) => {
+              signalContender = r;
+            }),
+            gate = new Promise<void>((r) => {
+              release = r;
+            });
+          let calls = 0;
+          const spy = jest
+            .spyOn(locks, 'lockListing')
+            .mockImplementation(async (tx, id) => {
+              if (id !== f.listing.id) return realLock(tx, id);
+              const call = ++calls;
+              if (call === 2) signalContender();
+              await realLock(tx, id);
+              if (call === 1) {
+                signalLocked();
+                await gate;
+              }
+            });
+          const apply = () => lifecycle.apply(f.listing.id, f.entrantId);
+          const other = () =>
+            operation === 'promotion'
+              ? lifecycle.promoteWaitingApplications(f.listing.id)
+              : operation === 'withdrawal'
+                ? lifecycle.withdraw(f.active[0].id, f.active[0].applicantId)
+                : operation === 'rejection'
+                  ? curation.reject(f.active[0].id, f.provider.id)
+                  : curation.restore(rejected!.id, f.provider.id);
+          try {
+            const winner = first === 'apply' ? apply() : other();
+            await locked;
+            const second = first === 'apply' ? other() : apply();
+            await contender;
+            release();
+            await Promise.all([winner, second]);
+          } finally {
+            release();
+            spy.mockRestore();
+          }
+          expect(
+            (
+              await getPrisma().application.findUniqueOrThrow({
+                where: { id: f.waiting[0].id },
+              })
+            ).status,
+          ).toBe('ACTIVE');
+          expect(
+            (
+              await getPrisma().application.findFirstOrThrow({
+                where: { listingId: f.listing.id, applicantId: f.entrantId },
+              })
+            ).status,
+          ).toBe('WAITING');
+          await assertCapacity(f.listing.id);
+        }
+      },
+    );
+
+    it('gives two restored WAITING entries and a later HTTP applicant distinct sequence positions', async () => {
+      const f = await fixture(5);
+      const rejected = await Promise.all(
+        f.users.slice(-2).map((u) =>
+          getPrisma().application.create({
+            data: {
+              listingId: f.listing.id,
+              applicantId: u.id,
+              status: 'REJECTED',
+              publicReason: 'NOT_SELECTED',
+              rejectedAt: new Date(),
+            },
+          }),
+        ),
+      );
+      const restored = await Promise.all(
+        rejected.map((a) =>
+          app!
+            .get(ProviderApplicationCurationService)
+            .restore(a.id, f.provider.id),
+        ),
+      );
+      expect(restored.every((a) => a.status === 'WAITING')).toBe(true);
+      expect(
+        restored.every((a) => a.queueOrder > f.waiting.at(-1)!.queueOrder),
+      ).toBe(true);
+      const fresh = responseBody(
+        await f.entrant.post(path(f.listing.id)).expect(201),
+      );
+      const inserted = await getPrisma().application.findUniqueOrThrow({
+        where: { id: String(fresh['id']) },
+      });
+      expect(restored.every((a) => inserted.queueOrder > a.queueOrder)).toBe(
+        true,
+      );
+      await assertCapacity(f.listing.id);
+    });
+
+    it('serializes two fresh HTTP admissions for the final slot', async () => {
+      const f = await fixture(4, 0),
+        second = await registerApplicant();
+      const results = await Promise.all([
+        f.entrant.post(path(f.listing.id)),
+        second.post(path(f.listing.id)),
+      ]);
+      expect(results.map((r) => r.status)).toEqual([201, 201]);
+      expect(results.map((r) => responseBody(r)['status']).sort()).toEqual([
+        'ACTIVE',
+        'WAITING',
+      ]);
+      await assertCapacity(f.listing.id);
+    });
+
+    it('reconciles before resume becomes visible to a concurrent fresh admission', async () => {
+      const f = await fixture();
+      await f.providerAgent
+        .patch(`/api/v1/provider/listings/${f.listing.id}/pause`)
+        .expect(200);
+      const [resume, fresh] = await Promise.all([
+        f.providerAgent.patch(
+          `/api/v1/provider/listings/${f.listing.id}/resume`,
+        ),
+        f.entrant.post(path(f.listing.id)),
+      ]);
+      expect(resume.status).toBe(200);
+      expect([201, 422]).toContain(fresh.status);
+      if (fresh.status === 201)
+        expect(responseBody(fresh)['status']).toBe('WAITING');
+      expect(
+        (
+          await getPrisma().application.findUniqueOrThrow({
+            where: { id: f.waiting[0].id },
+          })
+        ).status,
+      ).toBe('ACTIVE');
+      await assertCapacity(f.listing.id);
+    });
+
+    it('rolls back resume publication when waiting promotion fails', async () => {
+      const f = await fixture();
+      await f.providerAgent
+        .patch(`/api/v1/provider/listings/${f.listing.id}/pause`)
+        .expect(200);
+      const activity = app!.get(ApplicationActivityService);
+      const original = activity.appendWithinTransaction.bind(activity);
+      const fail = jest
+        .spyOn(activity, 'appendWithinTransaction')
+        .mockImplementation(async (tx, input) => {
+          if (
+            input.type ===
+            ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE
+          )
+            throw new Error('resume promotion failed');
+          return original(tx, input);
+        });
+      try {
+        await f.providerAgent
+          .patch(`/api/v1/provider/listings/${f.listing.id}/resume`)
+          .expect(500);
+      } finally {
+        fail.mockRestore();
+      }
+      expect(
+        (
+          await getPrisma().listing.findUniqueOrThrow({
+            where: { id: f.listing.id },
+          })
+        ).status,
+      ).toBe('PAUSED');
+      expect(
+        (
+          await getPrisma().application.findUniqueOrThrow({
+            where: { id: f.waiting[0].id },
+          })
+        ).status,
+      ).toBe('WAITING');
+    });
+
+    it('retries entrant allocation without duplicate promotion, activity, notification or outbox effects', async () => {
+      const f = await fixture();
+      const activity = app!.get(ApplicationActivityService),
+        original = activity.appendWithinTransaction.bind(activity);
+      let submissions = 0;
+      const retry = jest
+        .spyOn(activity, 'appendWithinTransaction')
+        .mockImplementation(async (tx, input) => {
+          const row = await original(tx, input);
+          if (
+            input.type === ApplicationActivityType.APPLICATION_SUBMITTED &&
+            submissions++ === 0
+          ) {
+            throw new PrismaClientKnownRequestError('retry allocation', {
+              code: 'P2034',
+              clientVersion: 'test',
+            });
+          }
+          return row;
+        });
+      try {
+        expect(
+          responseBody(await f.entrant.post(path(f.listing.id)).expect(201))[
+            'status'
+          ],
+        ).toBe('WAITING');
+      } finally {
+        retry.mockRestore();
+      }
+      expect(submissions).toBe(2);
+      expect(
+        await getPrisma().applicationActivity.count({
+          where: {
+            applicationId: f.waiting[0].id,
+            type: 'APPLICATION_PROMOTED_TO_ACTIVE',
+          },
+        }),
+      ).toBe(1);
+      expect(
+        await getPrisma().notification.count({
+          where: { applicationId: f.waiting[0].id },
+        }),
+      ).toBe(2);
+      expect(
+        await getPrisma().outboxEvent.count({
+          where: {
+            applicationId: f.waiting[0].id,
+            type: 'application.lifecycle.changed',
+          },
+        }),
+      ).toBe(1);
+      await assertCapacity(f.listing.id);
+    });
+
+    it('does not expose partial promotions or side effects when entrant creation fails', async () => {
+      const f = await fixture();
+      const activity = app!.get(ApplicationActivityService),
+        original = activity.appendWithinTransaction.bind(activity);
+      const fail = jest
+        .spyOn(activity, 'appendWithinTransaction')
+        .mockImplementation(async (tx, input) => {
+          if (input.type === ApplicationActivityType.APPLICATION_SUBMITTED)
+            throw new Error('entrant activity failed');
+          return original(tx, input);
+        });
+      try {
+        await f.entrant.post(path(f.listing.id)).expect(500);
+      } finally {
+        fail.mockRestore();
+      }
+      expect(
+        (
+          await getPrisma().application.findUniqueOrThrow({
+            where: { id: f.waiting[0].id },
+          })
+        ).status,
+      ).toBe('WAITING');
+      expect(
+        await getPrisma().application.count({
+          where: { listingId: f.listing.id, applicantId: f.entrantId },
+        }),
+      ).toBe(0);
+      expect(
+        await getPrisma().applicationActivity.count({
+          where: { applicationId: { in: f.waiting.map((a) => a.id) } },
+        }),
+      ).toBe(0);
+      expect(
+        await getPrisma().notification.count({
+          where: { listingId: f.listing.id },
+        }),
+      ).toBe(0);
+      expect(
+        await getPrisma().outboxEvent.count({
+          where: { applicationId: { in: f.waiting.map((a) => a.id) } },
+        }),
+      ).toBe(0);
     });
   });
 });

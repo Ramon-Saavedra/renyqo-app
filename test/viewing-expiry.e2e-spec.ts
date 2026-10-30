@@ -315,7 +315,6 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
               listingId: f.listing.id,
               applicantId: u.userId,
               status: 'WAITING',
-              queueOrder: i + 1,
             },
           }),
         );
@@ -572,7 +571,6 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
         listingId: f.listing.id,
         applicantId: waiter.userId,
         status: 'WAITING',
-        queueOrder: 1,
       },
     });
     const deadline = await interestDeadline(id);

@@ -9,6 +9,7 @@ import {
   Prisma,
   type ApplicantProfile,
   type Application,
+  type Listing,
 } from '../generated/prisma/client';
 import {
   ApplicationActivityActorType,
@@ -26,7 +27,6 @@ import { ApplicationAdmissionService } from './application-admission.service';
 import { ViewingLifecycleService } from './viewing-lifecycle.service';
 import { applicationCanWithdraw } from './application-process.policy';
 
-import { ACTIVE_APPLICATIONS_LIMIT } from './application-lifecycle.constants';
 import { ApplicationActivityService } from './application-activity.service';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
@@ -102,10 +102,9 @@ export class ApplicationLifecycleService {
         });
       }
 
-      const activeCount = await tx.application.count({
-        where: { listingId, status: ApplicationStatus.ACTIVE },
-      });
-      const isActive = activeCount < ACTIVE_APPLICATIONS_LIMIT;
+      const { remainingCapacity } =
+        await this.promotionService.reconcileWithinTransaction(tx, listing);
+      const isActive = remainingCapacity > 0;
       const status = isActive
         ? ApplicationStatus.ACTIVE
         : ApplicationStatus.WAITING;
@@ -243,6 +242,14 @@ export class ApplicationLifecycleService {
     }
 
     return withdrawn;
+  }
+
+  /** Joins the listing-status transaction; never opens an independent transaction. */
+  reconcileWaitingWithinTransaction(
+    tx: ApplicationTransactionClient,
+    listing: Listing,
+  ): Promise<number> {
+    return this.promotionService.promoteWithinTransaction(tx, listing);
   }
 
   async promoteWaitingApplications(listingId: string): Promise<number> {

@@ -32,12 +32,8 @@ export class ApplicationTransactionService {
   ): Promise<void> {
     await tx.$queryRaw`
       UPDATE "applications"
-      SET "queue_order" = COALESCE(
-        (SELECT MAX("queue_order") FROM "applications"
-         WHERE "listing_id" = ${listingId}::uuid AND "status" = 'waiting'),
-        0
-      ) + 1
-      WHERE "id" = ${applicationId}::uuid
+      SET "queue_order" = nextval(pg_get_serial_sequence('applications', 'queue_order'))
+      WHERE "id" = ${applicationId}::uuid AND "listing_id" = ${listingId}::uuid
     `;
   }
 }
