@@ -239,7 +239,7 @@ worker is alive.
 `GET /api/v1/ready` checks current PostgreSQL connectivity with one `SELECT 1`.
 It returns `{ "status": "ok" }` or `{ "status": "unavailable" }`. It does not
 read `_prisma_migrations`, application tables, or the document worker. Schema
-compatibility remains the migration command's exit code. A timed-out readiness
-result does not cancel the underlying database operation; only one such
-operation is in flight. Post-deploy verification is the migration exit code,
-then liveness, then readiness, before traffic.
+compatibility remains the migration command's exit code. Readiness uses a
+dedicated bounded PostgreSQL pool, isolated from the application's Prisma pool.
+Post-deploy verification is the migration exit code, then liveness, then
+readiness, before traffic.

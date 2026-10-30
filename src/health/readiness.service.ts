@@ -1,61 +1,84 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Pool } from 'pg';
 
 export const READINESS_TIMEOUT_MS = 1000;
 
 /**
- * Prisma 7.9.1 and @prisma/adapter-pg run `pool.query()` with no cancel token.
- * Timing out this HTTP result does not cancel that query. A later probe joins
- * the same in-flight `SELECT 1` instead of starting another one.
+ * Readiness uses its own one-connection pool. `pg` applies the connection,
+ * statement, and query limits to that pool only. A timed-out client is removed,
+ * so the next probe opens a new connection. `pool.end()` force-closes an active
+ * query; shutdown still stops waiting after the readiness limit.
  */
 @Injectable()
-export class ReadinessService {
+export class ReadinessService implements OnModuleDestroy {
   private readonly logger = new Logger(ReadinessService.name);
+  private pool: Pool | null = null;
   private pending: Promise<void> | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
-
   async check(): Promise<'ok' | 'unavailable'> {
-    const pending = this.pending ?? this.start();
-    const status = await this.finishWithin(pending);
-    if (status === 'unavailable') {
+    try {
+      await (this.pending ?? this.start());
+      return 'ok';
+    } catch {
       this.logger.error({ signal: 'READINESS_CHECK_FAILED' });
+      return 'unavailable';
     }
-    return status;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    const pool = this.pool;
+    this.pool = null;
+    this.pending = null;
+    if (!pool) return;
+
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, READINESS_TIMEOUT_MS);
+      void pool.end().then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        () => {
+          clearTimeout(timer);
+          this.logger.error({ signal: 'READINESS_CHECK_FAILED' });
+          resolve();
+        },
+      );
+    });
   }
 
   private start(): Promise<void> {
-    const pending = this.prisma.$queryRaw`SELECT 1`.then(() => undefined);
+    let pending: Promise<void>;
+    try {
+      pending = Promise.resolve(this.database().query('SELECT 1')).then(
+        () => undefined,
+      );
+    } catch (caught) {
+      const failure =
+        caught instanceof Error ? caught : new Error('Readiness query failed');
+      pending = Promise.reject(failure);
+    }
     this.pending = pending;
-    void pending.then(
-      () => {
-        if (this.pending === pending) this.pending = null;
-      },
-      () => {
-        if (this.pending === pending) this.pending = null;
-      },
-    );
+    const clear = (): void => {
+      if (this.pending === pending) this.pending = null;
+    };
+    void pending.then(clear, clear);
     return pending;
   }
 
-  private async finishWithin(
-    pending: Promise<void>,
-  ): Promise<'ok' | 'unavailable'> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        pending.then(() => 'ok' as const),
-        new Promise<'unavailable'>((resolve) => {
-          timer = setTimeout(
-            () => resolve('unavailable'),
-            READINESS_TIMEOUT_MS,
-          );
-        }),
-      ]);
-    } catch {
-      return 'unavailable';
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+  private database(): Pool {
+    if (this.pool) return this.pool;
+    const pool = new Pool({
+      connectionString: process.env['DATABASE_URL'],
+      max: 1,
+      connectionTimeoutMillis: READINESS_TIMEOUT_MS,
+      query_timeout: READINESS_TIMEOUT_MS,
+      statement_timeout: READINESS_TIMEOUT_MS,
+    });
+    pool.on('error', () => {
+      this.logger.error({ signal: 'READINESS_CHECK_FAILED' });
+    });
+    this.pool = pool;
+    return pool;
   }
 }
