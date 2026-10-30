@@ -1,6 +1,7 @@
 import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import { BadRequestException } from '@nestjs/common';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -56,6 +57,7 @@ type ListingsTransactionMock = {
 
 type PrismaTransactionRunner = (
   fn: (tx: ListingsTransactionMock) => Promise<unknown>,
+  options?: unknown,
 ) => Promise<unknown>;
 
 type PrismaMock = ListingsTransactionMock & {
@@ -517,6 +519,136 @@ describe('ListingsService', () => {
   });
 
   describe('update', () => {
+    function isolatedTransaction(row: Listing) {
+      const tx = {
+        ...prismaMock,
+        $queryRaw: jest
+          .fn<(query: unknown) => Promise<unknown>>()
+          .mockResolvedValue([]),
+        listing: {
+          ...prismaMock.listing,
+          findFirst: jest
+            .fn<(args?: unknown) => Promise<Listing | null>>()
+            .mockResolvedValue(row),
+          update: jest
+            .fn<(args?: unknown) => Promise<Listing>>()
+            .mockResolvedValue(row),
+        },
+      };
+      prismaMock.listing.findFirst.mockRejectedValue(
+        new Error('Root pre-read is forbidden'),
+      );
+      prismaMock.listing.update.mockRejectedValue(
+        new Error('Root write is forbidden'),
+      );
+      prismaMock.$transaction.mockImplementation((fn) => fn(tx));
+      return tx;
+    }
+
+    it('locks before a fresh transaction-client read and writes only that transaction', async () => {
+      const tx = isolatedTransaction(
+        makeRawListing({ coldRent: 1200, depositMonths: 3 }),
+      );
+      await service.update(LISTING_ID, PROVIDER_ID, { coldRent: 1300 });
+      expect(prismaMock.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: 'Serializable' },
+      );
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.listing.findFirst.mock.invocationCallOrder[0],
+      );
+      expect(tx.listing.findFirst.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.listing.update.mock.invocationCallOrder[0],
+      );
+      expect(tx.listing.findFirst).toHaveBeenCalledWith({
+        where: { id: LISTING_ID, providerId: PROVIDER_ID },
+      });
+      expect(tx.listing.update).toHaveBeenCalledWith({
+        where: { id: LISTING_ID },
+        data: { coldRent: 1300, depositMonths: 3, deposit: 3900 },
+      });
+      expect(prismaMock.listing.findFirst).not.toHaveBeenCalled();
+      expect(prismaMock.listing.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ depositMonths: 3 }, { depositMonths: 3, deposit: 3600 }],
+      [
+        { coldRent: 1300, depositMonths: 1 },
+        { coldRent: 1300, depositMonths: 1, deposit: 1300 },
+      ],
+      [{ title: 'New title' }, { title: 'New title' }],
+      [
+        { coldRent: 1234.56, title: 'New title' },
+        {
+          coldRent: 1234.56,
+          depositMonths: 2,
+          deposit: 2469.12,
+          title: 'New title',
+        },
+      ],
+      [
+        { coldRent: null, depositMonths: null, title: 'Nulls retained' },
+        { depositMonths: 2, deposit: 2400, title: 'Nulls retained' },
+      ],
+    ])(
+      'preserves current partial-update and rounding semantics for %j',
+      async (patch, expected) => {
+        const tx = isolatedTransaction(
+          makeRawListing({ coldRent: 1200, depositMonths: 2 }),
+        );
+        await service.update(
+          LISTING_ID,
+          PROVIDER_ID,
+          patch as Parameters<ListingsService['update']>[2],
+        );
+        expect(tx.listing.update).toHaveBeenCalledWith({
+          where: { id: LISTING_ID },
+          data: expected,
+        });
+      },
+    );
+
+    it('relocks and rereads changed months on a Serializable retry', async () => {
+      const tx = isolatedTransaction(
+        makeRawListing({ coldRent: 1000, depositMonths: 2 }),
+      );
+      tx.listing.findFirst
+        .mockResolvedValueOnce(
+          makeRawListing({ coldRent: 1000, depositMonths: 2 }),
+        )
+        .mockResolvedValueOnce(
+          makeRawListing({ coldRent: 1000, depositMonths: 3 }),
+        );
+      tx.listing.update.mockRejectedValueOnce(
+        new PrismaClientKnownRequestError('retry', {
+          code: 'P2034',
+          clientVersion: 'test',
+        }),
+      );
+      await service.update(LISTING_ID, PROVIDER_ID, { coldRent: 1200 });
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+      expect(tx.listing.findFirst).toHaveBeenCalledTimes(2);
+      expect(tx.listing.update).toHaveBeenNthCalledWith(1, {
+        where: { id: LISTING_ID },
+        data: { coldRent: 1200, depositMonths: 2, deposit: 2400 },
+      });
+      expect(tx.listing.update).toHaveBeenNthCalledWith(2, {
+        where: { id: LISTING_ID },
+        data: { coldRent: 1200, depositMonths: 3, deposit: 3600 },
+      });
+    });
+
+    it('validates against the locked row and performs no write on failure', async () => {
+      const tx = isolatedTransaction(
+        makeRawListing({ coldRent: 1200, depositMonths: 3 }),
+      );
+      await expect(
+        service.update(LISTING_ID, PROVIDER_ID, { deposit: 2400 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.listing.update).not.toHaveBeenCalled();
+    });
+
     it('recalculates deposit when cold rent changes', async () => {
       const listing = makeRawListing({ coldRent: 1000, depositMonths: 2 });
       const updated = makeRawListing({

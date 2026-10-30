@@ -151,10 +151,17 @@ export class ListingsService {
     providerId: string,
     dto: UpdateListingDto,
   ): Promise<Listing> {
-    const listing = await this.findOneByProvider(id, providerId);
-    return this.prisma.listing.update({
-      where: { id },
-      data: this.listingInputRules.buildUpdateData(dto, listing),
+    return runSerializableTransaction(this.prisma, async (tx) => {
+      await tx.$queryRaw`SELECT id FROM listings WHERE id=${id}::uuid AND provider_id=${providerId}::uuid FOR UPDATE`;
+      const listing = await tx.listing.findFirst({
+        where: { id, providerId },
+      });
+      if (!listing) throw new NotFoundException('Listing not found');
+
+      return tx.listing.update({
+        where: { id },
+        data: this.listingInputRules.buildUpdateData(dto, listing),
+      });
     });
   }
 
