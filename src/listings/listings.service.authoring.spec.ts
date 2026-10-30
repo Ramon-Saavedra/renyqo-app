@@ -1,3 +1,4 @@
+import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -230,6 +231,10 @@ describe('ListingsService', () => {
             closeListingWithinTransaction: jest.fn(),
             restoreWithinTransaction: jest.fn(),
           },
+        },
+        {
+          provide: ApplicationLifecycleService,
+          useValue: { reconcileWaitingWithinTransaction: jest.fn() },
         },
         ListingsService,
         {

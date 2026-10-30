@@ -12,7 +12,6 @@ import { ApplicationTransactionService } from './application-transaction.service
 import { ApplicationActivityService } from './application-activity.service';
 import {
   ACTIVE_APPLICATIONS_LIMIT,
-  MAX_PROMOTION_CANDIDATES,
   PROMOTION_BATCH_SIZE,
 } from './application-lifecycle.constants';
 
@@ -28,8 +27,18 @@ export class ApplicationWaitingPromotionService {
     tx: Prisma.TransactionClient,
     listing: Listing,
   ): Promise<number> {
+    return (await this.reconcileWithinTransaction(tx, listing)).promotedCount;
+  }
+
+  /** Caller holds the listing lock in its Serializable transaction.
+   * A remaining slot is authoritative only after the entire eligible queue is served.
+   */
+  async reconcileWithinTransaction(
+    tx: Prisma.TransactionClient,
+    listing: Listing,
+  ): Promise<{ promotedCount: number; remainingCapacity: number }> {
     if (listing.status !== ListingStatus.PUBLISHED) {
-      return 0;
+      return { promotedCount: 0, remainingCapacity: 0 };
     }
 
     let activeCount = await tx.application.count({
@@ -37,26 +46,30 @@ export class ApplicationWaitingPromotionService {
     });
 
     if (activeCount >= ACTIVE_APPLICATIONS_LIMIT) {
-      return 0;
+      return { promotedCount: 0, remainingCapacity: 0 };
     }
 
     let promotedCount = 0;
-    let queueCursor: bigint | undefined;
-    let processedCandidates = 0;
+    let queueCursor: { queueOrder: bigint; id: string } | undefined;
 
-    while (
-      activeCount < ACTIVE_APPLICATIONS_LIMIT &&
-      processedCandidates < MAX_PROMOTION_CANDIDATES
-    ) {
+    while (activeCount < ACTIVE_APPLICATIONS_LIMIT) {
       const waitingApplications = await tx.application.findMany({
         where: {
           listingId: listing.id,
           status: ApplicationStatus.WAITING,
           ...(queueCursor === undefined
             ? {}
-            : { queueOrder: { gt: queueCursor } }),
+            : {
+                OR: [
+                  { queueOrder: { gt: queueCursor.queueOrder } },
+                  {
+                    queueOrder: queueCursor.queueOrder,
+                    id: { gt: queueCursor.id },
+                  },
+                ],
+              }),
         },
-        orderBy: { queueOrder: 'asc' },
+        orderBy: [{ queueOrder: 'asc' }, { id: 'asc' }],
         take: PROMOTION_BATCH_SIZE,
         select: { id: true, applicantId: true, queueOrder: true },
       });
@@ -70,8 +83,10 @@ export class ApplicationWaitingPromotionService {
           break;
         }
 
-        processedCandidates++;
-        queueCursor = application.queueOrder;
+        queueCursor = {
+          queueOrder: application.queueOrder,
+          id: application.id,
+        };
         const profile = await this.transactionService.lockApplicantProfile(
           tx,
           application.applicantId,
@@ -104,6 +119,9 @@ export class ApplicationWaitingPromotionService {
       }
     }
 
-    return promotedCount;
+    return {
+      promotedCount,
+      remainingCapacity: ACTIVE_APPLICATIONS_LIMIT - activeCount,
+    };
   }
 }

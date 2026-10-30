@@ -19,6 +19,7 @@ import {
   ApplicationStatus,
   ListingStatus,
 } from '../generated/prisma/enums';
+import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { ApplicationActivityService } from '../applications/application-activity.service';
 import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
@@ -76,6 +77,7 @@ export class ListingsService {
     private readonly listingResponseMapper: ListingResponseMapper,
     private readonly activityService: ApplicationActivityService,
     private readonly viewingLifecycle: ViewingLifecycleService,
+    private readonly applicationLifecycle: ApplicationLifecycleService,
   ) {}
 
   async create(
@@ -496,6 +498,12 @@ export class ListingsService {
         include: { images: { orderBy: { position: 'asc' } } },
       });
       if (!result) throw new NotFoundException('Listing not found');
+      if (data.status === ListingStatus.PUBLISHED) {
+        await this.applicationLifecycle.reconcileWaitingWithinTransaction(
+          tx,
+          result,
+        );
+      }
       await this.activityService.lifecycleChangedForListingWithinTransaction(
         tx,
         listing.id,

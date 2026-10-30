@@ -1,3 +1,4 @@
+import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import {
   ConflictException,
@@ -186,6 +187,10 @@ describe('ListingsService', () => {
             closeListingWithinTransaction: jest.fn(),
             restoreWithinTransaction: jest.fn(),
           },
+        },
+        {
+          provide: ApplicationLifecycleService,
+          useValue: { reconcileWaitingWithinTransaction: jest.fn() },
         },
         ListingsService,
         {

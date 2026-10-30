@@ -20,7 +20,7 @@ Only published listings accept applications. RENTED listings do not accept appli
 
 ## Apply
 
-The first five eligible applications are `ACTIVE`; later eligible applications are `WAITING`. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. A duplicate live (`ACTIVE` or `WAITING`) application returns `409`; the database partial unique index continues enforcing one live row per applicant/listing. Historical admission restrictions are enforced by the applications domain.
+On PUBLISHED listings, existing eligible WAITING applicants consume free ACTIVE capacity before a fresh application or provider restoration. Remaining capacity admits the entrant as ACTIVE; otherwise it receives a new WAITING position. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. A duplicate live (`ACTIVE` or `WAITING`) application returns `409`; the database partial unique index continues enforcing one live row per applicant/listing. Historical admission restrictions are enforced by the applications domain.
 
 ## Withdraw
 
@@ -46,11 +46,11 @@ Listing summary/detail responses include `admission { hasApplicationHistory, cur
 
 ## Waiting queue promotion
 
-Promotion is an internal backend operation with no HTTP endpoint. Providers cannot promote a waiting applicant manually, and the queue is never reordered by income, assets, SCHUFA or provider preference.
+Promotion is an internal backend operation with no HTTP endpoint. PAUSED listings do not promote and reject fresh applications (Model B). Returning to PUBLISHED reconciles existing WAITING inside the listing-status transaction before fresh admission can observe publication. Providers cannot promote a waiting applicant manually, and the queue is never reordered by income, assets, SCHUFA or provider preference.
 
-`ApplicationsService.promoteWaitingApplications(listingId)` promotes the oldest eligible `WAITING` applications by `queueOrder`, rechecks eligibility immediately before each promotion and stops at the five-active limit. It runs in a Serializable transaction with row locks and serialization-conflict retries, so concurrent promotions can never exceed five `ACTIVE` applications.
+`ApplicationsService.promoteWaitingApplications(listingId)` promotes the oldest eligible `WAITING` applications by `(queueOrder, id)`, rechecks eligibility immediately before each promotion and stops at the five-active limit. It runs in a Serializable transaction with row locks and serialization-conflict retries, so concurrent promotions can never exceed five `ACTIVE` applications.
 
-Withdrawing an `ACTIVE` application calls the private `promoteWithinTransaction(tx, listing)` inside the same Serializable transaction that writes the `WITHDRAWN` status, immediately after that update. That keeps slot release and FIFO promotion atomic. Ownership is enforced before the slot is released.
+Withdrawing an `ACTIVE` application calls the private `promoteWithinTransaction(tx, listing)` inside the same Serializable transaction that writes the `WITHDRAWN` status, immediately after that update. That keeps slot release and FIFO promotion atomic. Ownership is enforced before the slot is released. Pagination continues until slots are filled or the queue is exhausted; there is no 500-candidate cutoff. Fresh creation/reapplication use the global sequence default; restoration to WAITING uses the same sequence, never MAX + 1. Rollback gaps are expected. Global uniqueness protects positions, and composite cursors remain deterministic for legacy ties.
 
 ## Reject
 
@@ -58,7 +58,7 @@ Withdrawing an `ACTIVE` application calls the private `promoteWithinTransaction(
 
 ## Restore
 
-`PATCH /api/v1/provider/applications/:id/restore` lets a provider bring back a `REJECTED` application whose `publicReason` is `NOT_SELECTED`. Owning providers get `404` for foreign or missing applications, and any other state (`WITHDRAWN`, `ACCEPTED`, or system rejections such as `LISTING_RENTED` and `PROFILE_NO_LONGER_ELIGIBLE`) returns `409`. The slot/queue decision is made transactionally under `Serializable` with listing and application row locks: if fewer than five `ACTIVE` applications exist the application returns to `ACTIVE` with a new `activeAt`; otherwise it is appended to the end of the listing's `WAITING` queue with a fresh `queueOrder`. On restore the current-state rejection fields (`rejectedAt`, `publicReason`) are cleared; a restore to `WAITING` also clears `activeAt`.
+`PATCH /api/v1/provider/applications/:id/restore` lets a provider bring back a `REJECTED` application whose `publicReason` is `NOT_SELECTED`. Owning providers get `404` for foreign or missing applications, and any other state (`WITHDRAWN`, `ACCEPTED`, or system rejections such as `LISTING_RENTED` and `PROFILE_NO_LONGER_ELIGIBLE`) returns `409`. The slot/queue decision is made transactionally under `Serializable` with listing and application row locks: after existing eligible WAITING applicants are reconciled, if fewer than five `ACTIVE` applications exist the application returns to `ACTIVE` with a new `activeAt`; otherwise it is appended to the end of the listing's `WAITING` queue with a fresh `queueOrder`. On restore the current-state rejection fields (`rejectedAt`, `publicReason`) are cleared; a restore to `WAITING` also clears `activeAt`.
 
 Provider reject and restore transitions are recorded as append-only `ListingEvent` history rows so prior `ACTIVE` / `REJECTED` states are never lost, even when the current-state `Application` row is restored. A backend-enforced cooldown rejects rapid `REJECT`→`RESTORE`→`REJECT` toggling with `429` and `code: "PROVIDER_CURATION_RATE_LIMITED"` when a provider curation event for the same application happened within the last 60 seconds. History rows are immutable and never cascade-deleted by listing or application deletion, forming the foundation for the future Objektakte (full listing timeline).
 
@@ -97,3 +97,7 @@ Sending requires an ACTIVE application and a PUBLISHED or PAUSED listing. PAUSED
 Restoration to ACTIVE resumes messaging in the same conversation, retaining history and the previous applicant reply permission. A new application attempt starts with applicant replies disabled and does not inherit the previous attempt's conversation. Restoration to WAITING disables sending and hides all conversation surfaces from the provider until the application becomes ACTIVE again. Lifecycle restrictions override the stored reply permission without resetting it.
 
 Provider access requires listing ownership, a non-WAITING application and current or prior ACTIVE visibility. Never-visible rejected/withdrawn WAITING applicants stay hidden. Applicant access always requires ownership of that exact application. Conversation DTOs expose no applicant profile or internal user IDs.
+
+## Queue-order migration safety
+
+The queue-fairness migration excludes queue writers, detects historical collisions, and repairs affected WAITING lists only when retained submission/restoration provenance establishes entry time. Restoration uses its latest successful WAITING restoration event, never its original attempt creation time. Missing/contradictory provenance aborts with application IDs for explicit investigation; statuses and ACTIVE consideration positions are untouched. Repair precedes global uniqueness. The sequence is advanced past persisted values without rewinding its high-water mark. Old MAX + 1 writers must not run after this migration; reverting source alone is not a supported allocator rollback.
