@@ -25,6 +25,7 @@ State-changing requests (`POST`, `PUT`, `PATCH`, and `DELETE`) must send the ses
 | Method | Path             | Auth | Description    |
 | ------ | ---------------- | ---- | -------------- |
 | `GET`  | `/api/v1/health` | No   | Liveness probe |
+| `GET`  | `/api/v1/ready`  | No   | Readiness: PostgreSQL connectivity only |
 
 ## Auth
 
