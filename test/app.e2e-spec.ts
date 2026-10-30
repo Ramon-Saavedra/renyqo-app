@@ -473,6 +473,14 @@ describe('Backend API E2E', () => {
     expect(typeof body['timestamp']).toBe('string');
   });
 
+  it('returns readiness when PostgreSQL is reachable', async () => {
+    const response = await request(getServer())
+      .get('/api/v1/ready')
+      .expect(200);
+
+    expect(responseBody(response)).toEqual({ status: 'ok' });
+  });
+
   it('registers an applicant and returns the current user without sensitive fields', async () => {
     const agent = request.agent(getServer());
     const payload = applicantPayload();

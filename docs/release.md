@@ -64,8 +64,9 @@ Confirm each item before the next one. A failed item stops the release.
 - Abort on any non-zero migration exit. Do not start the API. Do not mark a failed migration applied.
 - Start one API process with `VIEWING_EXPIRY_ENABLED=false`, `REALTIME_ENABLED` unset or `false`, and `OUTBOX_DISPATCH_ENABLED` unset or `false`.
 - Verify `GET /api/v1/health` returns `200` and `{ "status": "ok" }`.
+- Verify `GET /api/v1/ready` returns `200` and `{ "status": "ok" }`. A `503` with `{ "status": "unavailable" }` means this process cannot reach PostgreSQL. Do not send traffic. That response is not a migration or document-worker failure.
 - Enable scheduled work, realtime, and dispatch in this order: `VIEWING_EXPIRY_ENABLED=true` with the production interval and batch below; then `REALTIME_ENABLED=true`; then `OUTBOX_DISPATCH_ENABLED=true`. Validate transport on staging before enabling dispatch in production.
-- Send traffic only after that health check. Enable realtime and dispatch only when this release intends to turn them on.
+- Send traffic only after that readiness check. Enable realtime and dispatch only when this release intends to turn them on.
 - Start the document worker only after the AWS prerequisites in [Application documents](application-documents.md) exist. Worker startup does not gate API traffic.
 
 Production expiry settings, after the health check:
@@ -233,5 +234,12 @@ It does not query PostgreSQL, the migration ledger, or the document worker.
 The process listens after environment validation and the initial Prisma
 connection, so a `200` means this process finished boot. It does not prove that
 the schema matches the image, that the database is still reachable, or that the
-worker is alive. Post-deploy verification remains the migration exit code plus
-this health check.
+worker is alive.
+
+`GET /api/v1/ready` checks current PostgreSQL connectivity with one `SELECT 1`.
+It returns `{ "status": "ok" }` or `{ "status": "unavailable" }`. It does not
+read `_prisma_migrations`, application tables, or the document worker. Schema
+compatibility remains the migration command's exit code. Readiness uses a
+dedicated bounded PostgreSQL pool, isolated from the application's Prisma pool.
+Post-deploy verification is the migration exit code, then liveness, then
+readiness, before traffic.
