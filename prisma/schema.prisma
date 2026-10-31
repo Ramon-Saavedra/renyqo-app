@@ -160,6 +160,7 @@ model User {
   name              String
   email             String        @unique
   passwordHash      String        @map("password_hash")
+  authVersion       Int           @default(1) @map("auth_version")
   role              Role          @default(APPLICANT)
   providerType      ProviderType? @map("provider_type")
   companyName       String?       @map("company_name")

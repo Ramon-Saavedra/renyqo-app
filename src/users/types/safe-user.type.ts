@@ -7,6 +7,8 @@ import {
 export type SafeProviderType = 'private' | 'company';
 
 export type SafeUser = {
+  // Server-only metadata, attached non-enumerably by UsersService.
+  readonly authVersion?: number;
   id: string;
   name: string;
   email: string;

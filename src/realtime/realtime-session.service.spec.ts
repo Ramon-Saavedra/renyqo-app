@@ -9,7 +9,10 @@ import {
 } from './realtime-session.service';
 
 describe('Session lookup batching', () => {
-  const query = jest.fn<() => Promise<unknown[]>>();
+  const query =
+    jest.fn<
+      (sql: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>
+    >();
   const signedSessionId = jest.fn<() => string | null>(() => 'session');
   let service: RealtimeSessionService;
   beforeEach(async () => {
@@ -41,6 +44,15 @@ describe('Session lookup batching', () => {
     expect(query).not.toHaveBeenCalled();
     await service.valid(Array.from({ length: 401 }, (_, i) => `session-${i}`));
     expect(query).toHaveBeenCalledTimes(3);
+  });
+  it('requires numeric matching durable authVersion in every lookup', async () => {
+    await service.valid(['session']);
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain(
+      "jsonb_typeof(s.sess::jsonb->'passport'->'user'->'authVersion') = 'number'",
+    );
+    expect(sql).toContain('to_jsonb(u.auth_version)');
+    expect(sql).toContain('u.auth_version > 0');
   });
   it('propagates database failure instead of treating it as no recipients', async () => {
     query.mockRejectedValue(new Error('database unavailable'));

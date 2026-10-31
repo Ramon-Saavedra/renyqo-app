@@ -3,6 +3,22 @@ import { PassportSerializer } from '@nestjs/passport';
 import type { SafeUser } from '../../users/types/safe-user.type';
 import { UsersService } from '../../users/users.service';
 
+export type SessionAuthentication = { id: string; authVersion: number };
+
+export function isSessionAuthentication(
+  value: unknown,
+): value is SessionAuthentication {
+  if (!value || typeof value !== 'object') return false;
+  const snapshot = value as Record<string, unknown>;
+  return (
+    typeof snapshot.id === 'string' &&
+    typeof snapshot.authVersion === 'number' &&
+    Number.isSafeInteger(snapshot.authVersion) &&
+    snapshot.authVersion > 0 &&
+    snapshot.authVersion <= 2147483647
+  );
+}
+
 @Injectable()
 export class SessionSerializer extends PassportSerializer {
   constructor(private readonly usersService: UsersService) {
@@ -11,18 +27,27 @@ export class SessionSerializer extends PassportSerializer {
 
   serializeUser(
     user: SafeUser,
-    done: (err: unknown, id: string) => void,
+    done: (err: unknown, snapshot?: SessionAuthentication) => void,
   ): void {
-    done(null, user.id);
+    const snapshot = { id: user.id, authVersion: user.authVersion };
+    if (!isSessionAuthentication(snapshot)) {
+      done(new Error('Missing authentication version'));
+      return;
+    }
+    done(null, snapshot);
   }
 
   async deserializeUser(
-    id: string,
+    snapshot: unknown,
     done: (err: unknown, user: SafeUser | null) => void,
   ): Promise<void> {
     try {
-      const user = await this.usersService.findById(id);
-      done(null, user);
+      if (!isSessionAuthentication(snapshot)) {
+        done(null, null);
+        return;
+      }
+      const user = await this.usersService.findById(snapshot.id);
+      done(null, user?.authVersion === snapshot.authVersion ? user : null);
     } catch (err) {
       done(err, null);
     }

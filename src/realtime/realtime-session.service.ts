@@ -53,11 +53,14 @@ export class RealtimeSessionService {
       const rows = await this.prisma.$queryRaw<RealtimeIdentity[]>`
         SELECT s.sid AS "sessionId", u.id AS "userId", UPPER(u.role::text) AS role
         FROM user_sessions s JOIN users u
-          ON u.id::text = s.sess->'passport'->>'user'
+          ON u.id::text = s.sess->'passport'->'user'->>'id'
         WHERE s.sid = ANY(${distinct.slice(offset, offset + SESSION_BATCH_SIZE)}::text[])
           AND s.expire > CURRENT_TIMESTAMP
           AND u.status = 'active'
           AND u.role IN ('applicant', 'provider')
+          AND jsonb_typeof(s.sess::jsonb->'passport'->'user'->'authVersion') = 'number'
+          AND s.sess::jsonb->'passport'->'user'->'authVersion' = to_jsonb(u.auth_version)
+          AND u.auth_version > 0
       `;
       for (const row of rows) {
         if (row.role === Role.APPLICANT || row.role === Role.PROVIDER)

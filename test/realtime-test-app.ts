@@ -68,13 +68,14 @@ export async function realtimeTestApp(
   const sessionIds: string[] = [];
 
   async function sessionFor(userId: string) {
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const id = randomUUID();
     sessionIds.push(id);
     await prisma.userSession.create({
       data: {
         sid: id,
         sess: {
-          passport: { user: userId },
+          passport: { user: { id: userId, authVersion: user.authVersion } },
           cookie: {
             originalMaxAge: 60000,
             expires: new Date(Date.now() + 60000).toISOString(),

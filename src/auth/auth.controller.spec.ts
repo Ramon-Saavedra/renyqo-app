@@ -1,7 +1,7 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 
 import { Role, UserStatus } from '../generated/prisma/enums';
 import type { SafeUser } from '../users/types/safe-user.type';
@@ -211,6 +211,58 @@ describe('AuthController', () => {
       await expect(
         controller.login(makeLoginDto(), req as unknown as Request),
       ).rejects.toThrow('Session store failed');
+    });
+  });
+
+  describe('logout', () => {
+    function logoutRequest(error?: Error) {
+      const destroy = jest.fn((callback: (error: Error | null) => void) =>
+        callback(error ?? null),
+      );
+      const req = {
+        sessionID: 'original-sid',
+        session: { destroy },
+        user: makeSafeUser(),
+        logout: jest.fn(),
+      };
+      const res = { clearCookie: jest.fn() };
+      return { req, res, destroy };
+    }
+    it('destroys precisely the current session without Passport save/regenerate or global revocation', async () => {
+      const { req, res, destroy } = logoutRequest();
+      await expect(
+        controller.logout(
+          req as unknown as Request,
+          res as unknown as Response,
+        ),
+      ).resolves.toEqual({ message: 'Logged out' });
+      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(req.logout).not.toHaveBeenCalled();
+      expect(req.user).toBeUndefined();
+      expect(res.clearCookie).toHaveBeenCalledWith('sid');
+    });
+    it('does not report success when durable destruction fails', async () => {
+      const { req, res } = logoutRequest(new Error('store failed'));
+      await expect(
+        controller.logout(
+          req as unknown as Request,
+          res as unknown as Response,
+        ),
+      ).rejects.toThrow('store failed');
+    });
+    it('allows repeated unauthenticated logout', async () => {
+      const { req, res } = logoutRequest();
+      delete (req as { user?: SafeUser }).user;
+      await controller.logout(
+        req as unknown as Request,
+        res as unknown as Response,
+      );
+      await expect(
+        controller.logout(
+          req as unknown as Request,
+          res as unknown as Response,
+        ),
+      ).resolves.toEqual({ message: 'Logged out' });
     });
   });
 

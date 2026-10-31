@@ -54,7 +54,13 @@ export class RealtimeConnectionsService implements OnModuleDestroy {
   disconnectSessions(sessionIds: readonly string[]): void {
     const targets = new Set(sessionIds);
     for (const entry of this.connections.values()) {
-      if (targets.has(entry.identity.sessionId)) entry.socket.disconnect(true);
+      if (targets.has(entry.identity.sessionId)) {
+        try {
+          entry.socket.disconnect(true);
+        } catch {
+          this.logger.warn({ signal: 'REALTIME_DISCONNECT_FAILED' });
+        }
+      }
     }
   }
 
@@ -77,7 +83,13 @@ export class RealtimeConnectionsService implements OnModuleDestroy {
       const allowed =
         identity?.userId === entry.identity.userId &&
         identity.role === entry.identity.role;
-      if (!allowed) entry.socket.disconnect(true);
+      if (!allowed) {
+        try {
+          entry.socket.disconnect(true);
+        } catch {
+          this.logger.warn({ signal: 'REALTIME_DISCONNECT_FAILED' });
+        }
+      }
       return allowed && entry.socket.connected && !this.stopped;
     });
   }
@@ -103,8 +115,11 @@ export class RealtimeConnectionsService implements OnModuleDestroy {
       ]);
     } catch {
       this.logger.warn({ signal: 'REALTIME_SESSION_VALIDATION_UNAVAILABLE' });
-      for (const { socket } of this.connections.values())
-        socket.disconnect(true);
+      this.disconnectSessions(
+        [...this.connections.values()].map(
+          ({ identity }) => identity.sessionId,
+        ),
+      );
     }
   }
 
