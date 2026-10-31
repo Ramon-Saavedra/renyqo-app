@@ -38,6 +38,7 @@ const makeUser = (): User => ({
   companyName: null,
   emailVerified: false,
   status: UserStatus.ACTIVE,
+  authVersion: 1,
   acceptedTermsAt: new Date('2024-01-01'),
   acceptedPrivacyAt: new Date('2024-01-01'),
   createdAt: new Date('2024-01-01'),

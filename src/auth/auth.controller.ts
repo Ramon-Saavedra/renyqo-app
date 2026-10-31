@@ -8,6 +8,7 @@ import {
   Req,
   Res,
   UseGuards,
+  Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -26,6 +27,7 @@ import {
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
   constructor(
     private readonly authService: AuthService,
     private readonly realtimeConnections: RealtimeConnectionsService,
@@ -88,7 +90,6 @@ export class AuthController {
     return this.authService.resetPassword(dto);
   }
 
-  @UseGuards(AuthenticatedGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(
@@ -97,15 +98,6 @@ export class AuthController {
   ): Promise<{ message: string }> {
     const sessionId = req.sessionID;
     revokeCsrfToken(req);
-    let logoutError: Error | undefined;
-    await new Promise<void>((resolve) => {
-      req.logout((err: unknown) => {
-        if (err) {
-          logoutError = err instanceof Error ? err : new Error('Logout failed');
-        }
-        resolve();
-      });
-    });
     let destroyError: Error | undefined;
     await new Promise<void>((resolve) => {
       req.session.destroy((err: Error | null) => {
@@ -114,10 +106,14 @@ export class AuthController {
       });
     });
     res.clearCookie('sid');
-    if (logoutError ?? destroyError) {
-      throw logoutError ?? destroyError ?? new Error('Logout failed');
+    if (destroyError) throw destroyError;
+    // Avoid Passport's save/regenerate sequence: destroy precisely the original SID.
+    delete req.user;
+    try {
+      this.realtimeConnections.disconnectSessions([sessionId]);
+    } catch {
+      this.logger.warn({ signal: 'AUTH_REALTIME_CLEANUP_FAILED' });
     }
-    this.realtimeConnections.disconnectSessions([sessionId]);
     return { message: 'Logged out' };
   }
 

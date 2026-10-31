@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PasswordResetTokensRepository } from './password-reset-tokens.repository';
 import { SessionSerializer } from './serializers/session.serializer';
+import { AuthRevocationService } from './session/auth-revocation.service';
 
 @Module({
   imports: [
@@ -15,7 +16,12 @@ import { SessionSerializer } from './serializers/session.serializer';
     EmailModule,
     RealtimeModule,
   ],
-  providers: [AuthService, SessionSerializer, PasswordResetTokensRepository],
+  providers: [
+    AuthService,
+    SessionSerializer,
+    PasswordResetTokensRepository,
+    AuthRevocationService,
+  ],
   controllers: [AuthController],
 })
 export class AuthModule {}

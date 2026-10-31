@@ -26,7 +26,7 @@ export class UsersService {
   }
 
   toSafeUser(user: User): SafeUser {
-    return {
+    const safeUser: SafeUser = {
       id: user.id,
       name: user.name,
       email: user.email,
@@ -41,6 +41,9 @@ export class UsersService {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
+    // Preserve the credential-validation snapshot without exposing it in HTTP DTOs.
+    Object.defineProperty(safeUser, 'authVersion', { value: user.authVersion });
+    return safeUser;
   }
 
   private toSafeProviderType(

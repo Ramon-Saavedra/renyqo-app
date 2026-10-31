@@ -18,6 +18,7 @@ const makeUser = (): User => ({
   companyName: null,
   emailVerified: false,
   status: UserStatus.ACTIVE,
+  authVersion: 1,
   acceptedTermsAt: new Date('2024-01-01'),
   acceptedPrivacyAt: new Date('2024-01-01'),
   createdAt: new Date('2024-01-01'),
@@ -70,6 +71,15 @@ describe('UsersService', () => {
       const result = service.toSafeUser(user);
 
       expect(result).not.toHaveProperty('passwordHash');
+    });
+
+    it('keeps authVersion as non-serialized server metadata', () => {
+      const result = service.toSafeUser({ ...makeUser(), authVersion: 7 });
+      expect(result.authVersion).toBe(7);
+      expect(JSON.parse(JSON.stringify(result))).not.toHaveProperty(
+        'authVersion',
+      );
+      expect(sanitizeSafeUser(result)).not.toHaveProperty('authVersion');
     });
 
     it('returns company identity for company providers', () => {

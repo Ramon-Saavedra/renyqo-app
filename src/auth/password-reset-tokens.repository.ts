@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { RealtimeConnectionsService } from '../realtime/realtime-connections.service';
+import { AuthRevocationService } from './session/auth-revocation.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 type CreatePasswordResetTokenInput = {
@@ -23,7 +23,7 @@ type PasswordResetTokenRow = {
 export class PasswordResetTokensRepository {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly realtimeConnections: RealtimeConnectionsService,
+    private readonly revocations: AuthRevocationService,
   ) {}
 
   async invalidateActiveTokensForUser(
@@ -49,7 +49,7 @@ export class PasswordResetTokensRepository {
   async consumeValidTokenAndUpdatePassword(
     input: ConsumePasswordResetTokenInput,
   ): Promise<boolean> {
-    return this.prisma.$transaction(async (tx) => {
+    const revocation = await this.prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRaw<PasswordResetTokenRow[]>`
         SELECT "id", "user_id"
         FROM "password_reset_tokens"
@@ -63,7 +63,7 @@ export class PasswordResetTokensRepository {
       const token = rows[0];
 
       if (!token) {
-        return false;
+        return null;
       }
 
       await tx.$executeRaw`
@@ -79,13 +79,10 @@ export class PasswordResetTokensRepository {
         WHERE "id" = ${token.id}::uuid
       `;
 
-      await tx.$executeRaw`
-        DELETE FROM "user_sessions"
-        WHERE "sess"->'passport'->>'user' = ${token.user_id}
-      `;
-
-      this.realtimeConnections.disconnectUser(token.user_id);
-      return true;
+      return this.revocations.revokeAll(tx, token.user_id);
     });
+    if (!revocation) return false;
+    await this.revocations.cleanup(revocation);
+    return true;
   }
 }
