@@ -7,6 +7,8 @@ import { Test } from '@nestjs/testing';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { Request, Response } from 'express';
 import passport from 'passport';
+import type { Store, SessionData } from 'express-session';
+import { sign } from 'cookie-signature';
 import { Pool } from 'pg';
 import request, { type Response as TestResponse } from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -68,6 +70,7 @@ describe('Session persistence across password-reset revocation (isolated Postgre
   let infrastructure: SessionInfrastructureService;
   let realtime: RealtimeSessionService;
   let server: Parameters<typeof request>[0];
+  let sessionStore: Store;
 
   beforeAll(async () => {
     const url = process.env['E2E_DATABASE_URL'];
@@ -124,6 +127,10 @@ describe('Session persistence across password-reset revocation (isolated Postgre
     realtime = app.get(RealtimeSessionService);
     // Real production middleware and PostgreSQL store, with only its connection schema isolated.
     app.use(infrastructure.createMiddleware());
+    app.use((req: Request, _res: Response, next: () => void) => {
+      sessionStore = req.sessionStore;
+      next();
+    });
     app.use(passport.initialize());
     app.use(passport.session());
     // Barrier is after store loading and Passport deserialization. No store operation is mocked.
@@ -222,6 +229,36 @@ describe('Session persistence across password-reset revocation (isolated Postgre
     }
   }
 
+  async function snapshot(sid: string): Promise<SessionData> {
+    return new Promise((resolve, reject) =>
+      sessionStore.get(sid, (error: unknown, data) => {
+        if (error)
+          reject(
+            error instanceof Error ? error : new Error('Store read failed'),
+          );
+        else if (!data) reject(new Error('Missing session'));
+        else resolve(data);
+      }),
+    );
+  }
+
+  async function saveSnapshot(sid: string, data: SessionData): Promise<void> {
+    await new Promise<void>((resolve, reject) =>
+      sessionStore.set(sid, data, (error: unknown) =>
+        error
+          ? reject(
+              error instanceof Error ? error : new Error('Store save failed'),
+            )
+          : resolve(),
+      ),
+    );
+  }
+
+  function cookieFor(sid: string): string {
+    const secret = app.get(ConfigService).getOrThrow<string>('SESSION_SECRET');
+    return `sid=${encodeURIComponent(`s:${sign(sid, secret)}`)}`;
+  }
+
   async function owner() {
     const email = `${randomUUID()}@auth-version.test`;
     const password = 'OriginalPass123!';
@@ -260,6 +297,7 @@ describe('Session persistence across password-reset revocation (isolated Postgre
     });
     return {
       userId,
+      email,
       token,
       tokenId: tokenRow.id,
       login,
@@ -287,6 +325,255 @@ describe('Session persistence across password-reset revocation (isolated Postgre
     });
     return socket;
   }
+
+  it('requires a real parent SID and cascades its grant on store-row deletion', async () => {
+    const user = await owner();
+    await expect(
+      prisma.sessionAuthGrant.create({
+        data: { sid: randomUUID(), userId: user.userId, authVersion: 1 },
+      }),
+    ).rejects.toMatchObject({ code: 'P2003' });
+    const old = await snapshot(user.sid);
+    await prisma.userSession.delete({ where: { sid: user.sid } });
+    expect(
+      await prisma.sessionAuthGrant.findUnique({ where: { sid: user.sid } }),
+    ).toBeNull();
+    await saveSnapshot(user.sid, old);
+    expect(
+      await prisma.userSession.findUnique({ where: { sid: user.sid } }),
+    ).not.toBeNull();
+    expect(await realtimeAccepts(user.cookie)).toBe(false);
+    await request(server)
+      .get('/api/v1/auth/me')
+      .set('Cookie', user.cookie)
+      .expect(401);
+  });
+
+  it.each(['modified', 'explicit-save'] as const)(
+    'save-before-logout ordering stays revoked: %s',
+    async (mode) => {
+      const user = await owner();
+      const key = randomUUID();
+      const gate: Gate = { mode, loaded: deferred(), finish: deferred() };
+      gates.set(key, gate);
+      const pending = request(server)
+        .get('/__session_consistency_hold')
+        .query({ key })
+        .set('Cookie', user.cookie)
+        .then((response) => response);
+      const deleting = deferred(),
+        allowDelete = deferred();
+      const originalRevoke = infrastructure.revokeGrant.bind(infrastructure);
+      const revoke = jest
+        .spyOn(infrastructure, 'revokeGrant')
+        .mockImplementation(async (sid) => {
+          deleting.release();
+          await allowDelete.promise;
+          await originalRevoke(sid);
+        });
+      let loggingOut: Promise<TestResponse> | undefined;
+      try {
+        await gate.loaded.promise;
+        loggingOut = request(server)
+          .post('/api/v1/auth/logout')
+          .set('Cookie', user.cookie)
+          .then((response) => response);
+        await deleting.promise;
+        gate.finish.release();
+        expect((await pending).status).toBe(200);
+        expect(
+          await prisma.sessionAuthGrant.findUnique({
+            where: { sid: user.sid },
+          }),
+        ).not.toBeNull();
+        allowDelete.release();
+        expect((await loggingOut).status).toBe(200);
+        expect(
+          await prisma.sessionAuthGrant.findUnique({
+            where: { sid: user.sid },
+          }),
+        ).toBeNull();
+        expect(await realtimeAccepts(user.cookie)).toBe(false);
+        await request(server)
+          .get('/api/v1/auth/me')
+          .set('Cookie', user.cookie)
+          .expect(401);
+      } finally {
+        gate.finish.release();
+        allowDelete.release();
+        await pending;
+        await loggingOut;
+        revoke.mockRestore();
+        gates.delete(key);
+      }
+    },
+  );
+
+  it('does not report logout success or destroy the store when grant deletion fails', async () => {
+    const user = await owner();
+    const fail = jest
+      .spyOn(infrastructure, 'revokeGrant')
+      .mockRejectedValueOnce(new Error('grant deletion unavailable'));
+    const destroy = jest.spyOn(sessionStore, 'destroy');
+    try {
+      await request(server)
+        .post('/api/v1/auth/logout')
+        .set('Cookie', user.cookie)
+        .expect(500);
+      expect(destroy).not.toHaveBeenCalled();
+      expect(
+        await prisma.sessionAuthGrant.findUnique({ where: { sid: user.sid } }),
+      ).not.toBeNull();
+      await request(server)
+        .get('/api/v1/auth/me')
+        .set('Cookie', user.cookie)
+        .expect(200);
+      expect(await realtimeAccepts(user.cookie)).toBe(true);
+    } finally {
+      fail.mockRestore();
+      destroy.mockRestore();
+    }
+  });
+
+  it('keeps logout durable when store destruction and immediate disconnect both fail', async () => {
+    const user = await owner();
+    const other = await user.login();
+    const socket = await connectedSocket(user.cookie);
+    const ended = new Promise<void>((resolve) =>
+      socket.once('disconnect', () => resolve()),
+    );
+    const destroy = jest
+      .spyOn(sessionStore, 'destroy')
+      .mockImplementation((_sid, done) => {
+        done?.(new Error('store destruction unavailable'));
+      });
+    const disconnect = jest
+      .spyOn(app.get(RealtimeConnectionsService), 'disconnectSessions')
+      .mockImplementation(() => {
+        throw new Error('socket unavailable');
+      });
+    try {
+      await request(server)
+        .post('/api/v1/auth/logout')
+        .set('Cookie', user.cookie)
+        .expect(200);
+      expect(
+        await prisma.userSession.findUnique({ where: { sid: user.sid } }),
+      ).not.toBeNull();
+      expect(
+        await prisma.sessionAuthGrant.findUnique({ where: { sid: user.sid } }),
+      ).toBeNull();
+      expect(await realtimeAccepts(user.cookie)).toBe(false);
+      await expect(connectedSocket(user.cookie)).rejects.toMatchObject({
+        data: { code: 'AUTH_REQUIRED' },
+      });
+      await request(server)
+        .get('/api/v1/auth/me')
+        .set('Cookie', user.cookie)
+        .expect(401);
+      await ended;
+      await request(server)
+        .get('/api/v1/auth/me')
+        .set('Cookie', other.cookie)
+        .expect(200);
+      expect(
+        (await prisma.user.findUniqueOrThrow({ where: { id: user.userId } }))
+          .authVersion,
+      ).toBe(1);
+    } finally {
+      destroy.mockRestore();
+      disconnect.mockRestore();
+    }
+  });
+
+  it.each([false, true])(
+    'fails login closed when grant creation fails; store cleanup failure=%s',
+    async (cleanupFails) => {
+      const user = await owner();
+      const before = await prisma.sessionAuthGrant.count({
+        where: { userId: user.userId },
+      });
+      let finalSid = '';
+      const destroy = jest.spyOn(sessionStore, 'destroy');
+      const grant = jest
+        .spyOn(infrastructure, 'establishGrant')
+        .mockImplementation((sid) => {
+          finalSid = sid;
+          if (cleanupFails)
+            destroy.mockImplementation((_sid, done) => {
+              done?.(new Error('destruction unavailable'));
+            });
+          return Promise.reject(new Error('grant creation unavailable'));
+        });
+      try {
+        const response = await request(server)
+          .post('/api/v1/auth/login')
+          .send({ email: user.email, password: 'OriginalPass123!' })
+          .expect(500);
+        expect(finalSid).not.toBe('');
+        expect(finalSid).not.toBe(user.sid);
+        expect(
+          await prisma.sessionAuthGrant.findUnique({
+            where: { sid: finalSid },
+          }),
+        ).toBeNull();
+        expect(
+          await prisma.sessionAuthGrant.count({
+            where: { userId: user.userId },
+          }),
+        ).toBe(before);
+        expect(
+          !!(await prisma.userSession.findUnique({ where: { sid: finalSid } })),
+        ).toBe(cleanupFails);
+        expect(response.headers['set-cookie']).toBeUndefined();
+        const cookie = cookieFor(finalSid);
+        expect(await realtimeAccepts(cookie)).toBe(false);
+        await request(server)
+          .get('/api/v1/auth/me')
+          .set('Cookie', cookie)
+          .expect(401);
+        await request(server)
+          .get('/api/v1/auth/me')
+          .set('Cookie', user.cookie)
+          .expect(200);
+      } finally {
+        grant.mockRestore();
+        destroy.mockRestore();
+      }
+    },
+  );
+
+  it.each(['missing', 'wrong-user', 'wrong-version'])(
+    'rejects a current-version store row with %s grant',
+    async (kind) => {
+      const user = await owner();
+      if (kind === 'missing')
+        await prisma.sessionAuthGrant.delete({ where: { sid: user.sid } });
+      if (kind === 'wrong-version')
+        await prisma.sessionAuthGrant.update({
+          where: { sid: user.sid },
+          data: { authVersion: 2 },
+        });
+      if (kind === 'wrong-user') {
+        const other = await owner();
+        await prisma.sessionAuthGrant.update({
+          where: { sid: user.sid },
+          data: { userId: other.userId },
+        });
+      }
+      expect(await realtimeAccepts(user.cookie)).toBe(false);
+      await expect(connectedSocket(user.cookie)).rejects.toMatchObject({
+        data: { code: 'AUTH_REQUIRED' },
+      });
+      await request(server)
+        .get('/api/v1/auth/me')
+        .set('Cookie', user.cookie)
+        .expect(401);
+      expect(
+        await prisma.sessionAuthGrant.findUnique({ where: { sid: user.sid } }),
+      ).toEqual(kind === 'missing' ? null : expect.any(Object));
+    },
+  );
 
   it('rolls back password, token consumption, and version together without cleanup', async () => {
     const user = await owner();
@@ -446,17 +733,16 @@ describe('Session persistence across password-reset revocation (isolated Postgre
         await finish.promise;
         return snapshot;
       });
-    const pending = user.login();
+    const pending = request(server)
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: 'OriginalPass123!' })
+      .then((response) => response);
     try {
       await validated.promise;
       await user.reset();
       finish.release();
       const stale = await pending;
-      expect(await realtimeAccepts(stale.cookie)).toBe(false);
-      await request(server)
-        .get('/api/v1/auth/me')
-        .set('Cookie', stale.cookie)
-        .expect(401);
+      expect(stale.status).toBe(401);
     } finally {
       finish.release();
       await pending;
@@ -579,8 +865,12 @@ describe('Session persistence across password-reset revocation (isolated Postgre
     },
   ];
 
-  it.each(cases)(
-    '$mode: characterizes the exact SID after an in-flight request finishes',
+  it.each(
+    cases.flatMap((scenario) =>
+      (['reset', 'logout'] as const).map((action) => ({ ...scenario, action })),
+    ),
+  )(
+    '$action / $mode: recreating a physical SID cannot restore authorization',
     async (scenario) => {
       const email = `${randomUUID()}@session-consistency.test`;
       const password = 'OriginalPass123!';
@@ -618,6 +908,18 @@ describe('Session persistence across password-reset revocation (isolated Postgre
       expect(original.sess).toMatchObject({
         passport: { user: { id: userId, authVersion: 1 } },
       });
+      const otherLogin =
+        scenario.action === 'logout'
+          ? await request(server)
+              .post('/api/v1/auth/login')
+              .send({ email, password })
+              .expect(200)
+          : undefined;
+      const otherCookies: unknown = otherLogin?.headers['set-cookie'];
+      const otherCookie =
+        Array.isArray(otherCookies) && typeof otherCookies[0] === 'string'
+          ? otherCookies[0].split(';')[0]
+          : undefined;
       const key = randomUUID();
       const gate: Gate = {
         mode: scenario.mode,
@@ -639,17 +941,33 @@ describe('Session persistence across password-reset revocation (isolated Postgre
       const set = jest.spyOn(store, 'set');
       const touch = jest.spyOn(store, 'touch');
       try {
-        const token = randomUUID();
-        await prisma.passwordResetToken.create({
-          data: {
-            userId: String(userId),
-            tokenHash: createHash('sha256').update(token).digest('hex'),
-            expiresAt: new Date(Date.now() + 60000),
-          },
-        });
-        await app
-          .get(AuthService)
-          .resetPassword({ token, password: 'ResetPass456!' });
+        if (scenario.action === 'reset') {
+          const token = randomUUID();
+          await prisma.passwordResetToken.create({
+            data: {
+              userId: String(userId),
+              tokenHash: createHash('sha256').update(token).digest('hex'),
+              expiresAt: new Date(Date.now() + 60000),
+            },
+          });
+          await app
+            .get(AuthService)
+            .resetPassword({ token, password: 'ResetPass456!' });
+        } else {
+          await request(server)
+            .post('/api/v1/auth/logout')
+            .set('Cookie', cookie)
+            .expect(200);
+          expect(
+            await prisma.sessionAuthGrant.findUnique({ where: { sid } }),
+          ).toBeNull();
+          if (!otherCookie) throw new Error('Missing second device');
+          await request(server)
+            .get('/api/v1/auth/me')
+            .set('Cookie', otherCookie)
+            .expect(200);
+          expect(await realtimeAccepts(otherCookie)).toBe(true);
+        }
         expect(
           await prisma.userSession.findUnique({ where: { sid } }),
         ).toBeNull();
@@ -689,6 +1007,9 @@ describe('Session persistence across password-reset revocation (isolated Postgre
             passport: { user: { id: userId, authVersion: 1 } },
           });
         } else expect(final).toBeNull();
+        expect(
+          await prisma.sessionAuthGrant.findUnique({ where: { sid } }),
+        ).toBeNull();
         // Check realtime before HTTP deserialization can strip stale Passport data.
         expect(await realtimeAccepts(cookie)).toBe(false);
         await expect(connectedSocket(cookie)).rejects.toMatchObject({
@@ -705,10 +1026,13 @@ describe('Session persistence across password-reset revocation (isolated Postgre
               where: { id: String(userId) },
             })
           ).authVersion,
-        ).toBe(2);
+        ).toBe(scenario.action === 'reset' ? 2 : 1);
         const fresh = await request(server)
           .post('/api/v1/auth/login')
-          .send({ email, password: 'ResetPass456!' })
+          .send({
+            email,
+            password: scenario.action === 'reset' ? 'ResetPass456!' : password,
+          })
           .expect(200);
         const freshCookies: unknown = fresh.headers['set-cookie'];
         if (!Array.isArray(freshCookies) || typeof freshCookies[0] !== 'string')
@@ -719,6 +1043,15 @@ describe('Session persistence across password-reset revocation (isolated Postgre
           .set('Cookie', freshCookie)
           .expect(200);
         expect(await realtimeAccepts(freshCookie)).toBe(true);
+        const freshSid = infrastructure.signedSessionId(freshCookie);
+        expect(
+          await prisma.sessionAuthGrant.findUnique({
+            where: { sid: freshSid! },
+          }),
+        ).toMatchObject({
+          userId,
+          authVersion: scenario.action === 'reset' ? 2 : 1,
+        });
       } finally {
         gate.finish.release();
         await pending;

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { PassportSerializer } from '@nestjs/passport';
+import passport from 'passport';
+import type { Request } from 'express';
 import type { SafeUser } from '../../users/types/safe-user.type';
 import { UsersService } from '../../users/users.service';
 
@@ -20,9 +21,15 @@ export function isSessionAuthentication(
 }
 
 @Injectable()
-export class SessionSerializer extends PassportSerializer {
+export class SessionSerializer {
   constructor(private readonly usersService: UsersService) {
-    super();
+    passport.serializeUser<SessionAuthentication>((user, done) =>
+      this.serializeUser(user as SafeUser, done),
+    );
+    // Nest's two-argument wrapper discards request context. Bind validation to the real SID.
+    passport.deserializeUser<unknown, Request>((req, snapshot, done) => {
+      void this.deserializeUser(req, snapshot, done);
+    });
   }
 
   serializeUser(
@@ -38,15 +45,20 @@ export class SessionSerializer extends PassportSerializer {
   }
 
   async deserializeUser(
+    req: Request,
     snapshot: unknown,
     done: (err: unknown, user: SafeUser | null) => void,
   ): Promise<void> {
     try {
-      if (!isSessionAuthentication(snapshot)) {
+      if (!isSessionAuthentication(snapshot) || !req.sessionID) {
         done(null, null);
         return;
       }
-      const user = await this.usersService.findById(snapshot.id);
+      const user = await this.usersService.findByAuthenticatedSession(
+        snapshot.id,
+        req.sessionID,
+        snapshot.authVersion,
+      );
       done(null, user?.authVersion === snapshot.authVersion ? user : null);
     } catch (err) {
       done(err, null);

@@ -11,6 +11,7 @@ import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { SessionInfrastructureService } from './session-infrastructure.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 jest.mock('pg', () => {
   const actual = jest.requireActual<typeof import('pg')>('pg');
@@ -61,6 +62,7 @@ describe('Session pool errors', () => {
         DATABASE_URL: databaseUrl,
         NODE_ENV: 'test',
       }),
+      {} as PrismaService,
     );
   }
 

@@ -180,6 +180,7 @@ model User {
   notifications Notification[]
   savedListings SavedListing[]
   listingReports ListingReport[] @relation("ListingReportReporter")
+  sessionAuthGrants SessionAuthGrant[]
 
   @@map("users")
 }
@@ -760,9 +761,22 @@ model UserSession {
   sid    String   @id @db.VarChar
   sess   Json     @db.Json
   expire DateTime @db.Timestamp(6)
+  authGrant SessionAuthGrant?
 
   @@index([expire], map: "IDX_user_sessions_expire")
   @@map("user_sessions")
+}
+
+model SessionAuthGrant {
+  sid         String      @id @db.VarChar
+  userId      String      @map("user_id") @db.Uuid
+  authVersion Int         @map("auth_version")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  session     UserSession @relation(fields: [sid], references: [sid], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session_auth_grants")
 }
 
 model OutboxEvent {

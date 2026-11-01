@@ -20,6 +20,24 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { email } });
   }
 
+  async findByAuthenticatedSession(
+    id: string,
+    sid: string,
+    authVersion: number,
+  ): Promise<SafeUser | null> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id,
+        authVersion,
+        status: UserStatus.ACTIVE,
+        sessionAuthGrants: {
+          some: { sid, authVersion, session: { expire: { gt: new Date() } } },
+        },
+      },
+    });
+    return user ? this.toSafeUser(user) : null;
+  }
+
   async create(data: Prisma.UserCreateInput): Promise<SafeUser> {
     const user = await this.prisma.user.create({ data });
     return this.toSafeUser(user);

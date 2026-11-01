@@ -6,7 +6,8 @@ import { Test } from '@nestjs/testing';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { Pool } from 'pg';
-import session from 'express-session';
+import { ConfigService } from '@nestjs/config';
+import { SessionInfrastructureService } from '../src/auth/session/session-infrastructure.service';
 import passport from 'passport';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -79,9 +80,15 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
     });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool, { schema }) });
     await prisma.$connect();
+    const scoped = new URL(url);
+    scoped.searchParams.set('options', `-c search_path=${schema}`);
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
       .useValue(prisma)
+      .overrideProvider(ConfigService)
+      .useValue(
+        new ConfigService({ ...process.env, DATABASE_URL: scoped.href }),
+      )
       .compile();
     app = module.createNestApplication();
     app.setGlobalPrefix('api/v1');
@@ -93,14 +100,8 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    // Authenticated HTTP coverage uses real Passport/guards, with test-only memory sessions.
-    app.use(
-      session({
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-      }),
-    );
+    // Grants require real persisted session rows in this suite's isolated schema.
+    app.use(app.get(SessionInfrastructureService).createMiddleware());
     app.use(passport.initialize());
     app.use(passport.session());
     await app.init();

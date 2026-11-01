@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import connectPgSimple from 'connect-pg-simple';
 import session from 'express-session';
@@ -6,6 +11,8 @@ import { parse } from 'cookie';
 import { unsign } from 'cookie-signature';
 import { Pool } from 'pg';
 import { NodeEnv } from '../../config/env.validation';
+import { PrismaService } from '../../prisma/prisma.service';
+import type { SafeUser } from '../../users/types/safe-user.type';
 
 const SESSION_COOKIE = 'sid';
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
@@ -24,8 +31,38 @@ export class SessionInfrastructureService implements OnModuleDestroy {
     });
   };
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {
     this.secret = config.getOrThrow<string>('SESSION_SECRET');
+  }
+
+  // Only login/registration may call this, after Passport saves its final generated SID.
+  async establishGrant(sid: string, user: SafeUser): Promise<void> {
+    const version = user.authVersion;
+    if (
+      typeof version !== 'number' ||
+      !Number.isSafeInteger(version) ||
+      version < 1 ||
+      version > 2147483647
+    )
+      throw new UnauthorizedException('Session establishment failed');
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO session_auth_grants (sid, user_id, auth_version)
+      SELECT s.sid, u.id, u.auth_version FROM user_sessions s
+      JOIN users u ON u.id::text = s.sess->'passport'->'user'->>'id'
+      WHERE s.sid = ${sid} AND s.expire > CURRENT_TIMESTAMP
+        AND u.id = ${user.id}::uuid AND u.status = 'active'
+        AND u.auth_version = ${version}::integer
+        AND s.sess::jsonb->'passport'->'user'->'authVersion' = to_jsonb(u.auth_version)
+    `;
+    if (inserted !== 1)
+      throw new UnauthorizedException('Session establishment failed');
+  }
+
+  async revokeGrant(sid: string): Promise<void> {
+    await this.prisma.sessionAuthGrant.deleteMany({ where: { sid } });
   }
 
   createMiddleware() {

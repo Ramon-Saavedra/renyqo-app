@@ -8,6 +8,7 @@ import { AuthService } from './auth.service';
 import { PasswordResetTokensRepository } from './password-reset-tokens.repository';
 import { SessionSerializer } from './serializers/session.serializer';
 import { AuthRevocationService } from './session/auth-revocation.service';
+import { SessionModule } from './session/session.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { AuthRevocationService } from './session/auth-revocation.service';
     UsersModule,
     EmailModule,
     RealtimeModule,
+    SessionModule,
   ],
   providers: [
     AuthService,

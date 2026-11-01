@@ -36,6 +36,7 @@ describe('UsersService', () => {
           provide: PrismaService,
           useValue: {
             user: {
+              findFirst: jest.fn(),
               findUnique: jest.fn(),
               create: jest.fn(),
             },
@@ -45,6 +46,51 @@ describe('UsersService', () => {
     }).compile();
 
     service = module.get<UsersService>(UsersService);
+  });
+
+  describe('authenticated session lookup', () => {
+    it('requires actual SID, owner, version, current active user, and unexpired parent in one query', async () => {
+      const findFirst = jest.fn().mockResolvedValue(makeUser());
+      const scoped = new UsersService({
+        user: { findFirst },
+      } as unknown as PrismaService);
+      expect(
+        (await scoped.findByAuthenticatedSession(USER_ID, 'actual-sid', 1))?.id,
+      ).toBe(USER_ID);
+      expect(findFirst).toHaveBeenCalledWith({
+        where: {
+          id: USER_ID,
+          authVersion: 1,
+          status: UserStatus.ACTIVE,
+          sessionAuthGrants: {
+            some: {
+              sid: 'actual-sid',
+              authVersion: 1,
+              session: { expire: { gt: expect.any(Date) } },
+            },
+          },
+        },
+      });
+      expect(findFirst).toHaveBeenCalledTimes(1);
+    });
+    it('returns unauthenticated when the grant/owner/version join has no match', async () => {
+      const scoped = new UsersService({
+        user: { findFirst: jest.fn().mockResolvedValue(null) },
+      } as unknown as PrismaService);
+      expect(
+        await scoped.findByAuthenticatedSession(USER_ID, 'no-grant', 1),
+      ).toBeNull();
+    });
+    it('propagates lookup errors instead of authorizing from the loaded snapshot', async () => {
+      const scoped = new UsersService({
+        user: {
+          findFirst: jest.fn().mockRejectedValue(new Error('lookup failed')),
+        },
+      } as unknown as PrismaService);
+      await expect(
+        scoped.findByAuthenticatedSession(USER_ID, 'sid', 1),
+      ).rejects.toThrow('lookup failed');
+    });
   });
 
   describe('toSafeUser', () => {
