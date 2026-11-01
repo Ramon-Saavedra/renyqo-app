@@ -39,14 +39,6 @@ export class ApplicantListingsController {
       if (user.role !== Role.APPLICANT) {
         throw new ForbiddenException();
       }
-
-      if (
-        !(await this.applicantListingsService.isProfileCompleteForUser(user.id))
-      ) {
-        throw new BadRequestException(
-          'A complete applicant profile is required for onlyMatching',
-        );
-      }
     }
 
     return this.applicantListingsService.findPublishedForApplicant(

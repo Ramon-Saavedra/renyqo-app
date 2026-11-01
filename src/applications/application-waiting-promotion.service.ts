@@ -8,6 +8,8 @@ import {
   ListingStatus,
 } from '../generated/prisma/enums';
 import { EligibilityService } from '../eligibility/eligibility.service';
+import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
+import { EligibilityAssessmentTrigger } from '../generated/prisma/enums';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationActivityService } from './application-activity.service';
 import {
@@ -18,6 +20,7 @@ import {
 @Injectable()
 export class ApplicationWaitingPromotionService {
   constructor(
+    private readonly assessments: ApplicationEligibilityAssessmentService,
     private readonly eligibilityService: EligibilityService,
     private readonly transactionService: ApplicationTransactionService,
     private readonly activityService: ApplicationActivityService,
@@ -100,6 +103,13 @@ export class ApplicationWaitingPromotionService {
           where: { id: application.id },
           data: { status: ApplicationStatus.ACTIVE, activeAt: new Date() },
         });
+        await this.assessments.record(
+          tx,
+          application.id,
+          listing,
+          profile,
+          EligibilityAssessmentTrigger.PROMOTION,
+        );
         await this.activityService.appendWithinTransaction(tx, {
           applicationId: application.id,
           type: ApplicationActivityType.APPLICATION_PROMOTED_TO_ACTIVE,

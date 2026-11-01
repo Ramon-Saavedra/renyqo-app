@@ -12,9 +12,25 @@ Only `ACTIVE` and `WAITING` are current/live application attempts. `REJECTED`, `
 
 ## Eligibility authority
 
-`GET /api/v1/listings/:id/eligibility` is read-only. It performs no database mutation, loads the applicant profile of the authenticated session from the database, evaluates the current listing requirements and returns only `canApply` and `evaluatedAt`. The applicant-safe projection preserves the result and timestamp and omits `reasons` and `warnings`. Internal evaluations retain their detailed reasons and warnings. Eligibility data supplied by a client is never accepted as authoritative; the endpoint takes no request body.
+Profile prequalification is deterministic, with no score, ranking or AI suitability decision. It evaluates configured income and household-size limits, pets/smoking policies, and document availability declarations. It is separate from admission history, FIFO queue priority, provider preference and final selection. Endpoint evaluation, admission, listing projections, restoration, promotion and SQL matching filters share the same rules.
 
-`POST /api/v1/listings/:id/apply` evaluates admission history and recalculates eligibility from current database data inside the same Serializable transaction that creates the application, under the existing listing lock. A previous frontend eligibility result is never trusted. An ineligible submission returns `422` with the existing generic message, `code: "APPLICANT_NOT_ELIGIBLE"`, `canApply: false`, `evaluatedAt`, and creates no application row. Provider-authorized restoration errors retain their existing detailed contract.
+- A failed hard check produces `NO_MATCH`.
+- Otherwise, missing information required by a hard check produces `INSUFFICIENT_INFORMATION`. A missing profile is explicitly insufficient; missing facts for disabled criteria do not block.
+- Otherwise, observations produce `MATCH_WITH_OBSERVATIONS`; no observations produces `MATCH`. Both permit eligibility to pass into the separate admission policy.
+- Income and household-size threshold equality passes. `NOT_ALLOWED` pets/smoking requires a known negative declaration; a positive declaration fails and missing information is insufficient. `BY_ARRANGEMENT` produces an observation for positive or unknown declarations.
+- SCHUFA and income-proof availability are declarations, never verified evidence. When enabled, these checks produce pending or declared-but-unverified observations and never block prequalification. They do not require document uploads or implement document verification.
+
+The read-only eligibility endpoint loads the authenticated applicant's current profile and current listing criteria. Client-supplied eligibility is never authoritative. Applicant projections expose coarse results, not internal checks, reasons, evaluated facts or private thresholds; exact contracts are in [API](api.md#applications).
+
+Application submission recomputes eligibility under the listing/profile locks in the same Serializable transaction that creates the application, its immutable application-time assessment, activity and outbox entries. Assessment persistence failure rolls back admission. Previous frontend evaluations are never trusted. Existing WAITING/ACTIVE allocation and admission-history restrictions remain independent.
+
+### Criteria and profile changes
+
+An effective listing criteria edit appends an immutable criteria revision and reassesses all ACTIVE/WAITING applications atomically under the listing lock. Unrelated or no-op edits create no revision. The application-time assessment remains unchanged, while later assessments preserve the current result and exact internal mismatched checks. Criteria edits do not automatically reject, demote or close applications or viewings, and do not reallocate capacity.
+
+Applicant profile edits remain a separate policy: existing ACTIVE/WAITING applications are revalidated and can still be automatically rejected as `PROFILE_NO_LONGER_ELIGIBLE` when canonical eligibility fails, with the assessment recorded in the same transaction. This policy has not been replaced by the criteria-change behavior. Document declaration changes alone cannot cause eligibility rejection. Restoration and promotion retain changed assessments without duplicating an equivalent assessment.
+
+Legacy applications without an application-time assessment have UNKNOWN historical eligibility, even if a later reassessment exists. Current data must never be presented as proof of eligibility when they originally applied. See [Database](database.md#eligibility-history) for persistence invariants.
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 

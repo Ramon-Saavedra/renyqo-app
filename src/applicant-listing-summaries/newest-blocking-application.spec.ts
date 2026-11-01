@@ -1,3 +1,4 @@
+import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
 import { Test } from '@nestjs/testing';
 import {
   ApplicationRejectionReason,
@@ -141,6 +142,7 @@ describe('newest blocking application selection', () => {
           useValue: {
             isProfileComplete: jest.fn().mockReturnValue(false),
             evaluateCriteria: jest.fn().mockReturnValue({
+              ...new EligibilityResponseDto(false, [], [], new Date()),
               canApply: false,
               reasons: [],
               warnings: [],

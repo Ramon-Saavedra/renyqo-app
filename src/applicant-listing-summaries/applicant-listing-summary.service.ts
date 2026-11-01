@@ -9,7 +9,10 @@ import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplicantListingSummaryDto } from '../listings/dto/applicant-listing-summary.dto';
 import type { ApplicantListingSummaryBuildSource } from './applicant-listing-summary-listing.select';
-import { ProfileMatch } from '../listings/dto/applicant-listing-profile-match.enum';
+import {
+  ProfileMatch,
+  toProfileMatch,
+} from '../listings/dto/applicant-listing-profile-match.enum';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantListingAttentionEnricher } from '../application-attention/applicant-listing-attention.enricher';
 import type { ApplicantListingAttentionDto } from '../application-attention/dto/attention-response.dto';
@@ -128,17 +131,9 @@ export class ApplicantListingSummaryService {
     let profileMatch = ProfileMatch.UNKNOWN;
 
     if (isApplicant) {
-      if (!this.eligibilityService.isProfileComplete(profile)) {
-        profileMatch = ProfileMatch.PROFILE_INCOMPLETE;
-      } else {
-        const result = this.eligibilityService.evaluateCriteria(
-          listing,
-          profile,
-        );
-        profileMatch = result.canApply
-          ? ProfileMatch.MATCH
-          : ProfileMatch.NO_MATCH;
-      }
+      profileMatch = toProfileMatch(
+        this.eligibilityService.evaluateCriteria(listing, profile).result,
+      );
     }
 
     return new ApplicantListingSummaryDto(

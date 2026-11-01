@@ -446,13 +446,15 @@ describe('Application Lifecycle E2E', () => {
         name: 'missing SCHUFA',
         listing: { schufaRequired: true },
         profile: { schufaAvailable: false },
-        reasons: ['schufa_required_but_not_available'],
+        reasons: [],
+        warnings: ['schufa_declaration_pending'],
       },
       {
         name: 'missing income proof',
         listing: { incomeProofRequired: true },
         profile: { incomeProofAvailable: false },
-        reasons: ['income_proof_required_but_not_available'],
+        reasons: [],
+        warnings: ['income_proof_declaration_pending'],
       },
       {
         name: 'missing household size',
@@ -550,6 +552,7 @@ describe('Application Lifecycle E2E', () => {
         );
         expect(eligibility).toEqual({
           canApply,
+          result: evaluation.result,
           evaluatedAt: expect.any(String),
         });
         const submitted = responseBody(
@@ -562,6 +565,7 @@ describe('Application Lifecycle E2E', () => {
             message: 'Applicant is not eligible for this listing',
             code: 'APPLICANT_NOT_ELIGIBLE',
             canApply: false,
+            result: evaluation.result,
             evaluatedAt: expect.any(String),
           });
         }

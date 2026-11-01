@@ -38,6 +38,9 @@ import type { RentListingDto } from './dto/rent-listing.dto';
 import type { UpdateListingPositionDto } from './dto/update-listing-position.dto';
 import { ListingInputRules } from './listing-input-rules';
 import { ListingResponseMapper } from './listing-response.mapper';
+import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
+import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
+import { CriteriaRevisionSource } from '../generated/prisma/enums';
 
 const PUBLISH_REQUIRED_FIELDS = [
   'title',
@@ -78,6 +81,8 @@ export class ListingsService {
     private readonly activityService: ApplicationActivityService,
     private readonly viewingLifecycle: ViewingLifecycleService,
     private readonly applicationLifecycle: ApplicationLifecycleService,
+    private readonly criteriaRevisions: ListingCriteriaRevisionService,
+    private readonly assessments: ApplicationEligibilityAssessmentService,
   ) {}
 
   async create(
@@ -95,8 +100,8 @@ export class ListingsService {
       return this.createWithImage(providerId, dto, file);
     }
 
-    return runSerializableTransaction(this.prisma, async (tx) =>
-      tx.listing.create({
+    return runSerializableTransaction(this.prisma, async (tx) => {
+      const listing = await tx.listing.create({
         data: {
           ...this.listingInputRules.buildCreateData(providerId, dto),
           displayOrder: await this.listingOrderingService.getNextDisplayOrder(
@@ -104,8 +109,15 @@ export class ListingsService {
             providerId,
           ),
         },
-      }),
-    );
+      });
+      await this.criteriaRevisions.current(
+        tx,
+        listing,
+        providerId,
+        CriteriaRevisionSource.NATIVE,
+      );
+      return listing;
+    });
   }
 
   async findAllByProvider(
@@ -158,10 +170,30 @@ export class ListingsService {
       });
       if (!listing) throw new NotFoundException('Listing not found');
 
-      return tx.listing.update({
+      const updated = await tx.listing.update({
         where: { id },
         data: this.listingInputRules.buildUpdateData(dto, listing),
       });
+      const revision = await this.criteriaRevisions.changed(
+        tx,
+        listing,
+        updated,
+        providerId,
+      );
+      if (revision) {
+        await this.assessments.reassessListing(
+          tx,
+          updated,
+          revision,
+          providerId,
+        );
+        await this.activityService.lifecycleChangedForListingWithinTransaction(
+          tx,
+          id,
+          revision.recordedAt,
+        );
+      }
+      return updated;
     });
   }
 
@@ -421,7 +453,12 @@ export class ListingsService {
             isCover: true,
           },
         });
-
+        await this.criteriaRevisions.current(
+          tx,
+          listing,
+          providerId,
+          CriteriaRevisionSource.NATIVE,
+        );
         return listing;
       });
     } catch (err) {

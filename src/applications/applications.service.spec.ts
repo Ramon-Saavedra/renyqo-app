@@ -1,3 +1,5 @@
+import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
+import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
 import { ViewingLifecycleService } from './viewing-lifecycle.service';
 import {
   ConflictException,
@@ -186,6 +188,19 @@ describe('ApplicationsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: ListingCriteriaRevisionService,
+          useValue: {
+            current: jest.fn(),
+            changed: jest
+              .fn<ListingCriteriaRevisionService['changed']>()
+              .mockResolvedValue(null),
+          },
+        },
+        {
+          provide: ApplicationEligibilityAssessmentService,
+          useValue: { record: jest.fn(), reassessListing: jest.fn() },
+        },
         {
           provide: ApplicationConsiderationReadService,
           useValue: {

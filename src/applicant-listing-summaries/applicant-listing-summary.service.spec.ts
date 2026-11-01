@@ -1,3 +1,4 @@
+import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -148,6 +149,7 @@ describe('ApplicantListingSummaryService', () => {
           useValue: {
             isProfileComplete: jest.fn().mockReturnValue(false),
             evaluateCriteria: jest.fn().mockReturnValue({
+              ...new EligibilityResponseDto(false, [], [], new Date()),
               canApply: false,
               reasons: [],
               warnings: [],
@@ -204,7 +206,15 @@ describe('ApplicantListingSummaryService', () => {
     prismaMock.applicantProfile.findUnique.mockResolvedValue(
       makeApplicantProfile(),
     );
-    eligibilityMock.isProfileComplete.mockReturnValue(false);
+    eligibilityMock.evaluateCriteria.mockReturnValue(
+      new EligibilityResponseDto(
+        false,
+        ['household_income_not_available'],
+        [],
+        new Date(),
+        'INSUFFICIENT_INFORMATION',
+      ),
+    );
 
     const result = await service.buildSummaries(
       applicantUser,
@@ -224,6 +234,7 @@ describe('ApplicantListingSummaryService', () => {
     );
     eligibilityMock.isProfileComplete.mockReturnValue(true);
     eligibilityMock.evaluateCriteria.mockReturnValue({
+      ...new EligibilityResponseDto(true, [], [], new Date()),
       canApply: true,
       reasons: [],
       warnings: [],
@@ -247,6 +258,7 @@ describe('ApplicantListingSummaryService', () => {
     );
     eligibilityMock.isProfileComplete.mockReturnValue(true);
     eligibilityMock.evaluateCriteria.mockReturnValue({
+      ...new EligibilityResponseDto(false, [], [], new Date()),
       canApply: false,
       reasons: [],
       warnings: [],
@@ -268,6 +280,7 @@ describe('ApplicantListingSummaryService', () => {
     const profile = makeApplicantProfile();
     eligibilityMock.isProfileComplete.mockReturnValue(true);
     eligibilityMock.evaluateCriteria.mockReturnValue({
+      ...new EligibilityResponseDto(true, [], [], new Date()),
       canApply: true,
       reasons: [],
       warnings: [],

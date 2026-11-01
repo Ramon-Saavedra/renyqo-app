@@ -19,7 +19,10 @@ import type {
   ApplicantListingsQueryDto,
   DiscoverySort,
 } from './dto/applicant-listings-query.dto';
-import { ProfileMatch } from './dto/applicant-listing-profile-match.enum';
+import {
+  ProfileMatch,
+  toProfileMatch,
+} from './dto/applicant-listing-profile-match.enum';
 import { ApplicantListingDiscoveryQuery } from './applicant-listing-discovery-query';
 import { ApplicationAdmissionResponseDto } from '../applications/dto/application-admission-response.dto';
 
@@ -171,17 +174,9 @@ export class ApplicantListingsService {
         where: { applicantId: applicantUser.id },
       });
 
-      if (!this.eligibilityService.isProfileComplete(profile)) {
-        profileMatch = ProfileMatch.PROFILE_INCOMPLETE;
-      } else {
-        const result = this.eligibilityService.evaluateCriteria(
-          listing,
-          profile,
-        );
-        profileMatch = result.canApply
-          ? ProfileMatch.MATCH
-          : ProfileMatch.NO_MATCH;
-      }
+      profileMatch = toProfileMatch(
+        this.eligibilityService.evaluateCriteria(listing, profile).result,
+      );
 
       blockingApplication =
         await this.applicationsService.findBlockingApplicationForListing(

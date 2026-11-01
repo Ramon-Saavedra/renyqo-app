@@ -18,6 +18,8 @@ import {
   ListingStatus,
 } from '../generated/prisma/enums';
 import { EligibilityService } from '../eligibility/eligibility.service';
+import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
+import { EligibilityAssessmentTrigger } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import type { ApplicationTransactionClient } from './application-lifecycle.service';
@@ -31,6 +33,7 @@ import { ViewingLifecycleService } from './viewing-lifecycle.service';
 @Injectable()
 export class ProviderApplicationCurationService {
   constructor(
+    private readonly assessments: ApplicationEligibilityAssessmentService,
     private readonly prisma: PrismaService,
     private readonly eligibilityService: EligibilityService,
     private readonly transactionService: ApplicationTransactionService,
@@ -207,7 +210,10 @@ export class ProviderApplicationCurationService {
       if (!eligibility.canApply) {
         throw new UnprocessableEntityException({
           message: 'Applicant is not eligible for this listing',
-          ...eligibility,
+          canApply: eligibility.canApply,
+          reasons: eligibility.reasons,
+          warnings: eligibility.warnings,
+          evaluatedAt: eligibility.evaluatedAt,
         });
       }
 
@@ -269,6 +275,14 @@ export class ProviderApplicationCurationService {
             : ApplicationStatus.WAITING,
         },
       });
+      await this.assessments.record(
+        tx,
+        applicationId,
+        application.listing,
+        profile,
+        EligibilityAssessmentTrigger.RESTORE,
+        providerId,
+      );
 
       await tx.listingEvent.create({
         data: {
