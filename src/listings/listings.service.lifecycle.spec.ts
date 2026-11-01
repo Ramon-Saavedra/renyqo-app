@@ -1,3 +1,5 @@
+import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
+import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
 import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import {
@@ -180,6 +182,19 @@ describe('ListingsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: ListingCriteriaRevisionService,
+          useValue: {
+            current: jest.fn(),
+            changed: jest
+              .fn<ListingCriteriaRevisionService['changed']>()
+              .mockResolvedValue(null),
+          },
+        },
+        {
+          provide: ApplicationEligibilityAssessmentService,
+          useValue: { record: jest.fn(), reassessListing: jest.fn() },
+        },
         {
           provide: ViewingLifecycleService,
           useValue: {

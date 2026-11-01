@@ -156,6 +156,8 @@ enum ProviderType {
 }
 
 model User {
+  eligibilityCriteriaEdits ListingCriteriaRevision[] @relation("CriteriaActor")
+  eligibilityAssessments ApplicationEligibilityAssessment[] @relation("AssessmentActor")
   id                String        @id @default(uuid()) @db.Uuid
   name              String
   email             String        @unique
@@ -200,6 +202,7 @@ model PasswordResetToken {
 }
 
 model Listing {
+  criteriaRevisions ListingCriteriaRevision[]
   id         String        @id @default(uuid()) @db.Uuid
   providerId String        @map("provider_id") @db.Uuid
   status     ListingStatus @default(DRAFT)
@@ -273,6 +276,7 @@ model ListingImage {
 }
 
 model Application {
+  eligibilityAssessments ApplicationEligibilityAssessment[]
   id           String             @id @default(uuid()) @db.Uuid
   listingId    String             @map("listing_id") @db.Uuid
   applicantId  String             @map("applicant_id") @db.Uuid
@@ -815,4 +819,112 @@ model ViewingCommandReceipt {
   application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   @@unique([applicationId, requestKey])
   @@map("viewing_command_receipts")
+}
+
+
+enum ProfileEligibilityResult {
+  MATCH
+  NO_MATCH
+  MATCH_WITH_OBSERVATIONS
+  INSUFFICIENT_INFORMATION
+}
+enum ProfileEligibilityCriterion {
+  PROFILE
+  INCOME
+  HOUSEHOLD_SIZE
+  PETS
+  SMOKING
+  SCHUFA_DECLARATION
+  INCOME_PROOF_DECLARATION
+}
+enum ProfileEligibilityOutcome {
+  PASS
+  FAIL
+  UNKNOWN
+  OBSERVATION
+  NOT_APPLICABLE
+}
+enum ProfileEligibilityCode {
+  profile_not_available
+  household_income_not_available
+  household_income_below_requirement
+  household_size_not_available
+  household_size_exceeds_requirement
+  pets_not_allowed
+  smoking_not_allowed
+  pets_information_not_available
+  smoking_information_not_available
+  pets_by_arrangement
+  smoking_by_arrangement
+  schufa_declaration_pending
+  schufa_declared_not_verified
+  income_proof_declaration_pending
+  income_proof_declared_not_verified
+}
+enum EligibilityAssessmentTrigger {
+  APPLICATION_CREATED
+  CRITERIA_CHANGED
+  PROFILE_CHANGED
+  RESTORE
+  PROMOTION
+}
+enum CriteriaRevisionSource {
+  NATIVE
+  LEGACY_BASELINE
+}
+model ListingCriteriaRevision {
+  id String @id @default(uuid()) @db.Uuid
+  listingId String @map("listing_id") @db.Uuid
+  revision Int
+  schemaVersion Int @default(1) @map("schema_version")
+  source CriteriaRevisionSource
+  actorUserId String? @map("actor_user_id") @db.Uuid
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  minimumHouseholdNetIncome Float? @map("minimum_household_net_income")
+  suitableForPeopleCount Int? @map("suitable_for_people_count")
+  petsPolicy PetsPolicy? @map("pets_policy")
+  smokingPolicy SmokingPolicy? @map("smoking_policy")
+  schufaRequired Boolean @map("schufa_required")
+  incomeProofRequired Boolean @map("income_proof_required")
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  actor User? @relation("CriteriaActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  assessments ApplicationEligibilityAssessment[]
+  @@unique([listingId, revision])
+  @@unique([id, listingId])
+  @@map("listing_criteria_revisions")
+}
+model ApplicationEligibilityAssessment {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  listingId String @map("listing_id") @db.Uuid
+  criteriaRevisionId String @map("criteria_revision_id") @db.Uuid
+  revision Int
+  evaluatorVersion String @map("evaluator_version") @db.VarChar(80)
+  trigger EligibilityAssessmentTrigger
+  actorUserId String? @map("actor_user_id") @db.Uuid
+  evaluatedAt DateTime @map("evaluated_at") @db.Timestamptz(3)
+  result ProfileEligibilityResult
+  profilePresent Boolean @map("profile_present")
+  householdNetIncome Float? @map("household_net_income")
+  householdSize Int? @map("household_size")
+  hasPets Boolean? @map("has_pets")
+  isSmoker Boolean? @map("is_smoker")
+  schufaAvailable Boolean? @map("schufa_available")
+  incomeProofAvailable Boolean? @map("income_proof_available")
+  application Application @relation(fields: [applicationId, listingId], references: [id, listingId], onDelete: Restrict)
+  criteria ListingCriteriaRevision @relation(fields: [criteriaRevisionId, listingId], references: [id, listingId], onDelete: Restrict)
+  actor User? @relation("AssessmentActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  checks ApplicationEligibilityCheck[]
+  @@unique([applicationId, revision])
+  @@index([listingId, evaluatedAt, id])
+  @@map("application_eligibility_assessments")
+}
+model ApplicationEligibilityCheck {
+  assessmentId String @map("assessment_id") @db.Uuid
+  criterion ProfileEligibilityCriterion
+  outcome ProfileEligibilityOutcome
+  code ProfileEligibilityCode?
+  assessment ApplicationEligibilityAssessment @relation(fields: [assessmentId], references: [id], onDelete: Restrict)
+  @@id([assessmentId, criterion])
+  @@map("application_eligibility_checks")
 }

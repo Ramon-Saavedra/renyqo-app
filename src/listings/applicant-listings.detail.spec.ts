@@ -1,3 +1,4 @@
+import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
 import { ConfigService } from '@nestjs/config';
 import { NotFoundException } from '@nestjs/common';
 import type { UploadApiResponse } from 'cloudinary';
@@ -324,6 +325,7 @@ describe('ApplicantListingsService', () => {
           useValue: {
             isProfileComplete: jest.fn().mockReturnValue(false),
             evaluateCriteria: jest.fn().mockReturnValue({
+              ...new EligibilityResponseDto(false, [], [], new Date()),
               canApply: false,
               reasons: [],
               warnings: [],
@@ -518,7 +520,15 @@ describe('ApplicantListingsService', () => {
 
       it('applicant with incomplete profile returns PROFILE_INCOMPLETE', async () => {
         prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail);
-        eligibilityMock.isProfileComplete.mockReturnValue(false);
+        eligibilityMock.evaluateCriteria.mockReturnValue(
+          new EligibilityResponseDto(
+            false,
+            ['household_income_not_available'],
+            [],
+            new Date(),
+            'INSUFFICIENT_INFORMATION',
+          ),
+        );
 
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
@@ -532,6 +542,7 @@ describe('ApplicantListingsService', () => {
         prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail);
         eligibilityMock.isProfileComplete.mockReturnValue(true);
         eligibilityMock.evaluateCriteria.mockReturnValue({
+          ...new EligibilityResponseDto(true, [], [], new Date()),
           canApply: true,
           reasons: [],
           warnings: [],
@@ -550,6 +561,7 @@ describe('ApplicantListingsService', () => {
         prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail);
         eligibilityMock.isProfileComplete.mockReturnValue(true);
         eligibilityMock.evaluateCriteria.mockReturnValue({
+          ...new EligibilityResponseDto(false, [], [], new Date()),
           canApply: false,
           reasons: [],
           warnings: [],

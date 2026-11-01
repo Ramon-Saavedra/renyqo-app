@@ -30,12 +30,15 @@ import { applicationCanWithdraw } from './application-process.policy';
 import { ApplicationActivityService } from './application-activity.service';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
+import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
+import { EligibilityAssessmentTrigger } from '../generated/prisma/enums';
 
 export type ApplicationTransactionClient = Prisma.TransactionClient;
 
 @Injectable()
 export class ApplicationLifecycleService {
   constructor(
+    private readonly assessments: ApplicationEligibilityAssessmentService,
     private readonly prisma: PrismaService,
     private readonly eligibilityService: EligibilityService,
     private readonly transactionService: ApplicationTransactionService,
@@ -99,6 +102,7 @@ export class ApplicationLifecycleService {
           code: 'APPLICANT_NOT_ELIGIBLE',
           canApply: applicantEligibility.canApply,
           evaluatedAt: applicantEligibility.evaluatedAt,
+          result: applicantEligibility.result,
         });
       }
 
@@ -137,6 +141,14 @@ export class ApplicationLifecycleService {
           occurredAt: now,
           metadata: { initialStatus: status },
         });
+        await this.assessments.record(
+          tx,
+          application.id,
+          listing,
+          profile,
+          EligibilityAssessmentTrigger.APPLICATION_CREATED,
+          applicantId,
+        );
 
         return application;
       } catch (err) {
@@ -404,6 +416,14 @@ export class ApplicationLifecycleService {
         const eligibility = this.eligibilityService.evaluate(
           application.listing,
           profile,
+        );
+        await this.assessments.record(
+          tx,
+          application.id,
+          application.listing,
+          profile,
+          EligibilityAssessmentTrigger.PROFILE_CHANGED,
+          applicantId,
         );
 
         if (eligibility.canApply) {

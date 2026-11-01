@@ -117,7 +117,7 @@ describe('ApplicantListingsController', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('throws BadRequestException when onlyMatching is true with applicant with incomplete profile', async () => {
+    it('delegates incomplete profiles to canonical matching filter', async () => {
       const applicantUser: SafeUser = {
         id: '00000000-0000-4000-8000-000000000099',
         name: 'Applicant',
@@ -138,7 +138,7 @@ describe('ApplicantListingsController', () => {
         controller.findAll({ onlyMatching: true }, applicantUser, {
           setHeader: jest.fn(),
         } as never),
-      ).rejects.toThrow(BadRequestException);
+      ).resolves.toBeUndefined();
     });
 
     it('calls service successfully when onlyMatching is true with applicant with complete profile', async () => {

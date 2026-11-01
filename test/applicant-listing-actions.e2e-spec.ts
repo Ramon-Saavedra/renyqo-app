@@ -1,3 +1,5 @@
+import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
+import { clearE2EData } from './e2e-cleanup';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -149,17 +151,7 @@ async function clearDatabase(): Promise<void> {
     throw new Error('Prisma service has not been initialized.');
   }
 
-  await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
-  await prisma.application.deleteMany();
-  await prisma.listingReport.deleteMany();
-  await prisma.savedListing.deleteMany();
-  await prisma.listingImage.deleteMany();
-  await prisma.listingEvent.deleteMany();
-  await prisma.listing.deleteMany();
-  await prisma.applicantProfile.deleteMany();
-  await prisma.passwordResetToken.deleteMany();
-  await prisma.userSession.deleteMany();
-  await prisma.user.deleteMany();
+  await clearE2EData(prisma);
 }
 
 function uniqueEmail(prefix: string): string {
@@ -1006,6 +998,7 @@ describe('Applicant Listing Actions E2E', () => {
         .post('/api/v1/auth/register')
         .send(applicantPayload())
         .expect(201);
+      await createEligibleApplicantProfile(applicantAgent);
 
       await applicantAgent
         .put(`/api/v1/applicant/listings/${listing.id}/saved`)

@@ -1,3 +1,4 @@
+import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -315,6 +316,7 @@ describe('ApplicantListingsService', () => {
           useValue: {
             isProfileComplete: jest.fn().mockReturnValue(false),
             evaluateCriteria: jest.fn().mockReturnValue({
+              ...new EligibilityResponseDto(false, [], [], new Date()),
               canApply: false,
               reasons: [],
               warnings: [],
@@ -569,7 +571,15 @@ describe('ApplicantListingsService', () => {
       prismaMock.applicantProfile.findUnique.mockResolvedValue(
         makeApplicantProfile(),
       );
-      eligibilityMock.isProfileComplete.mockReturnValue(false);
+      eligibilityMock.evaluateCriteria.mockReturnValue(
+        new EligibilityResponseDto(
+          false,
+          ['household_income_not_available'],
+          [],
+          new Date(),
+          'INSUFFICIENT_INFORMATION',
+        ),
+      );
       prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
 
       const result = await service.findPublishedForApplicant({}, applicantUser);
@@ -599,6 +609,7 @@ describe('ApplicantListingsService', () => {
       );
       eligibilityMock.isProfileComplete.mockReturnValue(true);
       eligibilityMock.evaluateCriteria.mockReturnValue({
+        ...new EligibilityResponseDto(true, [], [], new Date()),
         canApply: true,
         reasons: [],
         warnings: [],
@@ -631,6 +642,7 @@ describe('ApplicantListingsService', () => {
       );
       eligibilityMock.isProfileComplete.mockReturnValue(true);
       eligibilityMock.evaluateCriteria.mockReturnValue({
+        ...new EligibilityResponseDto(false, [], [], new Date()),
         canApply: false,
         reasons: [],
         warnings: [],

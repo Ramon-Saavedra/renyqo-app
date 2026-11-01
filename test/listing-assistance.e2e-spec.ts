@@ -1,3 +1,4 @@
+import { clearE2EData } from './e2e-cleanup';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -251,17 +252,7 @@ async function clearDatabase(): Promise<void> {
   }
 
   const client = getPrisma();
-  await client.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
-  await client.application.deleteMany();
-  await client.listingReport.deleteMany();
-  await client.savedListing.deleteMany();
-  await client.listingImage.deleteMany();
-  await client.listingEvent.deleteMany();
-  await client.listing.deleteMany();
-  await client.applicantProfile.deleteMany();
-  await client.passwordResetToken.deleteMany();
-  await client.userSession.deleteMany();
-  await client.user.deleteMany();
+  await clearE2EData(client);
 }
 
 function attachPdf(agent: RequestAgent, field = 'file') {

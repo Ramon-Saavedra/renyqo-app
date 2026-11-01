@@ -1,3 +1,5 @@
+import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
+import { clearE2EData } from './e2e-cleanup';
 import { ApplicationLifecycleService } from '../src/applications/application-lifecycle.service';
 import { ProviderApplicationCurationService } from '../src/applications/provider-application-curation.service';
 import { ApplicationTransactionService } from '../src/applications/application-transaction.service';
@@ -179,6 +181,7 @@ describe('ACTIVE consideration priority E2E', () => {
     now = new Date('2027-01-01T10:00:00Z');
     provider = await register('provider');
     applicant = await register('applicant');
+    await createEligibleApplicantProfile(applicant.agent);
     const listing = await prisma.listing.create({
       data: {
         providerId: provider.id,
@@ -213,17 +216,7 @@ describe('ACTIVE consideration priority E2E', () => {
     }
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_command_receipts, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
-    await prisma.application.deleteMany();
-    await prisma.listingReport.deleteMany();
-    await prisma.savedListing.deleteMany();
-    await prisma.listingImage.deleteMany();
-    await prisma.listingEvent.deleteMany();
-    await prisma.listing.deleteMany();
-    await prisma.applicantProfile.deleteMany();
-    await prisma.passwordResetToken.deleteMany();
-    await prisma.userSession.deleteMany();
-    await prisma.user.deleteMany();
+    await clearE2EData(prisma);
   });
 
   afterAll(async () => {
@@ -295,6 +288,7 @@ describe('ACTIVE consideration priority E2E', () => {
 
   async function add(status: 'ACTIVE' | 'WAITING' = 'ACTIVE') {
     const user = await register('applicant');
+    await createEligibleApplicantProfile(user.agent);
     const application = await prisma.application.create({
       data: {
         listingId,
@@ -995,6 +989,7 @@ describe('ACTIVE consideration priority E2E', () => {
     const b = await add();
     const id = await confirmed();
     const entrant = await register('applicant');
+    await createEligibleApplicantProfile(entrant.agent);
     done();
     const [result, admitted] = await Promise.all([
       absence(id),

@@ -138,6 +138,7 @@ describe('EligibilityController', () => {
         controller.check(LISTING_ID, makeApplicantUser()),
       ).resolves.toEqual({
         canApply,
+        result: response.result,
         evaluatedAt: response.evaluatedAt,
       });
       expect(response.reasons).toEqual([

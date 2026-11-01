@@ -1,3 +1,5 @@
+import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
+import { clearE2EData } from './e2e-cleanup';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -184,6 +186,7 @@ describe('Application conversation E2E', () => {
   beforeEach(async () => {
     provider = await register('provider');
     applicant = await register('applicant');
+    await createEligibleApplicantProfile(applicant.agent);
     const listing = await prisma.listing.create({
       data: {
         providerId: provider.id,
@@ -218,17 +221,7 @@ describe('Application conversation E2E', () => {
     }
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
-    await prisma.application.deleteMany();
-    await prisma.listingReport.deleteMany();
-    await prisma.savedListing.deleteMany();
-    await prisma.listingImage.deleteMany();
-    await prisma.listingEvent.deleteMany();
-    await prisma.listing.deleteMany();
-    await prisma.applicantProfile.deleteMany();
-    await prisma.passwordResetToken.deleteMany();
-    await prisma.userSession.deleteMany();
-    await prisma.user.deleteMany();
+    await clearE2EData(prisma);
   });
 
   afterAll(async () => {

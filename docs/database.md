@@ -65,6 +65,20 @@ Existing applicant profiles with incomplete household counts are cleaned up: row
 
 `adultsCount` and `childrenCount` must be provided together or neither. When both are present, `peopleCount` is calculated as `adultsCount + childrenCount`. The database enforces this with a `CHECK` constraint, and the service validates merged state inside a Serializable transaction with retries.
 
+## Eligibility history
+
+`20261101180000_profile_eligibility_assessments` adds immutable profile-prequalification history. Apply this migration before deploying code that writes assessments.
+
+- `ListingCriteriaRevision` belongs to one listing and retains only typed eligibility criteria, a per-listing revision, actor/time, source and schema version.
+- `ApplicationEligibilityAssessment` belongs to one application and the exact criteria revision used. It retains a per-application revision, evaluator version, trigger, timestamp, actor, aggregate result and only the applicant facts consumed by the evaluation.
+- `ApplicationEligibilityCheck` retains typed per-criterion outcomes and reason/observation codes. These records describe profile prequalification, not document verification or queue priority.
+
+PostgreSQL rejects updates/deletes of revisions, assessments and checks. Foreign keys use RESTRICT on deletion to preserve history; physical deletion/retention requires a separate policy. Composite foreign keys require the application and criteria revision to belong to the assessment's listing. Unique revision keys and insertion guards enforce consecutive positive revision ordering under the listing lock. Assessments must reference the latest criteria revision at insertion. Only one application-time assessment is allowed per application, at assessment revision one. A deferred constraint requires all seven typed checks and an aggregate consistent with their outcomes; check constraints require codes for failed, unknown and observational checks.
+
+Admission commits the application, initial assessment, activity and outbox atomically. Criteria edits commit the new revision and all open-application reassessments in the same Serializable transaction under the listing lock, with retries for serialization conflicts. Failed assessment persistence leaves no partial application or criteria edit. Criteria writes must use the revision workflow; unsupported direct listing updates can diverge from history and are rejected when revision persistence next checks consistency. Reassessment is synchronous, so its transaction cost grows with the open queue. Assessment summary reads use Repeatable Read and do not mutate history.
+
+The migration performs no historical backfill and preserves existing applications. A legacy listing receives an observed `LEGACY_BASELINE` when first needed, never a backdated reconstruction. Legacy application-time eligibility remains UNKNOWN even after a current reassessment. Custom PostgreSQL triggers, the partial initial-assessment index and deferred constraints are part of the durable contract and must be retained alongside the Prisma schema.
+
 ## Indexes
 
 Listing discovery sort modes are supported by these indexes:

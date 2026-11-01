@@ -281,7 +281,7 @@ export class ApplicantListingDiscoveryQuery {
       conditions.push({ petsPolicy: query.petsPolicy });
     }
 
-    if (query.onlyMatching && profile) {
+    if (query.onlyMatching) {
       conditions.push(this.eligibilityService.buildHardMatchWhere(profile));
     }
 
