@@ -1,3 +1,5 @@
+import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
+import { clearE2EData } from './e2e-cleanup';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -375,17 +377,7 @@ async function clearDatabase(): Promise<void> {
     throw new Error('Prisma service has not been initialized.');
   }
 
-  await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
-  await prisma.application.deleteMany();
-  await prisma.listingReport.deleteMany();
-  await prisma.savedListing.deleteMany();
-  await prisma.listingImage.deleteMany();
-  await prisma.listingEvent.deleteMany();
-  await prisma.listing.deleteMany();
-  await prisma.applicantProfile.deleteMany();
-  await prisma.passwordResetToken.deleteMany();
-  await prisma.userSession.deleteMany();
-  await prisma.user.deleteMany();
+  await clearE2EData(prisma);
 }
 
 describe('Backend API E2E', () => {
@@ -695,6 +687,7 @@ describe('Backend API E2E', () => {
       .expect(200);
     expect(responseBody(blockedResponse)).toEqual({
       canApply: false,
+      result: 'NO_MATCH',
       evaluatedAt: responseBody(blockedResponse)['evaluatedAt'],
     });
     expect(typeof responseBody(blockedResponse)['evaluatedAt']).toBe('string');
@@ -722,6 +715,7 @@ describe('Backend API E2E', () => {
       .expect(200);
     expect(responseBody(allowedResponse)).toEqual({
       canApply: true,
+      result: 'MATCH_WITH_OBSERVATIONS',
       evaluatedAt: responseBody(allowedResponse)['evaluatedAt'],
     });
     expect(typeof responseBody(allowedResponse)['evaluatedAt']).toBe('string');
@@ -771,6 +765,7 @@ describe('Backend API E2E', () => {
       .post('/api/v1/auth/register')
       .send(applicantPayload())
       .expect(201);
+    await createEligibleApplicantProfile(applicantAgent);
     safeUserBody(applicantResponse);
 
     const providerResponse = await request(getServer())
@@ -844,6 +839,7 @@ describe('Backend API E2E', () => {
       .post('/api/v1/auth/register')
       .send(applicantPayload())
       .expect(201);
+    await createEligibleApplicantProfile(applicantAgent);
 
     const providerAgent = request.agent(getServer());
     const providerResponse = await providerAgent
@@ -909,6 +905,7 @@ describe('Backend API E2E', () => {
       ),
     );
 
+    await Promise.all(agents.map(createEligibleApplicantProfile));
     const applications = [] as Array<{
       agent: ReturnType<typeof request.agent>;
       id: string;
@@ -987,6 +984,7 @@ describe('Backend API E2E', () => {
       ),
     );
 
+    await Promise.all(agents.map(createEligibleApplicantProfile));
     const responses = await Promise.all(
       agents.map((agent) => agent.post(`/api/v1/listings/${listing.id}/apply`)),
     );
@@ -1034,25 +1032,21 @@ describe('Backend API E2E', () => {
       .expect(200)
       .expect({ waitingCount: 3 });
 
-    await getPrisma().listing.update({
-      where: { id: listing.id },
-      data: { minimumHouseholdNetIncome: 3000 },
+    await providerAgent
+      .patch(`/api/v1/provider/listings/${listing.id}`)
+      .send({ minimumHouseholdNetIncome: 3000 })
+      .expect(200);
+    await getPrisma().applicantProfile.update({
+      where: { applicantId: waitingApplications[0].applicantId },
+      data: { householdNetIncome: 1000 },
     });
-    await getPrisma().applicantProfile.createMany({
-      data: [
-        {
-          applicantId: waitingApplications[0].applicantId,
-          householdNetIncome: 1000,
-        },
-        {
-          applicantId: waitingApplications[1].applicantId,
-          householdNetIncome: 4000,
-        },
-        {
-          applicantId: waitingApplications[2].applicantId,
-          householdNetIncome: 4000,
-        },
-      ],
+    await getPrisma().applicantProfile.update({
+      where: { applicantId: waitingApplications[1].applicantId },
+      data: { householdNetIncome: 4000 },
+    });
+    await getPrisma().applicantProfile.update({
+      where: { applicantId: waitingApplications[2].applicantId },
+      data: { householdNetIncome: 4000 },
     });
 
     const activeApplication = await getPrisma().application.findFirstOrThrow({
@@ -2224,7 +2218,7 @@ describe('Backend API E2E', () => {
   });
 
   describe('re-applying after withdrawal', () => {
-    async function createApplicantAndListing() {
+    async function createEligibleApplicantAndListing() {
       const applicantAgent = request.agent(getServer());
       const applicant = safeUserBody(
         await applicantAgent
@@ -2232,6 +2226,8 @@ describe('Backend API E2E', () => {
           .send(applicantPayload())
           .expect(201),
       );
+
+      await createEligibleApplicantProfile(applicantAgent);
 
       const providerAgent = request.agent(getServer());
       const provider = safeUserBody(
@@ -2254,7 +2250,8 @@ describe('Backend API E2E', () => {
     }
 
     it('creates a new application row and leaves the previous WITHDRAWN row unchanged', async () => {
-      const { applicantAgent, listing } = await createApplicantAndListing();
+      const { applicantAgent, listing } =
+        await createEligibleApplicantAndListing();
 
       const firstResponse = await applicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)
@@ -2309,6 +2306,7 @@ describe('Backend API E2E', () => {
         ),
       );
 
+      await Promise.all(agents.map(createEligibleApplicantProfile));
       const applications = [] as Array<{
         agent: ReturnType<typeof request.agent>;
         id: string;
@@ -2354,7 +2352,8 @@ describe('Backend API E2E', () => {
     });
 
     it('prevents duplicate live applications after re-applying', async () => {
-      const { applicantAgent, listing } = await createApplicantAndListing();
+      const { applicantAgent, listing } =
+        await createEligibleApplicantAndListing();
 
       const firstResponse = await applicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)
@@ -2382,7 +2381,7 @@ describe('Backend API E2E', () => {
     });
 
     it('keeps only one live application under concurrent re-apply attempts', async () => {
-      const { applicant, listing } = await createApplicantAndListing();
+      const { applicant, listing } = await createEligibleApplicantAndListing();
 
       const firstAgent = request.agent(getServer());
       await firstAgent
@@ -2424,7 +2423,7 @@ describe('Backend API E2E', () => {
 
     it('rejects re-applying when the listing is no longer PUBLISHED', async () => {
       const { applicantAgent, providerAgent, listing } =
-        await createApplicantAndListing();
+        await createEligibleApplicantAndListing();
 
       const firstResponse = await applicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)
@@ -2451,17 +2450,15 @@ describe('Backend API E2E', () => {
 
     it('recalculates eligibility when re-applying', async () => {
       const { applicantAgent, applicant, listing } =
-        await createApplicantAndListing();
+        await createEligibleApplicantAndListing();
 
       await getPrisma().listing.update({
         where: { id: listing.id },
         data: { minimumHouseholdNetIncome: 3000 },
       });
-      await getPrisma().applicantProfile.create({
-        data: {
-          applicantId: applicant.id,
-          householdNetIncome: 4000,
-        },
+      await getPrisma().applicantProfile.update({
+        where: { applicantId: applicant.id },
+        data: { householdNetIncome: 4000 },
       });
 
       const firstResponse = await applicantAgent
@@ -2485,6 +2482,7 @@ describe('Backend API E2E', () => {
         message: 'Applicant is not eligible for this listing',
         code: 'APPLICANT_NOT_ELIGIBLE',
         canApply: false,
+        result: 'NO_MATCH',
         evaluatedAt: responseBody(blockedResponse)['evaluatedAt'],
       });
       expect(typeof responseBody(blockedResponse)['evaluatedAt']).toBe(
@@ -2501,7 +2499,8 @@ describe('Backend API E2E', () => {
     });
 
     it('supports a full withdraw -> reapply -> withdraw lifecycle', async () => {
-      const { applicantAgent, listing } = await createApplicantAndListing();
+      const { applicantAgent, listing } =
+        await createEligibleApplicantAndListing();
 
       const firstResponse = await applicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)
@@ -2534,7 +2533,7 @@ describe('Backend API E2E', () => {
 
     it('rate limits rapid application cycles per applicant and listing', async () => {
       const { applicantAgent, applicant, listing } =
-        await createApplicantAndListing();
+        await createEligibleApplicantAndListing();
 
       const firstResponse = await applicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)
@@ -2588,6 +2587,7 @@ describe('Backend API E2E', () => {
         .post('/api/v1/auth/register')
         .send(applicantPayload())
         .expect(201);
+      await createEligibleApplicantProfile(otherApplicantAgent);
       await otherApplicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)
         .expect(201);
@@ -2621,7 +2621,7 @@ describe('Backend API E2E', () => {
 
     it('blocks re-applying after a provider rejection', async () => {
       const { applicantAgent, providerAgent, listing } =
-        await createApplicantAndListing();
+        await createEligibleApplicantAndListing();
 
       const firstResponse = await applicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)

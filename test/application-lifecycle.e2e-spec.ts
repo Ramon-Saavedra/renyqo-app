@@ -1,3 +1,8 @@
+import {
+  createEligibleApplicantProfile,
+  eligibleProfileFields,
+} from './eligible-applicant-fixture';
+import { clearE2EData } from './e2e-cleanup';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
@@ -221,6 +226,12 @@ async function registerApplicant() {
   return agent;
 }
 
+async function registerEligibleApplicant() {
+  const agent = await registerApplicant();
+  await createEligibleApplicantProfile(agent);
+  return agent;
+}
+
 async function registerProvider() {
   const agent = request.agent(getServer());
   const resp = await agent
@@ -342,17 +353,7 @@ async function clearDatabase(): Promise<void> {
     throw new Error('Prisma service has not been initialized.');
   }
 
-  await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
-  await prisma.application.deleteMany();
-  await prisma.listingReport.deleteMany();
-  await prisma.savedListing.deleteMany();
-  await prisma.listingImage.deleteMany();
-  await prisma.listingEvent.deleteMany();
-  await prisma.listing.deleteMany();
-  await prisma.applicantProfile.deleteMany();
-  await prisma.passwordResetToken.deleteMany();
-  await prisma.userSession.deleteMany();
-  await prisma.user.deleteMany();
+  await clearE2EData(prisma);
 }
 
 describe('Application Lifecycle E2E', () => {
@@ -611,7 +612,7 @@ describe('Application Lifecycle E2E', () => {
     async function rejectedByProvider() {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicant = await registerApplicant();
+      const applicant = await registerEligibleApplicant();
       const entry = await applyToListing(applicant, listing.id);
       const id = String(entry['id']);
       await providerAgent
@@ -778,10 +779,10 @@ describe('Application Lifecycle E2E', () => {
         const { listing, applicant, id } = await rejectedByProvider();
         await ageRejection(id, REAPPLICATION_COOLDOWN_MS + 1000);
         for (let index = 0; index < slots; index++) {
-          await applyToListing(await registerApplicant(), listing.id);
+          await applyToListing(await registerEligibleApplicant(), listing.id);
         }
         const earlierWaitingApplicant =
-          slots === 5 ? await registerApplicant() : null;
+          slots === 5 ? await registerEligibleApplicant() : null;
         const earlierWaiting = earlierWaitingApplicant
           ? await applyToListing(earlierWaitingApplicant, listing.id)
           : null;
@@ -856,7 +857,7 @@ describe('Application Lifecycle E2E', () => {
           await rejectedByProvider();
         await ageRejection(id, 61_000);
         for (let index = 0; index < slots; index++) {
-          await applyToListing(await registerApplicant(), listing.id);
+          await applyToListing(await registerEligibleApplicant(), listing.id);
         }
         await providerAgent
           .patch(`/api/v1/provider/applications/${id}/restore`)
@@ -1061,10 +1062,10 @@ describe('Application Lifecycle E2E', () => {
         .patch(`/api/v1/provider/applications/${id}/restore`)
         .send()
         .expect(200);
-      await getPrisma().listing.update({
-        where: { id: listing.id },
-        data: { minimumHouseholdNetIncome: 1000 },
-      });
+      await providerAgent
+        .patch(`/api/v1/provider/listings/${listing.id}`)
+        .send({ minimumHouseholdNetIncome: 1000 })
+        .expect(200);
       await updateApplicantProfile(applicant, {
         introduction: 'A short applicant introduction.',
         householdNetIncome: 0,
@@ -1198,7 +1199,7 @@ describe('Application Lifecycle E2E', () => {
     it('rejects unauthenticated and applicant access to reject', async () => {
       const { provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
       const path = `/api/v1/provider/applications/${String(entry['id'])}/reject`;
 
@@ -1209,7 +1210,7 @@ describe('Application Lifecycle E2E', () => {
     it('rejects unauthenticated and applicant access to restore', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
       const applicationId = String(entry['id']);
 
@@ -1226,7 +1227,7 @@ describe('Application Lifecycle E2E', () => {
     it('rejects unauthenticated and applicant access to rent', async () => {
       const { provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
       const path = `/api/v1/provider/listings/${listing.id}/rent`;
       const body = { selectedApplicationId: String(entry['id']) };
@@ -1239,7 +1240,7 @@ describe('Application Lifecycle E2E', () => {
   describe('Application activity persistence', () => {
     it('persists submitted and provider rejection activities with actor attribution', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const listing = await publishListing(provider.id);
       const application = await applyToListing(applicantAgent, listing.id);
       const applicationId = application['id'] as string;
@@ -1283,7 +1284,7 @@ describe('Application Lifecycle E2E', () => {
 
     it('does not leave an activity row after its transaction rolls back', async () => {
       const { provider } = await registerProvider();
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const listing = await publishListing(provider.id);
       const application = await applyToListing(applicantAgent, listing.id);
       const applicationId = application['id'] as string;
@@ -1312,7 +1313,7 @@ describe('Application Lifecycle E2E', () => {
 
     it('rolls back application creation when activity append fails', async () => {
       const { provider } = await registerProvider();
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const listing = await publishListing(provider.id);
       const activityService = app!.get(ApplicationActivityService);
       const appendSpy = jest
@@ -1338,7 +1339,7 @@ describe('Application Lifecycle E2E', () => {
     it('rejects an ACTIVE candidate with NOT_SELECTED and sets rejectedAt', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
       const entryId = entry['id'] as string;
 
@@ -1376,7 +1377,7 @@ describe('Application Lifecycle E2E', () => {
       const { agent: providerA } = await registerProvider();
       const { provider: providerB } = await registerProvider();
       const listing = await publishListing(providerB.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
 
       await providerA
@@ -1400,7 +1401,7 @@ describe('Application Lifecycle E2E', () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
       const applicants = await Promise.all(
-        Array.from({ length: 6 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         applicants.map((agent) => applyToListing(agent, listing.id)),
@@ -1421,7 +1422,7 @@ describe('Application Lifecycle E2E', () => {
     it('returns 409 for REJECTED status', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
 
       await providerAgent
@@ -1440,7 +1441,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 7 }, () => registerApplicant()),
+        Array.from({ length: 7 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         agents.map((a) => applyToListing(a, listing.id)),
@@ -1494,7 +1495,7 @@ describe('Application Lifecycle E2E', () => {
     it('restores a NOT_SELECTED application to ACTIVE when a slot is free', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
       const entryId = entry['id'] as string;
 
@@ -1554,7 +1555,7 @@ describe('Application Lifecycle E2E', () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
       const applicants = await Promise.all(
-        Array.from({ length: 6 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         applicants.map((a) => applyToListing(a, listing.id)),
@@ -1601,7 +1602,7 @@ describe('Application Lifecycle E2E', () => {
       const { agent: providerA } = await registerProvider();
       const { provider: providerB } = await registerProvider();
       const listing = await publishListing(providerB.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
       const entryId = entry['id'] as string;
 
@@ -1624,7 +1625,7 @@ describe('Application Lifecycle E2E', () => {
     it('returns 409 when the application is not REJECTED + NOT_SELECTED', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
       const entryId = entry['id'] as string;
 
@@ -1650,7 +1651,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 2 }, () => registerApplicant()),
+        Array.from({ length: 2 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         agents.map((a) => applyToListing(a, listing.id)),
@@ -1747,7 +1748,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 6 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         agents.map((a) => applyToListing(a, listing.id)),
@@ -1798,7 +1799,7 @@ describe('Application Lifecycle E2E', () => {
     it('blocks rapid reject then restore toggling with 429 within the cooldown window', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
       const entryId = entry['id'] as string;
 
@@ -1828,7 +1829,7 @@ describe('Application Lifecycle E2E', () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
       const applicants = await Promise.all(
-        Array.from({ length: 6 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         applicants.map((a) => applyToListing(a, listing.id)),
@@ -1885,7 +1886,7 @@ describe('Application Lifecycle E2E', () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
       const applicants = await Promise.all(
-        Array.from({ length: 6 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         applicants.map((a) => applyToListing(a, listing.id)),
@@ -1953,7 +1954,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 6 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         agents.map((a) => applyToListing(a, listing.id)),
@@ -2030,8 +2031,8 @@ describe('Application Lifecycle E2E', () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
       const applicants = await Promise.all([
-        registerApplicant(),
-        registerApplicant(),
+        registerEligibleApplicant(),
+        registerEligibleApplicant(),
       ]);
       const entries = await Promise.all(
         applicants.map((agent) => applyToListing(agent, listing.id)),
@@ -2079,7 +2080,7 @@ describe('Application Lifecycle E2E', () => {
     it('rents a PAUSED listing', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
 
       await getPrisma().listing.update({
@@ -2126,7 +2127,7 @@ describe('Application Lifecycle E2E', () => {
     it('returns 409 when selected candidate is not ACTIVE', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
 
       await providerAgent
@@ -2145,7 +2146,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 7 }, () => registerApplicant()),
+        Array.from({ length: 7 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         agents.map((a) => applyToListing(a, listing.id)),
@@ -2190,7 +2191,7 @@ describe('Application Lifecycle E2E', () => {
     it('RENTED listing is excluded from applicant discovery', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
 
       await providerAgent
@@ -2213,7 +2214,7 @@ describe('Application Lifecycle E2E', () => {
     it('RENTED listing rejects new candidates', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
 
       await providerAgent
@@ -2221,7 +2222,7 @@ describe('Application Lifecycle E2E', () => {
         .send({ selectedApplicationId: entry['id'] })
         .expect(200);
 
-      const anotherApplicant = await registerApplicant();
+      const anotherApplicant = await registerEligibleApplicant();
       await anotherApplicant
         .post(`/api/v1/listings/${listing.id}/apply`)
         .expect(422);
@@ -2250,7 +2251,7 @@ describe('Application Lifecycle E2E', () => {
     it('returns 409 when listing is already RENTED', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
 
       await providerAgent
@@ -2269,7 +2270,7 @@ describe('Application Lifecycle E2E', () => {
     it('exposes only safe fields', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
 
       const entry = await applyToListing(applicantAgent, listing.id);
       await providerAgent
@@ -2634,7 +2635,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 6 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerEligibleApplicant()),
       );
       const entries: Array<{
         agent: ReturnType<typeof request.agent>;
@@ -2689,7 +2690,7 @@ describe('Application Lifecycle E2E', () => {
     it('includes a REJECTED ACTIVE application in exited-applications with exitedAt equal to rejectedAt', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
-      const applicant = await registerApplicant();
+      const applicant = await registerEligibleApplicant();
 
       const entry = await applyToListing(applicant, listing.id);
       expect(entry['status']).toBe(ApplicationStatus.ACTIVE);
@@ -2738,7 +2739,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 7 }, () => registerApplicant()),
+        Array.from({ length: 7 }, () => registerEligibleApplicant()),
       );
       const entries: Record<string, unknown>[] = [];
       for (const agent of agents) {
@@ -2809,7 +2810,7 @@ describe('Application Lifecycle E2E', () => {
       const listing = await publishListing(provider.id);
 
       const agents = await Promise.all(
-        Array.from({ length: 6 }, () => registerApplicant()),
+        Array.from({ length: 6 }, () => registerEligibleApplicant()),
       );
       const entries = await Promise.all(
         agents.map((agent) =>
@@ -3007,8 +3008,8 @@ describe('Application Lifecycle E2E', () => {
     it('hides a paused listing from another provider and from discovery while keeping the active application', async () => {
       const { agent, provider } = await registerProvider();
       const otherProvider = await registerProvider();
-      const applicantAgent = await registerApplicant();
-      const secondApplicant = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
+      const secondApplicant = await registerEligibleApplicant();
       const listing = await publishListing(provider.id);
       const application = await applyToListing(applicantAgent, listing.id);
 
@@ -3077,7 +3078,7 @@ describe('Application Lifecycle E2E', () => {
 
     it('lets only one of pause and rent win', async () => {
       const { agent, provider } = await registerProvider();
-      const applicantAgent = await registerApplicant();
+      const applicantAgent = await registerEligibleApplicant();
       const listing = await publishListing(provider.id);
       const application = await applyToListing(applicantAgent, listing.id);
       const renter = await loginProvider(provider.email);
@@ -3146,7 +3147,7 @@ describe('Application Lifecycle E2E', () => {
   describe('canonical queue fairness (F1/F2)', () => {
     async function fixture(activeCount = 4, waitingCount = 2) {
       const { agent: providerAgent, provider } = await registerProvider();
-      const entrant = await registerApplicant();
+      const entrant = await registerEligibleApplicant();
       const entrantId = String(
         responseBody(await entrant.get('/api/v1/auth/me').expect(200))['id'],
       );
@@ -3159,6 +3160,13 @@ describe('Application Lifecycle E2E', () => {
           passwordHash: 'unused',
           acceptedTermsAt: new Date(),
           acceptedPrivacyAt: new Date(),
+        })),
+      });
+      await getPrisma().applicantProfile.createMany({
+        data: users.map((user) => ({
+          applicantId: user.id,
+          ...eligibleProfileFields,
+          peopleCount: 1,
         })),
       });
       await getPrisma().application.createMany({
@@ -3267,14 +3275,17 @@ describe('Application Lifecycle E2E', () => {
           where: { id: f.listing.id },
           data: { minimumHouseholdNetIncome: 100 },
         });
-        await getPrisma().applicantProfile.createMany({
-          data: [
-            ...f.waiting.map((a, i) => ({
-              applicantId: a.applicantId,
-              householdNetIncome: i === count - 1 ? 1000 : 1,
-            })),
-            { applicantId: f.entrantId, householdNetIncome: 1000 },
-          ],
+        await getPrisma().applicantProfile.updateMany({
+          where: { applicantId: { in: f.waiting.map((a) => a.applicantId) } },
+          data: { householdNetIncome: 1 },
+        });
+        await getPrisma().applicantProfile.update({
+          where: { applicantId: f.waiting[count - 1].applicantId },
+          data: { householdNetIncome: 1000 },
+        });
+        await getPrisma().applicantProfile.update({
+          where: { applicantId: f.entrantId },
+          data: { householdNetIncome: 1000 },
         });
         expect(
           responseBody(await f.entrant.post(path(f.listing.id)).expect(201))[
@@ -3426,7 +3437,7 @@ describe('Application Lifecycle E2E', () => {
 
     it('serializes two fresh HTTP admissions for the final slot', async () => {
       const f = await fixture(4, 0),
-        second = await registerApplicant();
+        second = await registerEligibleApplicant();
       const results = await Promise.all([
         f.entrant.post(path(f.listing.id)),
         second.post(path(f.listing.id)),

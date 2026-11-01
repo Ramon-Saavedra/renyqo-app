@@ -1,3 +1,5 @@
+import { eligibleProfileFields } from './eligible-applicant-fixture';
+import { clearE2EData } from './e2e-cleanup';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -218,17 +220,7 @@ describe('Application viewings E2E', () => {
     }
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
-    await prisma.application.deleteMany();
-    await prisma.listingReport.deleteMany();
-    await prisma.savedListing.deleteMany();
-    await prisma.listingImage.deleteMany();
-    await prisma.listingEvent.deleteMany();
-    await prisma.listing.deleteMany();
-    await prisma.applicantProfile.deleteMany();
-    await prisma.passwordResetToken.deleteMany();
-    await prisma.userSession.deleteMany();
-    await prisma.user.deleteMany();
+    await clearE2EData(prisma);
   });
 
   afterAll(async () => {
@@ -1017,6 +1009,9 @@ describe('Application viewings E2E', () => {
           for (let index = 0; index < 5; index++) {
             const candidate = await prisma.user.create({
               data: {
+                profile: {
+                  create: { ...eligibleProfileFields, peopleCount: 1 },
+                },
                 name: 'Transaction fixture',
                 email: `${randomUUID()}@e2e.renyqo.test`,
                 passwordHash: 'unusable-test-hash',

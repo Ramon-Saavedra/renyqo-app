@@ -1,3 +1,5 @@
+import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
+import { clearE2EData } from './e2e-cleanup';
 import { ApplicationLifecycleService } from '../src/applications/application-lifecycle.service';
 import { ProviderApplicationCurationService } from '../src/applications/provider-application-curation.service';
 import { ListingsService } from '../src/listings/listings.service';
@@ -184,6 +186,7 @@ describe('Viewing lifecycle integration E2E', () => {
     now = new Date('2027-01-01T10:00:00Z');
     provider = await register('provider');
     applicant = await register('applicant');
+    await createEligibleApplicantProfile(applicant.agent);
     const listing = await prisma.listing.create({
       data: {
         providerId: provider.id,
@@ -218,17 +221,7 @@ describe('Viewing lifecycle integration E2E', () => {
     }
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_command_receipts, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
-    await prisma.application.deleteMany();
-    await prisma.listingReport.deleteMany();
-    await prisma.savedListing.deleteMany();
-    await prisma.listingImage.deleteMany();
-    await prisma.listingEvent.deleteMany();
-    await prisma.listing.deleteMany();
-    await prisma.applicantProfile.deleteMany();
-    await prisma.passwordResetToken.deleteMany();
-    await prisma.userSession.deleteMany();
-    await prisma.user.deleteMany();
+    await clearE2EData(prisma);
   });
 
   afterAll(async () => {
@@ -375,6 +368,7 @@ describe('Viewing lifecycle integration E2E', () => {
   async function fillWithWaiting() {
     for (let i = 0; i < 4; i++) {
       const user = await register('applicant');
+      await createEligibleApplicantProfile(user.agent);
       await prisma.application.create({
         data: {
           listingId,
@@ -385,6 +379,7 @@ describe('Viewing lifecycle integration E2E', () => {
       });
     }
     const user = await register('applicant');
+    await createEligibleApplicantProfile(user.agent);
     return prisma.application.create({
       data: { listingId, applicantId: user.id, status: 'WAITING' },
     });

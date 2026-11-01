@@ -1,3 +1,4 @@
+import { clearE2EData } from './e2e-cleanup';
 import { OutboxDispatcherService } from '../src/outbox/outbox-dispatcher.service';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -219,22 +220,7 @@ describe('Application attention E2E', () => {
       throw new Error('Unsafe E2E cleanup configuration');
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
-    await prisma.applicationDocumentRequest.updateMany({
-      data: { currentFileId: null },
-    });
-    await prisma.applicationDocumentFile.deleteMany();
-    await prisma.applicationDocumentRequest.deleteMany();
-    await prisma.application.deleteMany();
-    await prisma.listingReport.deleteMany();
-    await prisma.savedListing.deleteMany();
-    await prisma.listingImage.deleteMany();
-    await prisma.listingEvent.deleteMany();
-    await prisma.listing.deleteMany();
-    await prisma.applicantProfile.deleteMany();
-    await prisma.passwordResetToken.deleteMany();
-    await prisma.userSession.deleteMany();
-    await prisma.user.deleteMany();
+    await clearE2EData(prisma);
   });
 
   afterAll(async () => {

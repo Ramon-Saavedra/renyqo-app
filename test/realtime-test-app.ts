@@ -1,3 +1,4 @@
+import { clearE2EData } from './e2e-cleanup';
 import { ViewingClock } from '../src/application-viewings/application-viewing.policy';
 import { ValidationPipe } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -64,13 +65,10 @@ export async function realtimeTestApp(
   const url = await app.getUrl();
   const prisma = app.get(PrismaService);
   const sockets: Socket[] = [];
-  const userIds: string[] = [];
-  const sessionIds: string[] = [];
 
   async function sessionFor(userId: string) {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const id = randomUUID();
-    sessionIds.push(id);
     await prisma.userSession.create({
       data: {
         sid: id,
@@ -101,7 +99,6 @@ export async function realtimeTestApp(
         acceptedPrivacyAt: new Date(),
       },
     });
-    userIds.push(row.id);
     return { userId: row.id, ...(await sessionFor(row.id)) };
   }
   function client(
@@ -140,40 +137,7 @@ export async function realtimeTestApp(
     const cleanup = new PrismaService();
     await cleanup.$connect();
     try {
-      await cleanup.outboxEvent.deleteMany({
-        where: {
-          OR: [
-            { userId: { in: userIds } },
-            {
-              applicationId: {
-                in: (
-                  await cleanup.application.findMany({
-                    where: { applicantId: { in: userIds } },
-                    select: { id: true },
-                  })
-                ).map((row) => row.id),
-              },
-            },
-          ],
-        },
-      });
-      await cleanup.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions, viewing_command_receipts, viewing_workflows, viewing_proposals, viewing_appointments, application_viewing_interests, application_viewing_outcomes, application_viewings`;
-      await cleanup.application.deleteMany({
-        where: { applicantId: { in: userIds } },
-      });
-      await cleanup.listingEvent.deleteMany({
-        where: { listing: { providerId: { in: userIds } } },
-      });
-      await cleanup.listing.deleteMany({
-        where: { providerId: { in: userIds } },
-      });
-      await cleanup.userSession.deleteMany({
-        where: { sid: { in: sessionIds } },
-      });
-      await cleanup.applicantProfile.deleteMany({
-        where: { applicantId: { in: userIds } },
-      });
-      await cleanup.user.deleteMany({ where: { id: { in: userIds } } });
+      await clearE2EData(cleanup);
     } finally {
       await cleanup.$disconnect();
     }

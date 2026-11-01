@@ -1,3 +1,4 @@
+import { clearE2EData } from './e2e-cleanup';
 import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import {
@@ -39,7 +40,6 @@ describe('Provider recent-exit projection E2E', () => {
   let providerId: string;
   let applicantId: string;
   let listingId: string;
-  const userIds: string[] = [];
   const base = new Date('2026-01-01T12:00:00Z');
 
   function assertDatabase() {
@@ -73,7 +73,6 @@ describe('Provider recent-exit projection E2E', () => {
         acceptedPrivacyAt: base,
       },
     });
-    userIds.push(created.id);
     await prisma.applicantProfile.create({
       data: {
         applicantId: created.id,
@@ -111,17 +110,7 @@ describe('Provider recent-exit projection E2E', () => {
       process.env['NODE_ENV'] !== 'test'
     )
       throw new Error('Unsafe E2E cleanup');
-    if (listingId) {
-      await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, application_consideration_positions`;
-      await prisma.application.deleteMany({ where: { listingId } });
-      await prisma.listingEvent.deleteMany({ where: { listingId } });
-      await prisma.listing.deleteMany({ where: { id: listingId, providerId } });
-    }
-    await prisma.applicantProfile.deleteMany({
-      where: { applicantId: { in: userIds } },
-    });
-    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
-    userIds.length = 0;
+    await clearE2EData(prisma);
   });
 
   afterAll(async () => {

@@ -1,3 +1,4 @@
+import { clearE2EData } from './e2e-cleanup';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -895,5 +896,78 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
         where: { listingId: row.id, trigger: 'APPLICATION_CREATED' },
       }),
     ).toBe(1);
+  });
+  it('keeps missing-profile, incomplete-fact and NO_MATCH HTTP admission failures explicit', async () => {
+    const row = await listing({
+      minimumHouseholdNetIncome: 4000,
+      petsPolicy: 'NOT_ALLOWED',
+    });
+    const target = request.agent(
+      app.getHttpServer() as Parameters<typeof request>[0],
+    );
+    await target
+      .post('/api/v1/auth/register')
+      .send({
+        name: 'Missing profile',
+        email: `${randomUUID()}@prequal.test`,
+        password: 'StrongPass123',
+        role: 'applicant',
+        acceptedTerms: true,
+        acceptedPrivacy: true,
+      })
+      .expect(201);
+    async function blocked(result: string) {
+      expect(
+        body(
+          await target
+            .get(`/api/v1/listings/${row.id}/eligibility`)
+            .expect(200),
+        ),
+      ).toMatchObject({ result, canApply: false });
+      expect(
+        body(await target.post(`/api/v1/listings/${row.id}/apply`).expect(422)),
+      ).toMatchObject({
+        result,
+        canApply: false,
+        code: 'APPLICANT_NOT_ELIGIBLE',
+      });
+      expect(
+        await prisma.application.count({ where: { listingId: row.id } }),
+      ).toBe(0);
+    }
+    await blocked('INSUFFICIENT_INFORMATION');
+    await target
+      .patch('/api/v1/applicant/profile')
+      .send({ introduction: 'Incomplete facts.' })
+      .expect(200);
+    await blocked('INSUFFICIENT_INFORMATION');
+    await target
+      .patch('/api/v1/applicant/profile')
+      .send({ householdNetIncome: 3000, hasPets: false })
+      .expect(200);
+    await blocked('NO_MATCH');
+    await target
+      .patch('/api/v1/applicant/profile')
+      .send({ householdNetIncome: 4000 })
+      .expect(200);
+    await target.post(`/api/v1/listings/${row.id}/apply`).expect(201);
+  });
+  it('central cleanup removes the complete immutable FK graph without weakening constraints', async () => {
+    const before = await pool.query<{ name: string; definition: string }>(
+      `SELECT tgname AS name, pg_get_triggerdef(oid) AS definition FROM pg_trigger WHERE tgrelid='application_eligibility_assessments'::regclass ORDER BY tgname`,
+    );
+    expect(
+      await prisma.applicationEligibilityAssessment.count(),
+    ).toBeGreaterThan(0);
+    await clearE2EData(prisma);
+    expect(await prisma.application.count()).toBe(0);
+    expect(await prisma.applicationEligibilityAssessment.count()).toBe(0);
+    expect(await prisma.applicationEligibilityCheck.count()).toBe(0);
+    expect(await prisma.listingCriteriaRevision.count()).toBe(0);
+    expect(await prisma.user.count()).toBe(0);
+    const after = await pool.query<{ name: string; definition: string }>(
+      `SELECT tgname AS name, pg_get_triggerdef(oid) AS definition FROM pg_trigger WHERE tgrelid='application_eligibility_assessments'::regclass ORDER BY tgname`,
+    );
+    expect(after.rows).toEqual(before.rows);
   });
 });

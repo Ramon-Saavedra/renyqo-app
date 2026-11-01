@@ -1,3 +1,5 @@
+import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
+import { clearE2EData } from './e2e-cleanup';
 import { OutboxDispatcherService } from '../src/outbox/outbox-dispatcher.service';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -217,6 +219,7 @@ describe('Application read models E2E', () => {
     now = new Date('2027-01-01T10:00:00Z');
     provider = await register('provider');
     applicant = await register('applicant');
+    await createEligibleApplicantProfile(applicant.agent);
     const listing = await prisma.listing.create({
       data: {
         providerId: provider.id,
@@ -240,22 +243,7 @@ describe('Application read models E2E', () => {
       throw new Error('Unsafe E2E cleanup configuration');
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.$executeRaw`TRUNCATE TABLE application_no_show_consequences, viewing_command_receipts, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings`;
-    await prisma.applicationDocumentRequest.updateMany({
-      data: { currentFileId: null },
-    });
-    await prisma.applicationDocumentFile.deleteMany();
-    await prisma.applicationDocumentRequest.deleteMany();
-    await prisma.application.deleteMany();
-    await prisma.listingReport.deleteMany();
-    await prisma.savedListing.deleteMany();
-    await prisma.listingImage.deleteMany();
-    await prisma.listingEvent.deleteMany();
-    await prisma.listing.deleteMany();
-    await prisma.applicantProfile.deleteMany();
-    await prisma.passwordResetToken.deleteMany();
-    await prisma.userSession.deleteMany();
-    await prisma.user.deleteMany();
+    await clearE2EData(prisma);
   });
 
   afterAll(async () => {
@@ -632,6 +620,7 @@ describe('Application read models E2E', () => {
 
   it('returns compact provider listing overview', async () => {
     const waitingApplicant = await register('applicant');
+    await createEligibleApplicantProfile(waitingApplicant.agent);
     await prisma.application.create({
       data: {
         listingId,
@@ -1596,6 +1585,10 @@ describe('Application read models E2E', () => {
   });
 
   it('disables restore when authoritative eligibility fails and the mutation rejects it', async () => {
+    await prisma.applicantProfile.update({
+      where: { applicantId: applicant.id },
+      data: { householdNetIncome: null },
+    });
     await prisma.application.update({
       where: { id: applicationId },
       data: {
