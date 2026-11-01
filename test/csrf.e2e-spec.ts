@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, it, jest } from '@jest/globals';
 import request from 'supertest';
 import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
+import { SessionInfrastructureService } from '../src/auth/session/session-infrastructure.service';
 import { RealtimeConnectionsService } from '../src/realtime/realtime-connections.service';
 import { configureCsrfProtection } from '../src/security/csrf/csrf-protection';
 
@@ -67,6 +68,10 @@ class CsrfTestController {
 @Module({
   controllers: [AuthController, CsrfTestController],
   providers: [
+    {
+      provide: SessionInfrastructureService,
+      useValue: { establishGrant: jest.fn(), revokeGrant: jest.fn() },
+    },
     {
       provide: AuthService,
       useValue: {

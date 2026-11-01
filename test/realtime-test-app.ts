@@ -85,6 +85,9 @@ export async function realtimeTestApp(
         expire: new Date(Date.now() + 60000),
       },
     });
+    await prisma.sessionAuthGrant.create({
+      data: { sid: id, userId, authVersion: user.authVersion },
+    });
     return { id, cookie: `sid=${encodeURIComponent(`s:${sign(id, secret)}`)}` };
   }
   async function user(role: Role = Role.APPLICANT) {

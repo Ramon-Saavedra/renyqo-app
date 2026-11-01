@@ -54,6 +54,8 @@ export class RealtimeSessionService {
         SELECT s.sid AS "sessionId", u.id AS "userId", UPPER(u.role::text) AS role
         FROM user_sessions s JOIN users u
           ON u.id::text = s.sess->'passport'->'user'->>'id'
+        JOIN session_auth_grants g ON g.sid = s.sid AND g.user_id = u.id
+          AND g.auth_version = u.auth_version
         WHERE s.sid = ANY(${distinct.slice(offset, offset + SESSION_BATCH_SIZE)}::text[])
           AND s.expire > CURRENT_TIMESTAMP
           AND u.status = 'active'
