@@ -90,6 +90,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
 const makeRawApplication = (
   overrides: Partial<Application> = {},
 ): Application => ({
+  verificationScopeRevision: 0,
   id: APPLICATION_ID,
   listingId: LISTING_ID,
   applicantId: APPLICANT_ID,

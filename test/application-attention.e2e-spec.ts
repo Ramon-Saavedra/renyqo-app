@@ -1,3 +1,8 @@
+import { VerificationRequirementService } from '../src/application-documents/verification-requirement.service';
+import {
+  createDocumentEvidenceFixture,
+  createDocumentRequirementFixture,
+} from './document-requirement-fixture';
 import { clearE2EData } from './e2e-cleanup';
 import { OutboxDispatcherService } from '../src/outbox/outbox-dispatcher.service';
 import { randomUUID } from 'node:crypto';
@@ -305,37 +310,21 @@ describe('Application attention E2E', () => {
     state?: ApplicationDocumentState,
     round = 1,
     appId = applicationId,
-    logicalKey = 'income_proof',
+    definitionKey = 'income_proof',
+    type: ApplicationDocumentType = ApplicationDocumentType.INCOME_PROOF,
   ) {
-    const request = await prisma.applicationDocumentRequest.create({
+    return createDocumentEvidenceFixture(prisma, {
       data: {
         applicationId: appId,
-        type: ApplicationDocumentType.INCOME_PROOF,
-        logicalKey,
+        type,
+        definitionKey,
         round,
         requestedAt: now,
       },
+      state,
+      now,
+      bucket: 'attention-e2e-only',
     });
-    if (!state) return { request, file: null };
-    const file = await prisma.applicationDocumentFile.create({
-      data: {
-        requestId: request.id,
-        storageKey: randomUUID(),
-        bucket: 'attention-e2e-only',
-        checksum: 'a'.repeat(64),
-        mimeType: 'application/pdf',
-        size: 100,
-        state,
-        recoverAfter: now,
-        expiresAt: new Date(now.getTime() + 60000),
-        availableAt: state === ApplicationDocumentState.AVAILABLE ? now : null,
-      },
-    });
-    await prisma.applicationDocumentRequest.update({
-      where: { id: request.id },
-      data: { currentFileId: file.id },
-    });
-    return { request, file };
   }
 
   async function viewing(
@@ -501,11 +490,17 @@ describe('Application attention E2E', () => {
 
   it('uses only replacement request rounds, excluding stale review and upload obligations', async () => {
     const old = await document(ApplicationDocumentState.AVAILABLE);
-    await prisma.applicationDocumentRequest.update({
-      where: { id: old.request.id },
-      data: { supersededAt: now },
-    });
-    const current = await document(undefined, 2);
+    const replacement = await app
+      .get(VerificationRequirementService)
+      .execute(applicationId, provider.id, {
+        operation: 'REPLACE',
+        requestId: old.request.id,
+      });
+    const current = {
+      request: await prisma.applicationDocumentRequest.findUniqueOrThrow({
+        where: { id: replacement.requirements[1].id },
+      }),
+    };
     expect(actions(await attention('provider'))).toEqual([]);
     expect(actions(await attention('applicant'))).toMatchObject([
       {
@@ -876,15 +871,13 @@ describe('Application attention E2E', () => {
         })),
       });
       const target = fixtures[20];
-      const doc = await document(
+      await document(
         side === 'provider' ? ApplicationDocumentState.AVAILABLE : undefined,
         1,
         target.applicationId,
+        'schufa',
+        ApplicationDocumentType.SCHUFA,
       );
-      await prisma.applicationDocumentRequest.update({
-        where: { id: doc.request.id },
-        data: { type: ApplicationDocumentType.SCHUFA },
-      });
       const legacy = await aggregate(side, '?limit=20');
       expect(items(legacy)).toHaveLength(20);
       expect(
@@ -1054,15 +1047,19 @@ describe('Application attention E2E', () => {
         activeAt: now,
       })),
     });
-    await prisma.applicationDocumentRequest.createMany({
-      data: fixtures.map((row) => ({
-        applicationId: row.applicationId,
-        type: ApplicationDocumentType.INCOME_PROOF,
-        logicalKey: 'income_proof',
-        round: 1,
-        requestedAt: now,
-      })),
-    });
+    await Promise.all(
+      fixtures.map((row) =>
+        createDocumentRequirementFixture(prisma, {
+          data: {
+            applicationId: row.applicationId,
+            type: ApplicationDocumentType.INCOME_PROOF,
+            definitionKey: 'INCOME_PROOF',
+            round: 1,
+            requestedAt: now,
+          },
+        }),
+      ),
+    );
     const clock = jest.spyOn(app.get(ViewingClock), 'now');
     const response = await queries.aggregate(applicant.id, 'applicant', {
       offset: 199,
@@ -1103,8 +1100,9 @@ describe('Application attention E2E', () => {
   });
 
   it('keeps action ordering deterministic with equal timestamps and repeated reads', async () => {
-    await document(undefined, 1, applicationId, 'a');
-    await document(undefined, 1, applicationId, 'b');
+    // Distinct household subjects require the same document independently.
+    await document(undefined, 1, applicationId, randomUUID());
+    await document(undefined, 1, applicationId, randomUUID());
     await viewing();
     await message();
     expect(await attention('applicant')).toEqual(await attention('applicant'));

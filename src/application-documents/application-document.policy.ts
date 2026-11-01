@@ -14,36 +14,33 @@ export function documentWasPublished(
 }
 
 export function documentCancellationAllowed(
-  supersededAt: Date | null,
-  file: DocumentFileState | null | undefined,
+  closedAt: Date | null,
+  _file: DocumentFileState | null | undefined,
   mutable: boolean,
 ): boolean {
-  if (!mutable || supersededAt !== null) return false;
-  if (documentWasPublished(file)) return false;
-  if (file?.state === ApplicationDocumentState.PROCESSING) return false;
+  if (!mutable || closedAt !== null) return false;
   return true;
 }
 
 export function documentCancelCapability(
-  supersededAt: Date | null,
+  closedAt: Date | null,
   file: DocumentFileState | null | undefined,
   mutable: boolean,
   audience: AttentionAudience,
 ): boolean {
   return (
     audience === 'provider' &&
-    documentCancellationAllowed(supersededAt, file, mutable)
+    documentCancellationAllowed(closedAt, file, mutable)
   );
 }
 
 export function documentReplacementAllowed(
-  supersededAt: Date | null,
+  closedAt: Date | null,
   file: DocumentFileState | null | undefined,
   mutable: boolean,
   audience: AttentionAudience,
 ): boolean {
-  if (audience !== 'provider' || !mutable || supersededAt !== null)
-    return false;
+  if (audience !== 'provider' || !mutable || closedAt !== null) return false;
   if (!file || !documentWasPublished(file)) return false;
   if (file.state === ApplicationDocumentState.PROCESSING) return false;
   return true;
@@ -69,26 +66,29 @@ export function documentReviewRequired(
 }
 
 export function documentRequestCapabilities(
-  supersededAt: Date | null,
+  closedAt: Date | null,
   file: DocumentFileState | null | undefined,
   mutable: boolean,
 ) {
   return {
-    canUpload: mutable && supersededAt === null && documentUploadAllowed(file),
+    canUpload: mutable && closedAt === null && documentUploadAllowed(file),
     canReview:
-      mutable &&
-      supersededAt === null &&
-      !!file &&
-      documentReviewRequired(file),
+      mutable && closedAt === null && !!file && documentReviewRequired(file),
   };
 }
 
 export function documentRequestStatus(
-  supersededAt: Date | null,
+  closedAt: Date | null,
   file: DocumentFileState | null | undefined,
+  state:
+    'OPEN' | 'CANCELLED' | 'SUPERSEDED' | 'LEGACY_CLOSED_UNKNOWN' = closedAt
+    ? 'SUPERSEDED'
+    : 'OPEN',
 ) {
-  return supersededAt
-    ? ('SUPERSEDED' as const)
+  return closedAt
+    ? state === 'OPEN'
+      ? 'LEGACY_CLOSED_UNKNOWN'
+      : state
     : file?.state === ApplicationDocumentState.AVAILABLE
       ? file.reviewedAt
         ? ('REVIEWED' as const)

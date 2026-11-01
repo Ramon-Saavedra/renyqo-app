@@ -34,6 +34,10 @@ Legacy applications without an application-time assessment have UNKNOWN historic
 
 Only published listings accept applications. RENTED listings do not accept applications and are excluded from applicant discovery.
 
+## Verification requirements
+
+Profile prequalification remains separate from requested evidence and future business verification. Requirements belong to one application attempt and subject; scope revision never changes FIFO priority or implies rental selection. Terminal applications freeze new verification mutations without cancelling OPEN history. Legitimate ACTIVE restoration resumes outstanding OPEN work, but never reopens cancelled/superseded rounds. Re-application has an independent scope. See [Application documents](application-documents.md#domain-and-lifecycle).
+
 ## Apply
 
 On PUBLISHED listings, existing eligible WAITING applicants consume free ACTIVE capacity before a fresh application or provider restoration. Remaining capacity admits the entrant as ACTIVE; otherwise it receives a new WAITING position. Provider application lists never include `WAITING` applications, and the waiting-count endpoint returns only the count, never applicant identities, profiles, income or eligibility details. A duplicate live (`ACTIVE` or `WAITING`) application returns `409`; the database partial unique index continues enforcing one live row per applicant/listing. Historical admission restrictions are enforced by the applications domain.

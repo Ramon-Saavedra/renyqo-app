@@ -19,7 +19,7 @@ export class ApplicationDocumentReadService {
     const currentRequests = requests
       .map((request) => {
         const capabilities = documentRequestCapabilities(
-          request.supersededAt,
+          request.closedAt,
           request.currentFile,
           mutable,
         );
@@ -28,8 +28,9 @@ export class ApplicationDocumentReadService {
           type: request.type,
           customLabel: request.customLabel,
           status: documentRequestStatus(
-            request.supersededAt,
+            request.closedAt,
             request.currentFile,
+            request.lifecycleState,
           ),
           documentId: request.currentFile?.id ?? null,
           canDownload:
@@ -37,13 +38,13 @@ export class ApplicationDocumentReadService {
           canUpload: audience === 'applicant' && capabilities.canUpload,
           canReview: audience === 'provider' && capabilities.canReview,
           canCancel: documentCancelCapability(
-            request.supersededAt,
+            request.closedAt,
             request.currentFile,
             mutable,
             audience,
           ),
           canRequestReplacement: documentReplacementAllowed(
-            request.supersededAt,
+            request.closedAt,
             request.currentFile,
             mutable,
             audience,
@@ -73,14 +74,15 @@ export class ApplicationDocumentReadService {
   }
   batch(tx: Prisma.TransactionClient, applicationIds: readonly string[]) {
     return tx.applicationDocumentRequest.findMany({
-      where: { applicationId: { in: [...applicationIds] }, supersededAt: null },
+      where: { applicationId: { in: [...applicationIds] }, closedAt: null },
       select: {
         id: true,
         applicationId: true,
         type: true,
         customLabel: true,
         requestedAt: true,
-        supersededAt: true,
+        closedAt: true,
+        lifecycleState: true,
         currentFile: {
           select: {
             id: true,
@@ -103,7 +105,7 @@ export class ApplicationDocumentReadService {
       requestedAt: request.requestedAt,
       availableAt: request.currentFile?.availableAt ?? null,
       ...documentRequestCapabilities(
-        request.supersededAt,
+        request.closedAt,
         request.currentFile,
         mutable,
       ),
