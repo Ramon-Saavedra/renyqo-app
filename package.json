@@ -58,7 +58,7 @@
     "class-validator": "^0.15.1",
     "cloudinary": "^2.11.0",
     "connect-pg-simple": "^10.0.0",
-    "cookie": "^1.1.1",
+    "cookie": "^2.0.1",
     "cookie-signature": "^1.2.2",
     "csrf-sync": "^4.2.1",
     "dotenv": "^18.0.9",
