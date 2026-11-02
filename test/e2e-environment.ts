@@ -29,6 +29,7 @@ export function pgClientQueryOverlapWarnings(): string[] {
     ) {
       throw new Error(
         'pg client query overlap recorder is not installed; run E2E through npm run test:e2e',
+        { cause: error },
       );
     }
     throw error;

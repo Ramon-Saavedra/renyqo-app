@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import connectPgSimple from 'connect-pg-simple';
 import session from 'express-session';
-import { parse } from 'cookie';
+import { parseCookie } from 'cookie';
 import { unsign } from 'cookie-signature';
 import { Pool } from 'pg';
 import { NodeEnv } from '../../config/env.validation';
@@ -94,7 +94,7 @@ export class SessionInfrastructureService implements OnModuleDestroy {
 
   signedSessionId(header: string | undefined): string | null {
     if (!header) return null;
-    const cookie = parse(header)[SESSION_COOKIE];
+    const cookie = parseCookie(header)[SESSION_COOKIE];
     if (!cookie?.startsWith('s:')) return null;
     const id = unsign(cookie.slice(2), this.secret);
     return id || null;

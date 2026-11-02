@@ -58,7 +58,7 @@
     "class-validator": "^0.15.1",
     "cloudinary": "^2.11.0",
     "connect-pg-simple": "^10.0.0",
-    "cookie": "^1.1.1",
+    "cookie": "^2.0.1",
     "cookie-signature": "^1.2.2",
     "csrf-sync": "^4.2.1",
     "dotenv": "^18.0.9",
@@ -74,7 +74,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.7",
-    "@eslint/js": "^9.18.0",
+    "@eslint/js": "^10.0.1",
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.2.8",
@@ -116,6 +116,16 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
+      "[/\\\\]node_modules[/\\\\]cookie[/\\\\].+\\.js$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "allowJs": true,
+            "module": "CommonJS",
+            "moduleResolution": "Node"
+          }
+        }
+      ],
       "^.+\\.(t|j)s$": [
         "ts-jest",
         {
@@ -130,6 +140,9 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "transformIgnorePatterns": [
+      "node_modules[/\\\\](?!cookie[/\\\\])"
+    ]
   }
 }
