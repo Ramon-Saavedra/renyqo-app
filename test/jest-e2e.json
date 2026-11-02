@@ -5,6 +5,16 @@
   "setupFiles": ["<rootDir>/e2e-environment.ts"],
   "testRegex": ".e2e-spec.ts$",
   "transform": {
+    "[/\\\\]node_modules[/\\\\]cookie[/\\\\].+\\.js$": [
+      "ts-jest",
+      {
+        "tsconfig": {
+          "allowJs": true,
+          "module": "CommonJS",
+          "moduleResolution": "Node"
+        }
+      }
+    ],
     "^.+\\.(t|j)s$": [
       "ts-jest",
       {
@@ -14,5 +24,6 @@
   },
   "moduleNameMapper": {
     "^(\\.{1,2}/.*)\\.js$": "$1"
-  }
+  },
+  "transformIgnorePatterns": ["node_modules[/\\\\](?!cookie[/\\\\])"]
 }

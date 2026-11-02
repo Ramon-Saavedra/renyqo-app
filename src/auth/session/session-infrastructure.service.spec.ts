@@ -7,6 +7,7 @@ import {
   jest,
 } from '@jest/globals';
 import { EventEmitter } from 'node:events';
+import { sign } from 'cookie-signature';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
@@ -65,6 +66,23 @@ describe('Session pool errors', () => {
       {} as PrismaService,
     );
   }
+
+  it('reads an encoded signed SID among other cookies with the cookie v2 parser', () => {
+    const sid = 'session-id.with-punctuation';
+    const signed = sign(sid, 'session-secret-at-least-32-characters');
+    expect(
+      service().signedSessionId(
+        `theme=dark; sid=${encodeURIComponent(`s:${signed}`)}; locale=de`,
+      ),
+    ).toBe(sid);
+  });
+
+  it.each([undefined, '', 'theme=dark', 'sid=unsigned', 'sid=s%3Atampered'])(
+    'rejects absent, unsigned or invalid session cookies: %s',
+    (header) => {
+      expect(service().signedSessionId(header)).toBeNull();
+    },
+  );
 
   it('handles an idle pool error once when the shared pool is created', () => {
     const bare = new EventEmitter();
