@@ -1,31 +1,18 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   ApplicationDocumentFile,
   ApplicationDocumentRequest,
-  Prisma,
 } from '../generated/prisma/client';
-import {
-  ApplicationActivityType,
-  ApplicationDocumentState,
-  ApplicationDocumentType,
-} from '../generated/prisma/enums';
+import { ApplicationDocumentState } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { createHash } from 'node:crypto';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import { VerificationRequirementService } from './verification-requirement.service';
 import {
   ApplicationDocumentAccessService,
   type DocumentAudience,
 } from './application-document-access.service';
-import { ApplicationDocumentActivityService } from './application-document-activity.service';
 import { DocumentRequestInputDto } from './dto/document-input.dto';
 import {
   documentCancelCapability,
-  documentCancellationAllowed,
   documentReplacementAllowed,
   documentRequestCapabilities,
   documentRequestStatus,
@@ -41,7 +28,7 @@ export class ApplicationDocumentRequestService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: ApplicationDocumentAccessService,
-    private readonly activity: ApplicationDocumentActivityService,
+    private readonly requirements: VerificationRequirementService,
   ) {}
 
   list(
@@ -77,108 +64,71 @@ export class ApplicationDocumentRequestService {
     );
   }
 
-  create(
+  async create(
     applicationId: string,
     userId: string,
     inputs: DocumentRequestInputDto[],
   ): Promise<DocumentRequestResponseDto[]> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await this.access.mutation(tx, applicationId, userId, 'provider');
-      const responses: DocumentRequestResponseDto[] = [];
-      for (const input of inputs) {
-        const { label, key } = this.identity(input);
-        const active = await tx.applicationDocumentRequest.findFirst({
-          where: { applicationId, logicalKey: key, supersededAt: null },
-        });
-        if (active)
-          throw new ConflictException(
-            'An active request for this document already exists',
-          );
-        const latest = await tx.applicationDocumentRequest.findFirst({
-          where: { applicationId, logicalKey: key },
-          orderBy: { round: 'desc' },
-          select: { round: true },
-        });
-        const round = latest ? latest.round + 1 : 1;
-        responses.push(
-          this.toDto(
-            await this.append(tx, applicationId, input.type, label, key, round),
-            false,
-            true,
-          ),
-        );
-      }
-      return responses;
+    const result = await this.requirements.execute(applicationId, userId, {
+      operation: 'REQUEST',
+      items: inputs,
     });
+    return this.projectResult(
+      applicationId,
+      userId,
+      result.requirements.map((r) => r.id),
+    );
   }
-
-  cancel(
+  async cancel(
     applicationId: string,
     requestId: string,
     userId: string,
   ): Promise<DocumentRequestResponseDto> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await this.access.mutation(tx, applicationId, userId, 'provider');
-      const request = await this.loadRequest(tx, requestId, applicationId);
-      if (
-        !documentCancellationAllowed(
-          request.supersededAt,
-          request.currentFile,
-          true,
-        )
-      )
-        throw new ConflictException(
-          'Document request cannot be cancelled in its current state',
-        );
-      await this.supersedeCurrent(tx, request);
-      await this.activity.append(
-        tx,
-        applicationId,
-        request.id,
-        request.type,
-        ApplicationActivityType.DOCUMENT_REQUEST_CANCELLED,
-      );
-      return this.toDto(
-        await this.loadRequestWithFiles(tx, requestId, applicationId),
-        false,
-        true,
-      );
+    await this.requirements.execute(applicationId, userId, {
+      operation: 'CANCEL',
+      requestId,
     });
+    return (await this.projectResult(applicationId, userId, [requestId]))[0];
   }
-
-  replace(
+  async replace(
     applicationId: string,
     requestId: string,
     userId: string,
   ): Promise<DocumentRequestResponseDto> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await this.access.mutation(tx, applicationId, userId, 'provider');
-      const request = await this.loadRequest(tx, requestId, applicationId);
-      if (
-        !documentReplacementAllowed(
-          request.supersededAt,
-          request.currentFile,
-          true,
-          'provider',
-        )
-      )
-        throw new ConflictException(
-          'Document replacement requires a received document',
-        );
-      await this.supersedeCurrent(tx, request);
-      return this.toDto(
-        await this.append(
+    const result = await this.requirements.execute(applicationId, userId, {
+      operation: 'REPLACE',
+      requestId,
+    });
+    return (
+      await this.projectResult(applicationId, userId, [
+        result.requirements[1].id,
+      ])
+    )[0];
+  }
+  private projectResult(applicationId: string, userId: string, ids: string[]) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const application = await this.access.authorize(
           tx,
           applicationId,
-          request.type,
-          request.customLabel,
-          request.logicalKey,
-          request.round + 1,
-        ),
-        false,
-        true,
-      );
-    });
+          userId,
+          'provider',
+        );
+        const mutable = this.access.canMutate(application);
+        const rows = await tx.applicationDocumentRequest.findMany({
+          where: { id: { in: ids }, applicationId },
+          include: {
+            files: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+          },
+        });
+        return ids.map((id) => {
+          const row = rows.find((r) => r.id === id);
+          if (!row) throw new NotFoundException('Document request not found');
+          return this.toDto(row, false, mutable);
+        });
+      },
+      { isolationLevel: 'RepeatableRead' },
+    );
   }
 
   fileDto(
@@ -215,7 +165,7 @@ export class ApplicationDocumentRequestService {
         }
       : null;
     const capabilities = documentRequestCapabilities(
-      request.supersededAt,
+      request.closedAt,
       fileState,
       canMutate,
     );
@@ -227,16 +177,20 @@ export class ApplicationDocumentRequestService {
       request.round,
       request.requestedAt,
       request.supersededAt,
-      documentRequestStatus(request.supersededAt, fileState),
+      documentRequestStatus(
+        request.closedAt,
+        fileState,
+        request.lifecycleState,
+      ),
       capabilities.canUpload,
       documentCancelCapability(
-        request.supersededAt,
+        request.closedAt,
         fileState,
         providerCanMutate,
         'provider',
       ),
       documentReplacementAllowed(
-        request.supersededAt,
+        request.closedAt,
         fileState,
         providerCanMutate,
         'provider',
@@ -245,111 +199,11 @@ export class ApplicationDocumentRequestService {
         this.fileDto(
           item,
           providerCanMutate &&
-            !request.supersededAt &&
+            !request.closedAt &&
             item.id === request.currentFileId,
         ),
       ),
+      request.closedAt,
     );
-  }
-
-  private async loadRequest(
-    tx: Prisma.TransactionClient,
-    requestId: string,
-    applicationId: string,
-  ) {
-    const request = await tx.applicationDocumentRequest.findFirst({
-      where: { id: requestId, applicationId },
-      include: { currentFile: true },
-    });
-    if (!request) throw new NotFoundException('Document request not found');
-    if (request.supersededAt)
-      throw new ConflictException('Document request is already superseded');
-    return request;
-  }
-
-  private loadRequestWithFiles(
-    tx: Prisma.TransactionClient,
-    requestId: string,
-    applicationId: string,
-  ) {
-    return tx.applicationDocumentRequest.findFirstOrThrow({
-      where: { id: requestId, applicationId },
-      include: {
-        files: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
-      },
-    });
-  }
-
-  private async supersedeCurrent(
-    tx: Prisma.TransactionClient,
-    request: {
-      id: string;
-      currentFile: ApplicationDocumentFile | null;
-    },
-  ): Promise<void> {
-    await tx.applicationDocumentRequest.update({
-      where: { id: request.id },
-      data: { supersededAt: new Date() },
-    });
-    if (request.currentFile?.state === ApplicationDocumentState.PROCESSING)
-      await tx.applicationDocumentFile.update({
-        where: { id: request.currentFile.id },
-        data: {
-          state: ApplicationDocumentState.FAILED,
-          failureReason: 'SUPERSEDED',
-        },
-      });
-  }
-
-  private identity(input: DocumentRequestInputDto): {
-    label: string | null;
-    key: string;
-  } {
-    if (input.type !== ApplicationDocumentType.OTHER) {
-      if (input.customLabel !== undefined)
-        throw new BadRequestException(
-          'customLabel is only supported for OTHER',
-        );
-      return { label: null, key: input.type };
-    }
-    const label = input.customLabel
-      ?.normalize('NFKC')
-      .trim()
-      .replace(/\s+/gu, ' ');
-    if (
-      !label ||
-      label.length > 100 ||
-      !/^[\p{L}\p{N} .,'()&+/-]+$/u.test(label)
-    )
-      throw new BadRequestException('OTHER requires a valid customLabel');
-    const normalizedLabel = label.toLocaleLowerCase('de-DE');
-    return {
-      label,
-      key: `OTHER:${createHash('sha256').update(normalizedLabel).digest('hex')}`,
-    };
-  }
-
-  private async append(
-    tx: Prisma.TransactionClient,
-    applicationId: string,
-    type: ApplicationDocumentType,
-    customLabel: string | null,
-    logicalKey: string,
-    round: number,
-  ): Promise<
-    ApplicationDocumentRequest & { files: ApplicationDocumentFile[] }
-  > {
-    const request = await tx.applicationDocumentRequest.create({
-      data: { applicationId, type, customLabel, logicalKey, round },
-      include: { files: true },
-    });
-    await this.activity.append(
-      tx,
-      applicationId,
-      request.id,
-      type,
-      ApplicationActivityType.DOCUMENT_REQUESTED,
-    );
-    return request;
   }
 }

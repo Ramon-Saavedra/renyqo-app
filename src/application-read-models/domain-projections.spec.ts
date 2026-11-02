@@ -61,7 +61,8 @@ describe('Read model domain projections', () => {
       type: ApplicationDocumentType.INCOME_PROOF,
       customLabel: null,
       requestedAt: now,
-      supersededAt: null,
+      closedAt: null,
+      lifecycleState: 'OPEN' as const,
       currentFile: state
         ? {
             id: 'file',
@@ -104,7 +105,7 @@ describe('Read model domain projections', () => {
     expect(
       provider.currentRequests.find((row) => row.status === 'PROCESSING')
         ?.canCancel,
-    ).toBe(false);
+    ).toBe(true);
     expect(applicant.currentRequests[0].canCancel).toBe(false);
     expect(Object.keys(applicant.currentRequests[0]).sort()).toEqual([
       'canCancel',

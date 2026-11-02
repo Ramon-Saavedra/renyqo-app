@@ -88,7 +88,7 @@ describe('Profile eligibility migration (isolated PostgreSQL)', () => {
     const migrations = readdirSync(root)
       .filter((n) => n !== 'migration_lock.toml')
       .sort();
-    expect(migrations.at(-1)).toBe(migration);
+    expect(migrations).toContain(migration);
     const catalogs: string[] = [];
     for (const [index, schema] of schemas.entries()) {
       await pool.query(`CREATE SCHEMA "${schema}"`);
@@ -102,7 +102,7 @@ describe('Profile eligibility migration (isolated PostgreSQL)', () => {
           cli(scoped.href, ['migrate', 'status']);
         } else {
           await client.query(`SET search_path TO "${schema}"`);
-          for (const name of migrations.filter((n) => n !== migration))
+          for (const name of migrations.filter((n) => n < migration))
             await client.query(
               readFileSync(resolve(root, name, 'migration.sql'), 'utf8'),
             );
@@ -146,6 +146,11 @@ describe('Profile eligibility migration (isolated PostgreSQL)', () => {
             ).rows[0].n,
           ).toBe(0);
         }
+        if (index === 1)
+          for (const name of migrations.filter((n) => n > migration))
+            await client.query(
+              readFileSync(resolve(root, name, 'migration.sql'), 'utf8'),
+            );
         const diff = cli(scoped.href, [
           'migrate',
           'diff',

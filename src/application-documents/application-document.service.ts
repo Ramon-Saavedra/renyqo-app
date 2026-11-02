@@ -51,7 +51,7 @@ export class ApplicationDocumentService {
           'Documents cannot be changed for this application',
         );
       const request = await tx.applicationDocumentRequest.findFirst({
-        where: { id: requestId, applicationId, supersededAt: null },
+        where: { id: requestId, applicationId, closedAt: null },
         include: { currentFile: true },
       });
       if (!request) throw new NotFoundException('Document request not found');
@@ -72,7 +72,7 @@ export class ApplicationDocumentService {
     const file = await runSerializableTransaction(this.prisma, async (tx) => {
       await this.access.mutation(tx, applicationId, userId, 'applicant');
       const request = await tx.applicationDocumentRequest.findFirst({
-        where: { id: requestId, applicationId, supersededAt: null },
+        where: { id: requestId, applicationId, closedAt: null },
         include: { currentFile: true },
       });
       if (!request) throw new NotFoundException('Document request not found');
@@ -172,7 +172,7 @@ export class ApplicationDocumentService {
           state: ApplicationDocumentState.AVAILABLE,
           request: {
             applicationId,
-            supersededAt: null,
+            closedAt: null,
             currentFileId: documentId,
           },
         },

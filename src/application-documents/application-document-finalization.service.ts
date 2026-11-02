@@ -149,7 +149,7 @@ export class ApplicationDocumentFinalizationService {
         });
         return;
       }
-      if (file.request.supersededAt || file.request.currentFileId !== file.id) {
+      if (file.request.closedAt || file.request.currentFileId !== file.id) {
         if (file.state === ApplicationDocumentState.PROCESSING)
           await this.fail(tx, file.id, 'SUPERSEDED');
         return;

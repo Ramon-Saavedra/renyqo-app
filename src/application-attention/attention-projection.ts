@@ -19,7 +19,7 @@ export type AttentionDocumentSource = {
   id: string;
   type: ApplicationDocumentType;
   customLabel: string | null;
-  supersededAt: Date | null;
+  closedAt: Date | null;
   currentFile: {
     id: string;
     state: ApplicationDocumentState;
@@ -206,7 +206,7 @@ function documentIndicatorsFor(
     const document = documentsByRequest.get(action.target.requestId);
     if (!document) continue;
     const status = documentRequestStatus(
-      document.supersededAt,
+      document.closedAt,
       document.currentFile,
     );
     if (!isObligationStatus(status)) continue;

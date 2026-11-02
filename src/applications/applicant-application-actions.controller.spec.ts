@@ -28,6 +28,7 @@ const user: SafeUser = {
 };
 
 const application: Application = {
+  verificationScopeRevision: 0,
   id: APPLICATION_ID,
   listingId: LISTING_ID,
   applicantId: APPLICANT_ID,
