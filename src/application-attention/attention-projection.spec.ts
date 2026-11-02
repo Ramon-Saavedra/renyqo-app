@@ -42,7 +42,7 @@ describe('attention projection', () => {
       { ...conversation, historicalUnreadMessageCount: unread },
       documents.map((document) => {
         const capabilities = documentRequestCapabilities(
-          document.supersededAt,
+          document.closedAt,
           document.currentFile,
           true,
         );
@@ -78,7 +78,7 @@ describe('attention projection', () => {
       id: 'request',
       type: ApplicationDocumentType.SCHUFA,
       customLabel: null,
-      supersededAt: null,
+      closedAt: null,
       currentFile: null,
       ...overrides,
     };

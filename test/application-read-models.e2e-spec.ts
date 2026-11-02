@@ -1,3 +1,5 @@
+import { VerificationRequirementService } from '../src/application-documents/verification-requirement.service';
+import { createDocumentEvidenceFixture } from './document-requirement-fixture';
 import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
 import { clearE2EData } from './e2e-cleanup';
 import { OutboxDispatcherService } from '../src/outbox/outbox-dispatcher.service';
@@ -319,34 +321,19 @@ describe('Application read models E2E', () => {
     state?: ApplicationDocumentState,
     key = randomUUID(),
   ) {
-    const request = await prisma.applicationDocumentRequest.create({
+    const { request } = await createDocumentEvidenceFixture(prisma, {
       data: {
         applicationId: appId,
         type: ApplicationDocumentType.INCOME_PROOF,
-        logicalKey: key,
+        definitionKey: key,
         round: 1,
         requestedAt: now,
       },
+      state,
+      now,
+      bucket: 'read-model-e2e',
     });
-    if (!state) return request;
-    const file = await prisma.applicationDocumentFile.create({
-      data: {
-        requestId: request.id,
-        storageKey: randomUUID(),
-        bucket: 'read-model-e2e',
-        checksum: 'a'.repeat(64),
-        mimeType: 'application/pdf',
-        size: 100,
-        state,
-        recoverAfter: now,
-        expiresAt: new Date(now.getTime() + 60000),
-        availableAt: state === ApplicationDocumentState.AVAILABLE ? now : null,
-      },
-    });
-    return prisma.applicationDocumentRequest.update({
-      where: { id: request.id },
-      data: { currentFileId: file.id },
-    });
+    return request;
   }
 
   async function viewing(
@@ -1339,13 +1326,15 @@ describe('Application read models E2E', () => {
     },
   );
 
-  it('paginates document request history while compact state excludes superseded requests', async () => {
+  it('paginates document request history while compact state excludes cancelled requests', async () => {
     for (let i = 0; i < 8; i++) {
       const row = await document();
-      await prisma.applicationDocumentRequest.update({
-        where: { id: row.id },
-        data: { supersededAt: now },
-      });
+      await app
+        .get(VerificationRequirementService)
+        .execute(applicationId, provider.id, {
+          operation: 'CANCEL',
+          requestId: row.id,
+        });
     }
     const current = await document(
       applicationId,
@@ -1692,11 +1681,11 @@ describe('Application read models E2E', () => {
     jest
       .spyOn(conversations, 'batch')
       .mockImplementationOnce(async (tx, ids, side) => {
+        await document();
         await prisma.application.update({
           where: { id: applicationId },
           data: { status: ApplicationStatus.WITHDRAWN, withdrawnAt: now },
         });
-        await document();
         return original(tx, ids, side);
       });
     const workspace = await app
@@ -1798,37 +1787,35 @@ describe('Application read models E2E', () => {
   it('bounds actual PostgreSQL queries for 1, 25 and 101 applications and never loads heavy projections', async () => {
     const applicantQuery = app.get(ApplicantApplicationOverviewQueryService);
     const providerQuery = app.get(ProviderApplicationOverviewQueryService);
-    await prisma.application.update({
-      where: { id: applicationId },
-      data: { status: ApplicationStatus.WITHDRAWN, withdrawnAt: now },
-    });
     const applicationIds = [applicationId];
     const results: {
       count: number;
       applicantQueries: number;
       providerQueries: number;
     }[] = [];
+    async function seedExitedApplication(id: string) {
+      await message(id);
+      await document(id);
+      await viewing(id);
+      await prisma.application.update({
+        where: { id },
+        data: { status: ApplicationStatus.WITHDRAWN, withdrawnAt: now },
+      });
+    }
+    await seedExitedApplication(applicationId);
     for (const count of [1, 25, 101]) {
-      while (applicationIds.length < count)
-        applicationIds.push(
-          (
-            await prisma.application.create({
-              data: {
-                listingId,
-                applicantId: applicant.id,
-                status: ApplicationStatus.WITHDRAWN,
-                activeAt: now,
-                withdrawnAt: now,
-              },
-            })
-          ).id,
-        );
-      for (const id of applicationIds.slice(
-        count === 1 ? 0 : count === 25 ? 1 : 25,
-      )) {
-        await message(id);
-        await document(id);
-        await viewing(id);
+      while (applicationIds.length < count) {
+        const row = await prisma.application.create({
+          data: {
+            listingId,
+            applicantId: applicant.id,
+            status: ApplicationStatus.ACTIVE,
+            activeAt: now,
+          },
+        });
+        // Complete one historical application before creating the next live one.
+        await seedExitedApplication(row.id);
+        applicationIds.push(row.id);
       }
       const spy = jest.spyOn(Client.prototype, 'query');
       const statements = () =>

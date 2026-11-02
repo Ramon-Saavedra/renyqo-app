@@ -1,3 +1,4 @@
+import { createDocumentRequirementFixture } from './document-requirement-fixture';
 import { clearE2EData } from './e2e-cleanup';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -215,9 +216,6 @@ describe('Attention read-model preparation E2E', () => {
       throw new Error('Unsafe E2E cleanup configuration');
     }
     assertSafeE2EDatabaseUrl(url);
-    await prisma.applicationDocumentRequest.updateMany({
-      data: { currentFileId: null },
-    });
     await clearE2EData(prisma);
   });
 
@@ -259,12 +257,12 @@ describe('Attention read-model preparation E2E', () => {
     customLabel: string | null,
     state?: ApplicationDocumentState,
   ) {
-    const documentRequest = await prisma.applicationDocumentRequest.create({
+    const documentRequest = await createDocumentRequirementFixture(prisma, {
       data: {
         applicationId,
         type,
         customLabel,
-        logicalKey: randomUUID(),
+        definitionKey: randomUUID(),
         round: 1,
         requestedAt: now,
       },
@@ -451,11 +449,11 @@ describe('Attention read-model preparation E2E', () => {
         activeAt: now,
       },
     });
-    await prisma.applicationDocumentRequest.create({
+    await createDocumentRequirementFixture(prisma, {
       data: {
         applicationId: second.id,
         type: ApplicationDocumentType.INCOME_PROOF,
-        logicalKey: randomUUID(),
+        definitionKey: randomUUID(),
         round: 1,
         requestedAt: now,
       },
