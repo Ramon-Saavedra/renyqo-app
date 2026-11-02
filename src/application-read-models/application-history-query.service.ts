@@ -121,6 +121,8 @@ export class ApplicationHistoryQueryService {
             customLabel: true,
             requestedAt: true,
             supersededAt: true,
+            closedAt: true,
+            lifecycleState: true,
             currentFile: {
               select: {
                 id: true,
@@ -142,7 +144,7 @@ export class ApplicationHistoryQueryService {
         const mutable = applicationProcessAllowsMutation(application);
         const items = page.map((row) => {
           const capabilities = documentRequestCapabilities(
-            row.supersededAt,
+            row.closedAt,
             row.currentFile,
             mutable,
           );
@@ -152,18 +154,23 @@ export class ApplicationHistoryQueryService {
             customLabel: row.customLabel,
             requestedAt: row.requestedAt,
             supersededAt: row.supersededAt,
-            status: documentRequestStatus(row.supersededAt, row.currentFile),
+            closedAt: row.closedAt,
+            status: documentRequestStatus(
+              row.closedAt,
+              row.currentFile,
+              row.lifecycleState,
+            ),
             documentId: row.currentFile?.id ?? null,
             canUpload: audience === 'applicant' && capabilities.canUpload,
             canReview: audience === 'provider' && capabilities.canReview,
             canCancel: documentCancelCapability(
-              row.supersededAt,
+              row.closedAt,
               row.currentFile,
               mutable,
               audience,
             ),
             canRequestReplacement: documentReplacementAllowed(
-              row.supersededAt,
+              row.closedAt,
               row.currentFile,
               mutable,
               audience,

@@ -1,3 +1,4 @@
+import { expectDocumentEvidencePreserved } from './document-requirement-fixture';
 import { clearE2EData } from './e2e-cleanup';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -228,9 +229,6 @@ describe('Application documents E2E', () => {
     }
     assertSafeE2EDatabaseUrl(url);
     if (!prisma) return;
-    await prisma.applicationDocumentRequest.updateMany({
-      data: { currentFileId: null },
-    });
     await clearE2EData(prisma);
   });
 
@@ -1129,7 +1127,7 @@ describe('Application documents E2E', () => {
         .patch(cancelPath(requestId))
         .expect(200);
       expect(cancelled.body).toEqual(
-        expect.objectContaining({ id: requestId, status: 'SUPERSEDED' }),
+        expect.objectContaining({ id: requestId, status: 'CANCELLED' }),
       );
       expect(
         await prisma.applicationActivity.count({
@@ -1152,7 +1150,7 @@ describe('Application documents E2E', () => {
       expect(list.body).toEqual([
         expect.objectContaining({
           id: requestId,
-          status: 'SUPERSEDED',
+          status: 'CANCELLED',
           canCancel: false,
         }),
       ]);
@@ -1197,17 +1195,19 @@ describe('Application documents E2E', () => {
       await provider.agent.patch(cancelPath(requestId)).expect(200);
     });
 
-    it('rejects cancellation for processing, received, reviewed, and repeat attempts', async () => {
+    it('cancels processing, received and reviewed requirements without erasing evidence; rejects repeat closure', async () => {
       const processingId = await createRequest();
       await upload(processingId);
-      await provider.agent.patch(cancelPath(processingId)).expect(409);
+      await provider.agent.patch(cancelPath(processingId)).expect(200);
 
       const receivedId = await createRequest(
         ApplicationDocumentType.INCOME_PROOF,
       );
       const receivedFile = await upload(receivedId);
       await finalize(receivedFile);
-      await provider.agent.patch(cancelPath(receivedId)).expect(409);
+      await expectDocumentEvidencePreserved(prisma, receivedFile.id, () =>
+        provider.agent.patch(cancelPath(receivedId)).expect(200),
+      );
 
       const reviewedId = await createRequest(
         ApplicationDocumentType.IDENTITY_DOCUMENT,
@@ -1217,7 +1217,9 @@ describe('Application documents E2E', () => {
       await app
         .get(ApplicationDocumentService)
         .review(applicationId, reviewedFile.id, provider.id);
-      await provider.agent.patch(cancelPath(reviewedId)).expect(409);
+      await expectDocumentEvidencePreserved(prisma, reviewedFile.id, () =>
+        provider.agent.patch(cancelPath(reviewedId)).expect(200),
+      );
 
       const bareId = await createRequest(
         ApplicationDocumentType.LIABILITY_INSURANCE,
@@ -1242,7 +1244,7 @@ describe('Application documents E2E', () => {
       ]);
       expect(
         await prisma.applicationDocumentRequest.count({
-          where: { supersededAt: null },
+          where: { closedAt: null },
         }),
       ).toBe(0);
     });

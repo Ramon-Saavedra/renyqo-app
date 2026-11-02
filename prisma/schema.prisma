@@ -104,6 +104,7 @@ enum ApplicationActivityType {
   APPLICANT_REPLIES_ENABLED @map("applicant_replies_enabled")
   APPLICANT_REPLIES_DISABLED @map("applicant_replies_disabled")
   DOCUMENT_REQUESTED             @map("document_requested")
+  DOCUMENT_REQUEST_SUPERSEDED @map("document_request_superseded")
   DOCUMENT_REQUEST_CANCELLED       @map("document_request_cancelled")
   DOCUMENT_UPLOADED              @map("document_uploaded")
   DOCUMENT_REVIEWED              @map("document_reviewed")
@@ -156,6 +157,11 @@ enum ProviderType {
 }
 
 model User {
+  verificationSubjects ApplicationVerificationSubject[] @relation("VerificationSubjectCreator")
+  requestedRequirements ApplicationDocumentRequest[] @relation("RequirementCreator")
+  closedRequirements ApplicationDocumentRequest[] @relation("RequirementCloser")
+  verificationReceipts VerificationCommandReceipt[]
+
   eligibilityCriteriaEdits ListingCriteriaRevision[] @relation("CriteriaActor")
   eligibilityAssessments ApplicationEligibilityAssessment[] @relation("AssessmentActor")
   id                String        @id @default(uuid()) @db.Uuid
@@ -276,6 +282,10 @@ model ListingImage {
 }
 
 model Application {
+  verificationScopeRevision Int @default(0) @map("verification_scope_revision")
+  verificationSubjects ApplicationVerificationSubject[]
+  verificationReceipts VerificationCommandReceipt[]
+
   eligibilityAssessments ApplicationEligibilityAssessment[]
   id           String             @id @default(uuid()) @db.Uuid
   listingId    String             @map("listing_id") @db.Uuid
@@ -667,20 +677,39 @@ model ApplicationMessage {
 }
 
 model ApplicationDocumentRequest {
+  subjectId String @map("subject_id") @db.Uuid
+  lifecycleState VerificationRequirementState @default(OPEN) @map("lifecycle_state")
+  revision Int @default(1)
+  closedAt DateTime? @map("closed_at") @db.Timestamptz(3)
+  createdScopeRevision Int? @map("created_scope_revision")
+  closedScopeRevision Int? @map("closed_scope_revision")
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+  closedByUserId String? @map("closed_by_user_id") @db.Uuid
+  provenance VerificationProvenance @default(NATIVE)
+  predecessorId String? @unique @map("predecessor_id") @db.Uuid
+  subject ApplicationVerificationSubject @relation(fields:[subjectId,applicationId],references:[id,applicationId],onDelete:Restrict)
+  createdBy User? @relation("RequirementCreator",fields:[createdByUserId],references:[id],onDelete:Restrict)
+  closedBy User? @relation("RequirementCloser",fields:[closedByUserId],references:[id],onDelete:Restrict)
+  predecessor ApplicationDocumentRequest? @relation("RequirementPredecessor",fields:[predecessorId,applicationId,subjectId,definitionKey],references:[id,applicationId,subjectId,definitionKey],onDelete:Restrict,map:"requirement_predecessor_identity_fkey")
+  successor ApplicationDocumentRequest? @relation("RequirementPredecessor")
+
   id            String                    @id @default(uuid()) @db.Uuid
   applicationId String                    @map("application_id") @db.Uuid
   type          ApplicationDocumentType
   customLabel   String?                   @map("custom_label") @db.VarChar(100)
-  logicalKey    String                    @map("logical_key") @db.VarChar(120)
+  definitionKey String                    @map("logical_key") @db.VarChar(120)
   round         Int
   requestedAt   DateTime                  @default(now()) @map("requested_at")
   supersededAt  DateTime?                 @map("superseded_at")
   currentFileId String?                   @unique @map("current_file_id") @db.Uuid
   application   Application               @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   files         ApplicationDocumentFile[] @relation("DocumentAttempts")
-  currentFile   ApplicationDocumentFile?  @relation("CurrentDocument", fields: [currentFileId], references: [id], onDelete: SetNull)
+  currentFile   ApplicationDocumentFile?  @relation("CurrentDocument", fields: [currentFileId,id], references: [id,requestId], onDelete: Restrict, map:"document_current_file_same_request_fkey")
 
-  @@unique([applicationId, logicalKey, round])
+  @@unique([applicationId, subjectId, definitionKey, round],map:"requirement_identity_round_key")
+  @@unique([id,applicationId,subjectId,definitionKey],map:"requirement_id_identity_key")
+  @@unique([predecessorId,applicationId,subjectId,definitionKey],map:"requirement_predecessor_identity_key")
+  @@unique([currentFileId,id],map:"document_current_file_identity_key")
   @@index([applicationId, requestedAt, id])
   @@map("application_document_requests")
 }
@@ -707,6 +736,7 @@ model ApplicationDocumentFile {
   currentFor    ApplicationDocumentRequest? @relation("CurrentDocument")
 
   @@index([state, recoverAfter, id])
+  @@unique([id,requestId],map:"document_file_id_request_key")
   @@index([requestId, createdAt, id])
   @@map("application_document_files")
 }
@@ -927,4 +957,62 @@ model ApplicationEligibilityCheck {
   assessment ApplicationEligibilityAssessment @relation(fields: [assessmentId], references: [id], onDelete: Restrict)
   @@id([assessmentId, criterion])
   @@map("application_eligibility_checks")
+}
+
+
+enum VerificationSubjectKind {
+  APPLICANT
+  HOUSEHOLD_MEMBER
+}
+
+enum VerificationRequirementState {
+  OPEN
+  CANCELLED
+  SUPERSEDED
+  LEGACY_CLOSED_UNKNOWN
+}
+
+enum VerificationProvenance {
+  NATIVE
+  LEGACY
+}
+
+enum VerificationCommandOperation {
+  REQUEST
+  CANCEL
+  REPLACE
+}
+
+model ApplicationVerificationSubject {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  kind VerificationSubjectKind
+  subjectKey String @map("subject_key") @db.VarChar(64)
+  displayLabel String? @map("display_label") @db.VarChar(100)
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  provenance VerificationProvenance @default(NATIVE)
+  application Application @relation(fields:[applicationId],references:[id],onDelete:Restrict)
+  createdBy User? @relation("VerificationSubjectCreator",fields:[createdByUserId],references:[id],onDelete:Restrict)
+  requirements ApplicationDocumentRequest[]
+  @@unique([applicationId,subjectKey])
+  @@unique([id,applicationId])
+  @@map("application_verification_subjects")
+}
+
+model VerificationCommandReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  actorUserId String @map("actor_user_id") @db.Uuid
+  idempotencyKey String @map("idempotency_key") @db.VarChar(128)
+  operation VerificationCommandOperation
+  payloadHash String @map("payload_hash") @db.Char(64)
+  schemaVersion Int @default(1) @map("schema_version")
+  scopeRevision Int @map("scope_revision")
+  result Json @db.JsonB
+  committedAt DateTime @default(now()) @map("committed_at") @db.Timestamptz(3)
+  application Application @relation(fields:[applicationId],references:[id],onDelete:Restrict)
+  actor User @relation(fields:[actorUserId],references:[id],onDelete:Restrict)
+  @@unique([applicationId,actorUserId,idempotencyKey],map:"verification_receipt_key")
+  @@map("verification_command_receipts")
 }

@@ -26,6 +26,7 @@ const user: SafeUser = {
 };
 
 const application: ApplicantApplicationRecord = {
+  verificationScopeRevision: 0,
   id: '00000000-0000-4000-8000-000000000003',
   listingId: LISTING_ID,
   applicantId: APPLICANT_ID,

@@ -15,17 +15,26 @@ export class ApplicationDocumentActivityService {
     requestId: string,
     documentType: ApplicationDocumentType,
     type: ApplicationActivityType,
+    actorUserId?: string,
+    scopeRevision?: number,
+    predecessorId?: string,
   ): Promise<ApplicationActivity> {
     return tx.applicationActivity.create({
       data: {
         applicationId,
+        actorUserId,
         type,
         actorType:
           type === ApplicationActivityType.DOCUMENT_UPLOADED
             ? ApplicationActivityActorType.APPLICANT
             : ApplicationActivityActorType.PROVIDER,
         visibility: ApplicationActivityVisibility.BOTH,
-        payload: { requestId, documentType },
+        payload: {
+          requestId,
+          documentType,
+          ...(scopeRevision === undefined ? {} : { scopeRevision }),
+          ...(predecessorId ? { predecessorId } : {}),
+        },
       },
     });
   }

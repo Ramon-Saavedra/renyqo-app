@@ -11,7 +11,7 @@ describe('Application document policy', () => {
   const mutable = true;
   const active = null as Date | null;
 
-  it('allows cancellation only before a published document exists', () => {
+  it('allows cancellation of any open requirement while preserving evidence', () => {
     expect(documentCancellationAllowed(active, null, mutable)).toBe(true);
     expect(
       documentCancellationAllowed(
@@ -34,7 +34,7 @@ describe('Application document policy', () => {
         },
         mutable,
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       documentCancellationAllowed(
         active,
@@ -45,7 +45,7 @@ describe('Application document policy', () => {
         },
         mutable,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('exposes provider-only cancel capability through the shared predicate', () => {
@@ -101,7 +101,7 @@ describe('Application document policy', () => {
     ).toBe(true);
   });
 
-  it('treats published history as blocking cancellation even when state changed', () => {
+  it('retains publication facts independently from retry eligibility', () => {
     expect(
       documentWasPublished({
         state: ApplicationDocumentState.FAILED,

@@ -79,6 +79,16 @@ Admission commits the application, initial assessment, activity and outbox atomi
 
 The migration performs no historical backfill and preserves existing applications. A legacy listing receives an observed `LEGACY_BASELINE` when first needed, never a backdated reconstruction. Legacy application-time eligibility remains UNKNOWN even after a current reassessment. Custom PostgreSQL triggers, the partial initial-assessment index and deferred constraints are part of the durable contract and must be retained alongside the Prisma schema.
 
+## Verification requirement domain
+
+`20261101204015_verification_requirement_domain` adds application-local subjects, explicit requirement lifecycle/revision/provenance, predecessor links, an application scope revision and immutable command receipts. It extends existing document requests and evidence storage. `definitionKey` retains the physical `logical_key` column.
+
+Stop application/document writers during migration. Preflight reports exact request IDs for cross-request current-file pointers and multiple PROCESSING attempts, aborting atomically rather than repairing history. Existing requests receive an observed legacy applicant association; ambiguous old closures retain their original timestamp and become LEGACY_CLOSED_UNKNOWN. Actors, predecessor chains, past scope revisions and business verification are not inferred. Files/review facts remain unchanged; applications are never rejected or demoted.
+
+Constraints enforce one OPEN requirement per application/subject/definition, ordered rounds and non-branching same-identity predecessor chains, same-request current-file references, immutable identity/closed history, and immutable receipts. Native creation/closure must match the locked application's scope revision; supersession requires its successor in the same scope command. Scope revisions advance consecutively and cannot commit without a corresponding requirement change. Native work requires ACTIVE and PUBLISHED/PAUSED. Legacy provenance is migration-only for new insertion. Current published evidence cannot be reassigned to a different attempt.
+
+Apply the migration before deploying dependent writers. It replaces the former global current-key/round indexes and tightens the current-file FK. Custom partial indexes, guards and deferred constraints are part of the durable schema contract. RESTRICT references preserve history; retention/erasure remains a separate policy. Shared isolated E2E cleanup truncates the complete test graph without disabling production constraints.
+
 ## Indexes
 
 Listing discovery sort modes are supported by these indexes:
