@@ -1,3 +1,11 @@
+import { ApplicationDocumentReadModule } from './application-document-read.module';
+import { VerificationCommandHttpService } from './verification-command-http.service';
+import { ProviderVerificationCommandsController } from './provider-verification-commands.controller';
+import { ProviderVerificationSubjectsController } from './provider-verification-subjects.controller';
+import {
+  ProviderVerificationRequirementsController,
+  ApplicantVerificationRequirementsController,
+} from './verification-requirements.controller';
 import { Module } from '@nestjs/common';
 import { ApplicationDocumentDomainModule } from './application-document-domain.module';
 import { ApplicationDocumentRequestService } from './application-document-request.service';
@@ -8,9 +16,17 @@ import { ProviderDocumentsController } from './provider-documents.controller';
 import { ApplicantDocumentsController } from './applicant-documents.controller';
 
 @Module({
-  imports: [ApplicationDocumentDomainModule],
-  controllers: [ProviderDocumentsController, ApplicantDocumentsController],
+  imports: [ApplicationDocumentDomainModule, ApplicationDocumentReadModule],
+  controllers: [
+    ProviderDocumentsController,
+    ApplicantDocumentsController,
+    ProviderVerificationCommandsController,
+    ProviderVerificationSubjectsController,
+    ProviderVerificationRequirementsController,
+    ApplicantVerificationRequirementsController,
+  ],
   providers: [
+    VerificationCommandHttpService,
     ApplicationDocumentRequestService,
     ApplicationDocumentService,
     ApplicationDocumentUploadGuard,

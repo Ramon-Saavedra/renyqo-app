@@ -1,3 +1,8 @@
+import {
+  verificationIdentity,
+  verificationIdentitySelect,
+  loadVerificationIdentities,
+} from '../application-documents/verification-projection';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { AttentionAudience } from '../application-attention/application-pending-action';
 import { ApplicationActivityReadService } from '../applications/application-activity-read.service';
@@ -116,6 +121,7 @@ export class ApplicationHistoryQueryService {
               : {}),
           },
           select: {
+            ...verificationIdentitySelect,
             id: true,
             type: true,
             customLabel: true,
@@ -138,7 +144,10 @@ export class ApplicationHistoryQueryService {
         const total = await tx.applicationDocumentRequest.count({
           where: { applicationId },
         });
-        const page = rows.slice(0, query.limit);
+        const page = await loadVerificationIdentities(
+          tx,
+          rows.slice(0, query.limit),
+        );
         const last = page.at(-1);
         const hasMore = rows.length > query.limit;
         const mutable = applicationProcessAllowsMutation(application);
@@ -150,6 +159,7 @@ export class ApplicationHistoryQueryService {
           );
           return {
             requestId: row.id,
+            verification: verificationIdentity(row),
             type: row.type,
             customLabel: row.customLabel,
             requestedAt: row.requestedAt,

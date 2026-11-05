@@ -1,3 +1,8 @@
+import {
+  verificationIdentity,
+  verificationIdentitySelect,
+  type VerificationIdentity,
+} from './verification-projection';
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import {
@@ -12,7 +17,10 @@ import { ApplicationDocumentState } from '../generated/prisma/enums';
 @Injectable()
 export class ApplicationDocumentReadService {
   summary(
-    requests: Awaited<ReturnType<ApplicationDocumentReadService['batch']>>,
+    requests: (Awaited<
+      ReturnType<ApplicationDocumentReadService['batch']>
+    >[number] &
+      VerificationIdentity)[],
     mutable: boolean,
     audience: AttentionAudience,
   ) {
@@ -25,6 +33,7 @@ export class ApplicationDocumentReadService {
         );
         return {
           requestId: request.id,
+          verification: verificationIdentity(request),
           type: request.type,
           customLabel: request.customLabel,
           status: documentRequestStatus(
@@ -72,10 +81,11 @@ export class ApplicationDocumentReadService {
       currentRequests,
     };
   }
-  batch(tx: Prisma.TransactionClient, applicationIds: readonly string[]) {
-    return tx.applicationDocumentRequest.findMany({
+  async batch(tx: Prisma.TransactionClient, applicationIds: readonly string[]) {
+    const rows = await tx.applicationDocumentRequest.findMany({
       where: { applicationId: { in: [...applicationIds] }, closedAt: null },
       select: {
+        ...verificationIdentitySelect,
         id: true,
         applicationId: true,
         type: true,
@@ -93,6 +103,7 @@ export class ApplicationDocumentReadService {
         },
       },
     });
+    return rows;
   }
 
   facts(

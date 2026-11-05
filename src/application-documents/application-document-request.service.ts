@@ -1,3 +1,8 @@
+import {
+  verificationIdentity,
+  loadVerificationIdentities,
+  type VerificationIdentity,
+} from './verification-projection';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   ApplicationDocumentFile,
@@ -52,7 +57,8 @@ export class ApplicationDocumentRequestService {
           orderBy: [{ requestedAt: 'asc' }, { id: 'asc' }],
         });
         const mutable = this.access.canMutate(application);
-        return requests.map((request) =>
+        const enriched = await loadVerificationIdentities(tx, requests);
+        return enriched.map((request) =>
           this.toDto(
             request,
             mutable && audience === 'applicant',
@@ -121,8 +127,9 @@ export class ApplicationDocumentRequestService {
             files: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
           },
         });
+        const enriched = await loadVerificationIdentities(tx, rows);
         return ids.map((id) => {
-          const row = rows.find((r) => r.id === id);
+          const row = enriched.find((r) => r.id === id);
           if (!row) throw new NotFoundException('Document request not found');
           return this.toDto(row, false, mutable);
         });
@@ -150,7 +157,8 @@ export class ApplicationDocumentRequestService {
   }
 
   private toDto(
-    request: ApplicationDocumentRequest & { files: ApplicationDocumentFile[] },
+    request: ApplicationDocumentRequest &
+      VerificationIdentity & { files: ApplicationDocumentFile[] },
     canMutate: boolean,
     providerCanMutate = false,
   ): DocumentRequestResponseDto {
@@ -204,6 +212,7 @@ export class ApplicationDocumentRequestService {
         ),
       ),
       request.closedAt,
+      verificationIdentity(request),
     );
   }
 }
