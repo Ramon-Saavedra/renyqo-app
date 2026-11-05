@@ -36,7 +36,7 @@ Only published listings accept applications. RENTED listings do not accept appli
 
 ## Verification requirements
 
-Profile prequalification remains separate from requested evidence and future business verification. Requirements belong to one application attempt and subject; scope revision never changes FIFO priority or implies rental selection. Terminal applications freeze new verification mutations without cancelling OPEN history. Legitimate ACTIVE restoration resumes outstanding OPEN work, but never reopens cancelled/superseded rounds. Re-application has an independent scope. See [Application documents](application-documents.md#domain-and-lifecycle).
+Profile prequalification, requested evidence, business verification and rental selection stay separate. A decision does not change the requirement lifecycle or advance verification scope, and rental selection does not require verification. Requirements belong to one application attempt and subject; scope revision never changes FIFO priority. Terminal applications freeze new verification commands, including decisions, without cancelling OPEN history or rewriting existing decisions. Legitimate ACTIVE restoration resumes outstanding OPEN work, but never reopens cancelled/superseded rounds. Re-application has an independent scope. See [Application documents](application-documents.md#domain-and-lifecycle).
 
 ## Apply
 

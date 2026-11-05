@@ -1047,19 +1047,24 @@ describe('Application attention E2E', () => {
         activeAt: now,
       })),
     });
-    await Promise.all(
-      fixtures.map((row) =>
-        createDocumentRequirementFixture(prisma, {
-          data: {
-            applicationId: row.applicationId,
-            type: ApplicationDocumentType.INCOME_PROOF,
-            definitionKey: 'INCOME_PROOF',
-            round: 1,
-            requestedAt: now,
-          },
-        }),
-      ),
-    );
+    // Each fixture takes a pooled transaction. Starting all 200 at once exceeds
+    // the time Prisma will wait for a connection; the 201-application boundary
+    // is unchanged.
+    for (let index = 0; index < fixtures.length; index += 5) {
+      await Promise.all(
+        fixtures.slice(index, index + 5).map((row) =>
+          createDocumentRequirementFixture(prisma, {
+            data: {
+              applicationId: row.applicationId,
+              type: ApplicationDocumentType.INCOME_PROOF,
+              definitionKey: 'INCOME_PROOF',
+              round: 1,
+              requestedAt: now,
+            },
+          }),
+        ),
+      );
+    }
     const clock = jest.spyOn(app.get(ViewingClock), 'now');
     const response = await queries.aggregate(applicant.id, 'applicant', {
       offset: 199,

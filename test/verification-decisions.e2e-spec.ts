@@ -635,4 +635,138 @@ describe('Phase 4 verification decisions (isolated PostgreSQL)', () => {
     ).verificationScopeRevision;
     expect(stored.scopeRevision).toBeLessThanOrEqual(scope);
   });
+
+  it('decides a migrated open requirement while the application scope is still zero', async () => {
+    const f = await h.fixture();
+    const id = f.application.id;
+    expect(
+      (await h.prisma.application.findUniqueOrThrow({ where: { id } }))
+        .verificationScopeRevision,
+    ).toBe(0);
+    const subject = await h.prisma.applicationVerificationSubject.create({
+      data: {
+        applicationId: id,
+        kind: 'APPLICANT',
+        subjectKey: 'applicant',
+        createdByUserId: h.provider.id,
+      },
+    });
+    const requestId = randomUUID();
+    await h.prisma.$executeRawUnsafe(
+      'ALTER TABLE application_document_requests DISABLE TRIGGER requirement_write_guard',
+    );
+    try {
+      await h.prisma.applicationDocumentRequest.create({
+        data: {
+          id: requestId,
+          applicationId: id,
+          subjectId: subject.id,
+          type: 'SCHUFA',
+          definitionKey: 'SCHUFA',
+          round: 1,
+          provenance: 'LEGACY',
+          lifecycleState: 'OPEN',
+          revision: 1,
+        },
+      });
+    } finally {
+      await h.prisma.$executeRawUnsafe(
+        'ALTER TABLE application_document_requests ENABLE TRIGGER requirement_write_guard',
+      );
+    }
+    const file = await h.prisma.applicationDocumentFile.create({
+      data: {
+        requestId,
+        storageKey: randomUUID(),
+        bucket: 'verification-http-e2e',
+        checksum: 'a'.repeat(64),
+        mimeType: 'application/pdf',
+        size: 128,
+        state: 'AVAILABLE',
+        recoverAfter: new Date(),
+        expiresAt: new Date(Date.now() + 60_000),
+        availableAt: new Date(),
+      },
+    });
+    await h.prisma.applicationDocumentRequest.update({
+      where: { id: requestId },
+      data: { currentFileId: file.id },
+    });
+    const key = randomUUID();
+    const payload = decide(requestId, 'SATISFIED', file.id);
+    const committed = receipt(await command(id, payload, 200, key));
+    expect(committed.scopeRevision).toBe(0);
+    expect(committed.verification.state).toBe('SATISFIED');
+    expect(
+      (await h.prisma.application.findUniqueOrThrow({ where: { id } }))
+        .verificationScopeRevision,
+    ).toBe(0);
+    expect(
+      await h.prisma.verificationDecision.findMany({
+        where: { applicationId: id },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        id: committed.decision.id,
+        scopeRevision: 0,
+        outcome: 'SATISFIED',
+        evidenceFileId: file.id,
+      }),
+    ]);
+    expect(
+      await h.prisma.verificationCommandReceipt.findMany({
+        where: { applicationId: id },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        operation: 'DECIDE',
+        scopeRevision: 0,
+      }),
+    ]);
+    expect(receipt(await command(id, payload, 200, key))).toEqual(committed);
+    expect(
+      await h.prisma.verificationDecision.count({
+        where: { applicationId: id },
+      }),
+    ).toBe(1);
+
+    await h.prisma.$executeRawUnsafe(
+      'ALTER TABLE verification_command_receipts DISABLE TRIGGER verification_receipt_result',
+    );
+    try {
+      for (const operation of ['REQUEST', 'CANCEL', 'REPLACE'] as const) {
+        await expect(
+          h.prisma.$executeRawUnsafe(
+            `INSERT INTO verification_command_receipts (
+              id, application_id, actor_user_id, idempotency_key, operation,
+              payload_hash, schema_version, scope_revision, result
+            ) VALUES (
+              gen_random_uuid(), $1::uuid, $2::uuid, $3, $4::"VerificationCommandOperation",
+              $5, 1, 0, $6::jsonb
+            )`,
+            id,
+            h.provider.id,
+            `scope-zero-${operation}`,
+            operation,
+            'a'.repeat(64),
+            JSON.stringify({
+              scopeRevision: 0,
+              requirements: [
+                {
+                  id: requestId,
+                  round: 1,
+                  revision: 1,
+                  state: 'OPEN',
+                },
+              ],
+            }),
+          ),
+        ).rejects.toThrow(/verification_receipt_shape/);
+      }
+    } finally {
+      await h.prisma.$executeRawUnsafe(
+        'ALTER TABLE verification_command_receipts ENABLE TRIGGER verification_receipt_result',
+      );
+    }
+  });
 });
