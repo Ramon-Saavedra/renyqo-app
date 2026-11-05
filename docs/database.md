@@ -89,6 +89,14 @@ Constraints enforce one OPEN requirement per application/subject/definition, ord
 
 Apply the migration before deploying dependent writers. It replaces the former global current-key/round indexes and tightens the current-file FK. Custom partial indexes, guards and deferred constraints are part of the durable schema contract. RESTRICT references preserve history; retention/erasure remains a separate policy. Shared isolated E2E cleanup truncates the complete test graph without disabling production constraints.
 
+## Verification decisions
+
+`20261105140000_verification_decision_operation`, `20261105140100_verification_decisions` and `20261105140200_verification_decision_scope_zero` add immutable business decisions without changing requirement lifecycle or advancing `verificationScopeRevision`.
+
+Outcomes are `SATISFIED`, `NOT_SATISFIED` and `WAIVED`. There is no pending decision row. `SATISFIED` and `NOT_SATISFIED` reference the current available evidence file; `NOT_SATISFIED` requires a bounded reason and `SATISFIED` cannot store one. `WAIVED` does not require evidence and is distinct from `CANCELLED`. A correction inserts another row linked by `previousDecisionId`. Updates and deletes are rejected. One root decision and one successor per decision keep the chain linear. The provider, an open requirement, a mutable application and the current scope are required at insert. Legacy rows and `reviewedAt` are not backfilled into decisions.
+
+Decision receipts record that same current scope, including zero on a migrated application. REQUEST, CANCEL and REPLACE receipts still require a positive scope. The application aggregate is derived from open requirements, the current file and the latest decision; it is not stored. Rental selection does not read it.
+
 ## Indexes
 
 Listing discovery sort modes are supported by these indexes:

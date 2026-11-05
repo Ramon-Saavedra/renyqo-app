@@ -49,7 +49,7 @@ export class VerificationCommandReceiptService {
     key: string | undefined,
     operation: VerificationCommandOperation,
     payloadHash: string,
-    result: VerificationCommandResult,
+    result: { scopeRevision: number },
   ) {
     if (key === undefined) return;
     await tx.verificationCommandReceipt.create({
@@ -60,7 +60,7 @@ export class VerificationCommandReceiptService {
         operation,
         payloadHash,
         scopeRevision: result.scopeRevision,
-        result: result,
+        result,
       },
     });
   }

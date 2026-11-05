@@ -17,6 +17,11 @@ import {
   documentReplacementAllowed,
 } from './application-document.policy';
 import {
+  providerDecision,
+  requirementVerificationState,
+} from './verification-aggregate';
+import { VerificationDecisionService } from './verification-decision.service';
+import {
   decodeReadModelCursor,
   encodeReadModelCursor,
 } from '../application-read-models/read-model-cursor';
@@ -54,6 +59,7 @@ export class VerificationQueryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: ApplicationDocumentAccessService,
+    private readonly decisions: VerificationDecisionService,
   ) {}
 
   subjects(
@@ -192,8 +198,14 @@ export class VerificationQueryService {
             row._max.round,
           ]),
         );
+        const model = await this.decisions.readModel(
+          tx,
+          applicationId,
+          page.map((row) => row.id),
+        );
         const items = page.map((row) => {
           const file = row.currentFile;
+          const decision = model.decisions.get(row.id) ?? null;
           const capabilities = documentRequestCapabilities(
             row.closedAt,
             file,
@@ -207,6 +219,14 @@ export class VerificationQueryService {
             requestedAt: row.requestedAt,
             closedAt: row.closedAt,
             supersededAt: row.supersededAt,
+            requirementState: requirementVerificationState({
+              lifecycleState: row.lifecycleState,
+              file,
+              decision,
+            }),
+            ...(audience === 'provider'
+              ? { decision: providerDecision(decision) }
+              : {}),
             evidence: {
               documentId: file?.id ?? null,
               fileState: file?.state ?? null,
@@ -249,6 +269,7 @@ export class VerificationQueryService {
         const last = rows.slice(0, query.limit).at(-1);
         return {
           scopeRevision: application.verificationScopeRevision,
+          verification: { state: model.state },
           frozen,
           items,
           canRequestRequirements: audience === 'provider' && !frozen.isFrozen,
