@@ -1,3 +1,4 @@
+import { loadVerificationIdentities } from '../application-documents/verification-projection';
 import { emptyConversationFacts } from '../application-conversation/application-conversation-read.service';
 import {
   considerationSummary,
@@ -83,9 +84,10 @@ export class ApplicationWorkspaceQueryService {
       audience,
       asOf,
     );
-    const documentGroups = new Map<string, typeof facts.documents>();
+    const documents = await loadVerificationIdentities(tx, facts.documents);
+    const documentGroups = new Map<string, typeof documents>();
     const viewingGroups = new Map<string, typeof facts.viewings.rows>();
-    for (const row of facts.documents) {
+    for (const row of documents) {
       const group = documentGroups.get(row.applicationId) ?? [];
       group.push(row);
       documentGroups.set(row.applicationId, group);

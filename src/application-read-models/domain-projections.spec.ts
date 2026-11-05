@@ -63,6 +63,19 @@ describe('Read model domain projections', () => {
       requestedAt: now,
       closedAt: null,
       lifecycleState: 'OPEN' as const,
+      revision: 1,
+      round: 1,
+      createdScopeRevision: 1,
+      closedScopeRevision: null,
+      predecessorId: null,
+      successor: null,
+      provenance: 'NATIVE' as const,
+      subjectId: 'subject',
+      subject: {
+        id: 'subject',
+        kind: 'APPLICANT' as const,
+        displayLabel: null,
+      },
       currentFile: state
         ? {
             id: 'file',
@@ -118,6 +131,7 @@ describe('Read model domain projections', () => {
       'requestId',
       'status',
       'type',
+      'verification',
     ]);
   });
 

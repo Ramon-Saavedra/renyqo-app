@@ -17,6 +17,7 @@ const applicationSelect = {
   applicantId: true,
   status: true,
   activeAt: true,
+  verificationScopeRevision: true,
   listing: { select: { providerId: true, status: true } },
 } satisfies Prisma.ApplicationSelect;
 

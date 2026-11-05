@@ -1,3 +1,4 @@
+import type { verificationIdentity } from '../verification-projection';
 import type {
   ApplicationDocumentType,
   ApplicationDocumentState,
@@ -40,5 +41,6 @@ export class DocumentRequestResponseDto {
     readonly canRequestReplacement: boolean,
     readonly documents: DocumentResponseDto[],
     readonly closedAt: Date | null = null,
+    readonly verification?: ReturnType<typeof verificationIdentity>,
   ) {}
 }
