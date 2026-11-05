@@ -10,6 +10,15 @@ export type VerificationCommand =
       operation: 'CANCEL' | 'REPLACE';
       requestId: string;
       expectedRevision?: number;
+    }
+  | {
+      operation: 'DECIDE';
+      requestId: string;
+      expectedRevision: number;
+      evidenceFileId: string | null;
+      expectedDecisionId: string | null;
+      decision: 'SATISFIED' | 'NOT_SATISFIED' | 'WAIVED';
+      reason: string | null;
     };
 export type VerificationCommandResult = {
   scopeRevision: number;

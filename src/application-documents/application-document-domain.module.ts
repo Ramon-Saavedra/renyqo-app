@@ -1,6 +1,7 @@
 import { VerificationSubjectService } from './verification-subject.service';
 import { VerificationCommandReceiptService } from './verification-command-receipt.service';
 import { VerificationRequirementService } from './verification-requirement.service';
+import { VerificationDecisionService } from './verification-decision.service';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -16,6 +17,7 @@ import { ApplicationDocumentFinalizationService } from './application-document-f
     VerificationSubjectService,
     VerificationCommandReceiptService,
     VerificationRequirementService,
+    VerificationDecisionService,
     ApplicationDocumentAccessService,
     ApplicationDocumentActivityService,
     ApplicationDocumentConfigService,
@@ -26,6 +28,7 @@ import { ApplicationDocumentFinalizationService } from './application-document-f
     VerificationSubjectService,
     VerificationCommandReceiptService,
     VerificationRequirementService,
+    VerificationDecisionService,
     ApplicationDocumentAccessService,
     ApplicationDocumentActivityService,
     ApplicationDocumentConfigService,

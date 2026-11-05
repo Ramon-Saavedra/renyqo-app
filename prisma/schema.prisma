@@ -161,6 +161,7 @@ model User {
   requestedRequirements ApplicationDocumentRequest[] @relation("RequirementCreator")
   closedRequirements ApplicationDocumentRequest[] @relation("RequirementCloser")
   verificationReceipts VerificationCommandReceipt[]
+  verificationDecisions VerificationDecision[] @relation("VerificationDecisionActor")
 
   eligibilityCriteriaEdits ListingCriteriaRevision[] @relation("CriteriaActor")
   eligibilityAssessments ApplicationEligibilityAssessment[] @relation("AssessmentActor")
@@ -285,6 +286,7 @@ model Application {
   verificationScopeRevision Int @default(0) @map("verification_scope_revision")
   verificationSubjects ApplicationVerificationSubject[]
   verificationReceipts VerificationCommandReceipt[]
+  verificationDecisions VerificationDecision[]
 
   eligibilityAssessments ApplicationEligibilityAssessment[]
   id           String             @id @default(uuid()) @db.Uuid
@@ -704,6 +706,7 @@ model ApplicationDocumentRequest {
   currentFileId String?                   @unique @map("current_file_id") @db.Uuid
   application   Application               @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   files         ApplicationDocumentFile[] @relation("DocumentAttempts")
+  decisions     VerificationDecision[]
   currentFile   ApplicationDocumentFile?  @relation("CurrentDocument", fields: [currentFileId,id], references: [id,requestId], onDelete: Restrict, map:"document_current_file_same_request_fkey")
 
   @@unique([applicationId, subjectId, definitionKey, round],map:"requirement_identity_round_key")
@@ -734,6 +737,7 @@ model ApplicationDocumentFile {
   failureReason String?                     @map("failure_reason")
   request       ApplicationDocumentRequest  @relation("DocumentAttempts", fields: [requestId], references: [id], onDelete: Restrict)
   currentFor    ApplicationDocumentRequest? @relation("CurrentDocument")
+  verificationDecisions VerificationDecision[]
 
   @@index([state, recoverAfter, id])
   @@unique([id,requestId],map:"document_file_id_request_key")
@@ -981,6 +985,13 @@ enum VerificationCommandOperation {
   REQUEST
   CANCEL
   REPLACE
+  DECIDE
+}
+
+enum VerificationDecisionOutcome {
+  SATISFIED
+  NOT_SATISFIED
+  WAIVED
 }
 
 model ApplicationVerificationSubject {
@@ -1015,4 +1026,28 @@ model VerificationCommandReceipt {
   actor User @relation(fields:[actorUserId],references:[id],onDelete:Restrict)
   @@unique([applicationId,actorUserId,idempotencyKey],map:"verification_receipt_key")
   @@map("verification_command_receipts")
+}
+
+model VerificationDecision {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  applicationId      String                     @map("application_id") @db.Uuid
+  requirementId      String                     @map("requirement_id") @db.Uuid
+  evidenceFileId     String?                    @map("evidence_file_id") @db.Uuid
+  outcome            VerificationDecisionOutcome
+  reason             String?                    @db.VarChar(500)
+  actorUserId        String                     @map("actor_user_id") @db.Uuid
+  decidedAt          DateTime                   @default(now()) @map("decided_at") @db.Timestamptz(6)
+  scopeRevision      Int                        @map("scope_revision")
+  previousDecisionId String?                    @unique @map("previous_decision_id") @db.Uuid
+  provenance         VerificationProvenance     @default(NATIVE)
+  application        Application                @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  requirement        ApplicationDocumentRequest @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  evidenceFile       ApplicationDocumentFile?   @relation(fields: [evidenceFileId, requirementId], references: [id, requestId], onDelete: Restrict, map: "verification_decision_evidence_fkey")
+  actor              User                       @relation("VerificationDecisionActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  previous           VerificationDecision?      @relation("VerificationDecisionChain", fields: [previousDecisionId], references: [id], onDelete: Restrict)
+  next               VerificationDecision?      @relation("VerificationDecisionChain")
+
+  @@index([applicationId, decidedAt, id])
+  @@index([requirementId, decidedAt, id])
+  @@map("verification_decisions")
 }

@@ -42,6 +42,10 @@ export class VerificationRequirementService {
       await this.access.authorize(tx, applicationId, actorUserId, 'provider');
       const application = await this.access.lock(tx, applicationId);
       await this.access.authorize(tx, applicationId, actorUserId, 'provider');
+      if (command.operation === 'DECIDE')
+        throw new BadRequestException(
+          'DECIDE is handled by the decision command',
+        );
       const items =
         command.operation === 'REQUEST'
           ? await this.normalize(tx, applicationId, actorUserId, command.items)

@@ -4,6 +4,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { VerificationRequirementService } from './verification-requirement.service';
+import { VerificationDecisionService } from './verification-decision.service';
 import {
   VerificationCommandDto,
   verificationCommand,
@@ -11,7 +12,10 @@ import {
 
 @Injectable()
 export class VerificationCommandHttpService {
-  constructor(private readonly requirements: VerificationRequirementService) {}
+  constructor(
+    private readonly requirements: VerificationRequirementService,
+    private readonly decisions: VerificationDecisionService,
+  ) {}
 
   async execute(
     applicationId: string,
@@ -23,12 +27,20 @@ export class VerificationCommandHttpService {
       throw new BadRequestException(
         'A valid Idempotency-Key header is required',
       );
+    const command = verificationCommand(dto);
     try {
       // Return the transaction's receipt result directly, including on replay.
+      if (command.operation === 'DECIDE')
+        return await this.decisions.execute(
+          applicationId,
+          actorUserId,
+          command,
+          key,
+        );
       return await this.requirements.execute(
         applicationId,
         actorUserId,
-        verificationCommand(dto),
+        command,
         key,
       );
     } catch (error) {

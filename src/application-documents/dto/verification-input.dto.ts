@@ -29,7 +29,7 @@ export class VerificationItemDto extends DocumentRequestInputDto {
 }
 
 export class VerificationCommandDto {
-  @IsIn(['REQUEST', 'CANCEL', 'REPLACE'])
+  @IsIn(['REQUEST', 'CANCEL', 'REPLACE', 'DECIDE'])
   operation!: VerificationCommand['operation'];
 
   @ValidateIf(
@@ -55,11 +55,66 @@ export class VerificationCommandDto {
   @Min(1)
   @Max(2147483647)
   expectedRevision?: number;
+
+  @ValidateIf(
+    (object: VerificationCommandDto, value: unknown) =>
+      object.operation === 'DECIDE' && value !== null,
+  )
+  @IsUUID('4')
+  evidenceFileId?: string | null;
+
+  @ValidateIf(
+    (object: VerificationCommandDto, value: unknown) =>
+      object.operation === 'DECIDE' && value !== null,
+  )
+  @IsUUID('4')
+  expectedDecisionId?: string | null;
+
+  @ValidateIf((object: VerificationCommandDto) => object.operation === 'DECIDE')
+  @IsIn(['SATISFIED', 'NOT_SATISFIED', 'WAIVED'])
+  decision?: 'SATISFIED' | 'NOT_SATISFIED' | 'WAIVED';
+
+  @ValidateIf(
+    (_object, value: unknown) => value !== undefined && value !== null,
+  )
+  @IsString()
+  @MaxLength(500)
+  reason?: string | null;
+}
+
+function hasDecisionInput(dto: VerificationCommandDto) {
+  return (
+    dto.evidenceFileId !== undefined ||
+    dto.expectedDecisionId !== undefined ||
+    dto.decision !== undefined ||
+    dto.reason !== undefined
+  );
+}
+
+function decisionReason(
+  outcome: 'SATISFIED' | 'NOT_SATISFIED' | 'WAIVED',
+  value: string | null | undefined,
+) {
+  if (value === undefined || value === null) {
+    if (outcome === 'NOT_SATISFIED')
+      throw new BadRequestException('NOT_SATISFIED requires a reason');
+    return null;
+  }
+  const reason = value.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  if (!reason || reason.length > 500)
+    throw new BadRequestException('Decision reason is invalid');
+  if (outcome === 'SATISFIED')
+    throw new BadRequestException('SATISFIED does not accept a reason');
+  return reason;
 }
 
 export function verificationCommand(
   dto: VerificationCommandDto,
 ): VerificationCommand {
+  if (dto.operation !== 'DECIDE' && hasDecisionInput(dto))
+    throw new BadRequestException(
+      'Only DECIDE accepts a verification decision',
+    );
   if (dto.operation === 'REQUEST') {
     if (
       dto.requestId !== undefined ||
@@ -75,8 +130,29 @@ export function verificationCommand(
     dto.expectedRevision === undefined
   )
     throw new BadRequestException(
-      'CANCEL and REPLACE require requestId and expectedRevision',
+      'CANCEL, REPLACE and DECIDE require requestId and expectedRevision',
     );
+  if (dto.operation === 'DECIDE') {
+    if (!dto.decision || dto.evidenceFileId === undefined)
+      throw new BadRequestException(
+        'DECIDE requires decision and evidenceFileId',
+      );
+    if (dto.expectedDecisionId === undefined)
+      throw new BadRequestException('DECIDE requires expectedDecisionId');
+    if (dto.decision !== 'WAIVED' && !dto.evidenceFileId)
+      throw new BadRequestException(
+        'SATISFIED and NOT_SATISFIED require evidenceFileId',
+      );
+    return {
+      operation: 'DECIDE',
+      requestId: dto.requestId,
+      expectedRevision: dto.expectedRevision,
+      evidenceFileId: dto.evidenceFileId,
+      expectedDecisionId: dto.expectedDecisionId,
+      decision: dto.decision,
+      reason: decisionReason(dto.decision, dto.reason),
+    };
+  }
   return {
     operation: dto.operation,
     requestId: dto.requestId,
