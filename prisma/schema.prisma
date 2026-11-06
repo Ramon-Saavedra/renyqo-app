@@ -157,6 +157,8 @@ enum ProviderType {
 }
 
 model User {
+  workspaceMemberships WorkspaceMembership[]
+  personalWorkspaceAllocations PersonalWorkspaceAllocation[]
   verificationSubjects ApplicationVerificationSubject[] @relation("VerificationSubjectCreator")
   requestedRequirements ApplicationDocumentRequest[] @relation("RequirementCreator")
   closedRequirements ApplicationDocumentRequest[] @relation("RequirementCloser")
@@ -192,6 +194,101 @@ model User {
   sessionAuthGrants SessionAuthGrant[]
 
   @@map("users")
+}
+
+enum WorkspaceKind {
+  PERSONAL
+  ORGANIZATION
+}
+
+enum WorkspaceLifecycle {
+  ACTIVE
+  CLOSING
+  CLOSED
+}
+
+enum WorkspaceMembershipRole {
+  OWNER
+  AGENT
+}
+
+enum PersonalAllocationReleaseReason {
+  WORKSPACE_CLOSED
+}
+
+// Partial indexes, immutable identities and deferred aggregate invariants are
+// defined in migration SQL. Do not replace migrations with db push.
+model ProviderWorkspace {
+  id                  String                        @id @default(uuid()) @db.Uuid
+  kind                WorkspaceKind
+  displayName         String                        @map("display_name") @db.VarChar(160)
+  lifecycleStatus     WorkspaceLifecycle            @default(ACTIVE) @map("lifecycle_status")
+  revision            Int                           @default(1)
+  ownershipRevision   Int                           @default(1) @map("ownership_revision")
+  createdAt           DateTime                      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime                      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  closingAt           DateTime?                     @map("closing_at") @db.Timestamptz(3)
+  closedAt            DateTime?                     @map("closed_at") @db.Timestamptz(3)
+  memberships         WorkspaceMembership[]
+  organizationProfile OrganizationProfile?
+  personalAllocations PersonalWorkspaceAllocation[]
+  ownershipRevisionBaseline WorkspaceOwnershipRevisionBaseline?
+
+  @@map("provider_workspaces")
+}
+
+model WorkspaceMembership {
+  id           String                  @id @default(uuid()) @db.Uuid
+  workspaceId  String                  @map("workspace_id") @db.Uuid
+  userId       String                  @map("user_id") @db.Uuid
+  role         WorkspaceMembershipRole
+  displayColor String                  @map("display_color") @db.VarChar(7)
+  createdAt    DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  workspace    ProviderWorkspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user         User                    @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([workspaceId, userId])
+  @@index([userId, workspaceId])
+  @@map("workspace_memberships")
+}
+
+// Private transaction bookkeeping, never an ownership/authorization projection.
+// Only the snapshot tagged with the current PostgreSQL transaction is used.
+model WorkspaceOwnershipRevisionBaseline {
+  workspaceId String @id @map("workspace_id") @db.Uuid
+  transactionId String @map("transaction_id") @db.VarChar(20)
+  baselineRevision Int @map("baseline_revision")
+  baselineMembershipId String? @map("baseline_membership_id") @db.Uuid
+  assertedRevision Int? @map("asserted_revision")
+  workspace ProviderWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("workspace_ownership_revision_baselines")
+}
+
+model OrganizationProfile {
+  workspaceId String            @id @map("workspace_id") @db.Uuid
+  legalName   String?           @map("legal_name") @db.VarChar(240)
+  revision    Int               @default(1)
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  workspace   ProviderWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("organization_profiles")
+}
+
+model PersonalWorkspaceAllocation {
+  id            String                           @id @default(uuid()) @db.Uuid
+  userId        String                           @map("user_id") @db.Uuid
+  workspaceId   String                           @map("workspace_id") @db.Uuid
+  allocatedAt   DateTime                         @default(now()) @map("allocated_at") @db.Timestamptz(3)
+  releasedAt    DateTime?                        @map("released_at") @db.Timestamptz(3)
+  releaseReason PersonalAllocationReleaseReason? @map("release_reason")
+  workspace     ProviderWorkspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user          User                             @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([workspaceId])
+  @@index([userId, allocatedAt, id])
+  @@map("personal_workspace_allocations")
 }
 
 model PasswordResetToken {
