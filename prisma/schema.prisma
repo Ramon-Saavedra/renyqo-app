@@ -212,6 +212,24 @@ enum WorkspaceMembershipRole {
   AGENT
 }
 
+enum WorkspaceMembershipStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+enum OwnershipTransferOutcome {
+  DEMOTE_TO_AGENT
+  REMOVE_MEMBERSHIP
+}
+
+enum OwnershipTransferIntentStatus {
+  PENDING_ACCEPTANCE
+  ACCEPTED
+  EXECUTED
+  CANCELLED
+}
+
 enum PersonalAllocationReleaseReason {
   WORKSPACE_CLOSED
 }
@@ -233,23 +251,56 @@ model ProviderWorkspace {
   organizationProfile OrganizationProfile?
   personalAllocations PersonalWorkspaceAllocation[]
   ownershipRevisionBaseline WorkspaceOwnershipRevisionBaseline?
+  ownershipTransferIntents OwnershipTransferIntent[]
 
   @@map("provider_workspaces")
 }
 
 model WorkspaceMembership {
-  id           String                  @id @default(uuid()) @db.Uuid
-  workspaceId  String                  @map("workspace_id") @db.Uuid
-  userId       String                  @map("user_id") @db.Uuid
+  id           String                    @id @default(uuid()) @db.Uuid
+  workspaceId  String                    @map("workspace_id") @db.Uuid
+  userId       String                    @map("user_id") @db.Uuid
   role         WorkspaceMembershipRole
-  displayColor String                  @map("display_color") @db.VarChar(7)
-  createdAt    DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
-  workspace    ProviderWorkspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  user         User                    @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  status       WorkspaceMembershipStatus @default(ACTIVE)
+  revision     Int                       @default(1)
+  displayColor String                    @map("display_color") @db.VarChar(7)
+  createdAt    DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  workspace    ProviderWorkspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user         User                      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  outgoingOwnershipIntents OwnershipTransferIntent[] @relation("TransferCurrentOwner")
+  incomingOwnershipIntents OwnershipTransferIntent[] @relation("TransferTarget")
 
   @@unique([workspaceId, userId])
+  @@unique([id, workspaceId])
   @@index([userId, workspaceId])
   @@map("workspace_memberships")
+}
+
+model OwnershipTransferIntent {
+  id                               String                        @id @default(uuid()) @db.Uuid
+  workspaceId                      String                        @map("workspace_id") @db.Uuid
+  currentOwnerMembershipId          String                        @map("current_owner_membership_id") @db.Uuid
+  targetMembershipId               String                        @map("target_membership_id") @db.Uuid
+  outcome                          OwnershipTransferOutcome
+  expectedOwnershipRevision        Int                           @map("expected_ownership_revision")
+  expectedOwnerMembershipRevision   Int                           @map("expected_owner_membership_revision")
+  expectedTargetMembershipRevision  Int                           @map("expected_target_membership_revision")
+  status                           OwnershipTransferIntentStatus @default(PENDING_ACCEPTANCE)
+  revision                         Int                           @default(1)
+  confirmedAt                      DateTime                      @default(now()) @map("confirmed_at") @db.Timestamptz(3)
+  acceptedAt                       DateTime?                     @map("accepted_at") @db.Timestamptz(3)
+  executedAt                       DateTime?                     @map("executed_at") @db.Timestamptz(3)
+  cancelledAt                      DateTime?                     @map("cancelled_at") @db.Timestamptz(3)
+  expiresAt                        DateTime                      @map("expires_at") @db.Timestamptz(3)
+  createdAt                        DateTime                      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                        DateTime                      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  workspace                        ProviderWorkspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  currentOwner                     WorkspaceMembership           @relation("TransferCurrentOwner", fields: [currentOwnerMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict, onUpdate: Restrict)
+  target                           WorkspaceMembership           @relation("TransferTarget", fields: [targetMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([workspaceId, status, createdAt, id], map: "ownership_transfer_intents_workspace_id_status_created_at_id_id")
+  @@map("ownership_transfer_intents")
 }
 
 // Private transaction bookkeeping, never an ownership/authorization projection.

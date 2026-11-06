@@ -33,7 +33,7 @@ export class WorkspaceFixture {
   readonly conversion = new WorkspaceConversion(this.workspaces, this.profiles);
   readonly lifecycle = new WorkspaceLifecycle(this.workspaces);
 
-  async start() {
+  async start(stopBeforeMigration?: string) {
     const url = process.env['E2E_DATABASE_URL'];
     if (!url || process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true')
       throw new Error(
@@ -48,6 +48,7 @@ export class WorkspaceFixture {
       const root = resolve(process.cwd(), 'prisma/migrations');
       for (const name of readdirSync(root).sort()) {
         if (name === 'migration_lock.toml') continue;
+        if (name === stopBeforeMigration) break;
         await setup.query(
           readFileSync(resolve(root, name, 'migration.sql'), 'utf8'),
         );
