@@ -46,8 +46,11 @@ integrations, billing or retention. It must not be used as an operational shortc
 
 ## Database guarantees
 
-Apply `20261106150000_provider_workspace_foundation` through migrations, never
-`db push`. It adds four empty tables and four enums; no existing data is reset.
+Apply `20261106150000_provider_workspace_foundation` and
+`20261106160000_workspace_ownership_revision` through migrations, never `db push`.
+The first adds the four provider-workspace domain tables and four enums. The second
+adds private ownership-revision baseline persistence to enforce database-derived
+ownership revision. No existing data is reset.
 No development/production database migration is applied by the test suite.
 
 PostgreSQL owns these invariants in addition to domain validation:
@@ -87,7 +90,7 @@ authVersion/session grants and all current lifecycle/fairness rules stay unchang
 
 ## Validation
 
-`npm run test:e2e -- --runTestsByPath test/provider-workspaces.e2e-spec.ts test/provider-workspace-invariants.e2e-spec.ts`
+`npm run test:e2e -- --runTestsByPath test/provider-workspaces.e2e-spec.ts test/provider-workspace-invariants.e2e-spec.ts test/workspace-ownership-revision.e2e-spec.ts`
 uses the dedicated `renyqo_e2e` database with its explicit reset marker, creates a
 unique isolated schema, replays every migration, and removes only that schema.
 Tests exercise actual commit-time rejection, concurrent allocation, rollback,
