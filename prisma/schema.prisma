@@ -299,7 +299,7 @@ model OwnershipTransferIntent {
   currentOwner                     WorkspaceMembership           @relation("TransferCurrentOwner", fields: [currentOwnerMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict, onUpdate: Restrict)
   target                           WorkspaceMembership           @relation("TransferTarget", fields: [targetMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict, onUpdate: Restrict)
 
-  @@index([workspaceId, status, createdAt, id])
+  @@index([workspaceId, status, createdAt, id], map: "ownership_transfer_intents_workspace_id_status_created_at_id_id")
   @@map("ownership_transfer_intents")
 }
 
