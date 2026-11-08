@@ -6,6 +6,10 @@ import { PersonalAllocationRepository } from './persistence/personal-allocation.
 import { WorkspaceEstablishment } from './workspace-establishment';
 import { WorkspaceConversion } from './workspace-conversion';
 import { WorkspaceLifecycle } from './workspace-lifecycle';
+import { WorkspaceCreation } from '../provider-tenancy/workspace-creation';
+import { TenantTransactions } from '../provider-tenancy/tenant-transactions';
+import { GlobalAuthorityReader } from '../provider-authorization/persistence/global-authority.reader';
+import { AuthorityLockRepository } from '../provider-authorization/persistence/authority-lock.repository';
 
 // Deliberately no controllers or exports: dormant until the assigned security,
 // audit, entitlement and cutover phases supply real operational orchestration.
@@ -18,6 +22,10 @@ import { WorkspaceLifecycle } from './workspace-lifecycle';
     WorkspaceEstablishment,
     WorkspaceConversion,
     WorkspaceLifecycle,
+    WorkspaceCreation,
+    TenantTransactions,
+    GlobalAuthorityReader,
+    AuthorityLockRepository,
   ],
 })
 export class ProviderWorkspacesModule {}

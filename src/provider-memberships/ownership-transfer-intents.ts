@@ -48,7 +48,7 @@ export class OwnershipTransferIntents {
     // The existing workspace write serializes same-workspace creation retries;
     // global ID uniqueness rejects collisions with a different workspace.
     const existing = await tx.ownershipTransferIntent.findUnique({
-      where: { id: input.id },
+      where: { id: input.id, workspaceId: input.workspaceId },
     });
     if (existing) {
       for (const key of [
@@ -68,7 +68,7 @@ export class OwnershipTransferIntents {
       // Revalidate freshness and expiry on a retry, rather than returning stale
       // confirmation/acceptance as if it were still actionable.
       return tx.ownershipTransferIntent.update({
-        where: { id: existing.id },
+        where: { id: existing.id, workspaceId: input.workspaceId },
         data: { status: existing.status },
       });
     }

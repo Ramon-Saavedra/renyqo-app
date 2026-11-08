@@ -3,7 +3,8 @@
 This bounded foundation follows [4.5.1](provider-workspaces.md) and
 [4.5.2](provider-memberships.md). `ProviderAuthorizationModule` has no controllers,
 exports or default allow adapters. Registering it changes no legacy endpoint.
-No schema, migration, RLS, job infrastructure or capability persistence is added.
+4.5.3 added no schema, migration, RLS, job infrastructure or capability persistence.
+The [4.5.4 tenant foundation](provider-tenancy.md) now supplies RLS for six workspace tables.
 
 ## Layers and facts
 
@@ -64,7 +65,8 @@ bounded Serializable retry helper. Each attempt acquires:
 
 1. User FOR SHARE, then the SID grant FOR SHARE for SESSION_BOUND; validate global
    state/epoch and grant ownership, authentication snapshot and expiry.
-2. Workspace FOR SHARE for ordinary business work. STRUCTURAL plans instead call
+2. Bounded own-membership bootstrap, followed by tenant scope installation. Then
+   Workspace FOR SHARE for ordinary business work. STRUCTURAL plans instead call
    the existing `lock_workspace_ownership_revision` write/assertion helper first.
 3. Actor and declared participating memberships in PostgreSQL UUID order, using
    FOR SHARE for business work or FOR UPDATE for structural work. Re-read and
@@ -117,7 +119,9 @@ of HISTORY/SECURITY. Neither category nor lifecycle is a blanket history grant.
 `AuthorizedWorkspaceReads.query` loads current authority, runs the domain policy,
 then revalidates authority immediately before invoking protected result production.
 A changed epoch/lifecycle during asynchronous policy work rejects that observation.
-It uses no locking transaction and no cross-request authorization cache. Each
+It uses short tenant transactions without authority row locks and no cross-request
+authorization cache. Async policy preparation runs outside these transactions;
+the producer receives the fresh scoped transaction client. Each
 page/batch/chunk calls the helper again. The producer must query scoped data
 promptly; it must not defer production behind unrelated asynchronous work.
 
@@ -152,7 +156,8 @@ It proves no membership, OWNER/AGENT role, assignment, capability or financial a
 Legacy listing/application/document endpoints are **not** made workspace-revocation
 safe by registering this foundation. A new integrated caller must use the coordinator
 and domain policy. Raw SQL/other repositories that bypass it are outside its guarantee;
-RLS and descendant tenant constraints belong to 4.5.4.
+4.5.4 protects the six foundation tables only; operational descendants remain
+outside that RLS boundary until their assigned cutover.
 
 Operational removal, reinstatement and ownership transfer remain blocked by 4.5.2.
 Authorization does not supply missing assignment repair, seat approval, capability/

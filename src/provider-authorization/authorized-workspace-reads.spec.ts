@@ -47,9 +47,20 @@ describe('Synchronous protected transport handoff', () => {
     resolve = jest
       .fn<WorkspaceMembershipResolver['resolve']>()
       .mockResolvedValue(context);
+    const resolver = {
+      read: async (
+        _db: unknown,
+        _authority: unknown,
+        _selection: unknown,
+        produce: (
+          context: AuthorizationContext,
+          tx: object,
+        ) => Promise<unknown>,
+      ) => produce(await resolve({} as never, authority, requirement), {}),
+    };
     reads = new AuthorizedWorkspaceReads(
       {} as PrismaService,
-      { resolve } as unknown as WorkspaceMembershipResolver,
+      resolver as unknown as WorkspaceMembershipResolver,
     );
   });
 

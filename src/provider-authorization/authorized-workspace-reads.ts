@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { types } from 'node:util';
+import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   AuthorizationContext,
@@ -27,37 +28,41 @@ export class AuthorizedWorkspaceReads {
     private readonly resolver: WorkspaceMembershipResolver,
   ) {}
 
-  private async current(
+  private async observe(
     authority: HumanAuthority,
     requirement: AuthorizationRequirement,
-    policy: ReadPolicy,
   ) {
     const principal = captureHumanAuthority(authority);
     const selection = captureRequirement(requirement);
-    const observed = await this.resolver.resolve(
-      this.prisma,
-      principal,
-      selection,
+    return this.resolver.read(this.prisma, principal, selection, (context) =>
+      Promise.resolve(context),
     );
-    await policy(observed, selection);
-    // An async policy may have waited. Revalidate immediately before producing
-    // results/handoff, without a long-lived read transaction or cached allow.
-    const current = await this.resolver.resolve(
-      this.prisma,
-      principal,
-      selection,
-    );
-    assertSameObservation(observed, current);
-    return current;
   }
 
   async query<T>(
     authority: HumanAuthority,
     requirement: AuthorizationRequirement,
     policy: ReadPolicy,
-    produce: (context: AuthorizationContext) => Promise<T>,
+    produce: (
+      context: AuthorizationContext,
+      tx: Prisma.TransactionClient,
+    ) => Promise<T>,
   ): Promise<T> {
-    return produce(await this.current(authority, requirement, policy));
+    const principal = captureHumanAuthority(authority);
+    const selection = captureRequirement(requirement);
+    const observed = await this.observe(principal, selection);
+    await policy(observed, selection);
+    // Async preparation/policy is outside the transaction. Reauthorize and query
+    // together in a fresh short scope; producer uses this tx, never root Prisma.
+    return this.resolver.read(
+      this.prisma,
+      principal,
+      selection,
+      (current, tx) => {
+        assertSameObservation(observed, current);
+        return produce(current, tx);
+      },
+    );
   }
 
   async handoff<T>(
@@ -69,7 +74,13 @@ export class AuthorizedWorkspaceReads {
   ): Promise<void> {
     if (types.isAsyncFunction(send))
       throw new TypeError('Handoff must be synchronous');
-    const context = await this.current(authority, requirement, policy);
+    const context = await this.query(
+      authority,
+      requirement,
+      policy,
+      (current) => Promise.resolve(current),
+    );
+    // query has committed/closed its short scope before synchronous enqueue.
     const result: unknown = send(value, context);
     if (result !== undefined) {
       // Catch an invalid native Promise's rejection without awaiting/accepting it.
