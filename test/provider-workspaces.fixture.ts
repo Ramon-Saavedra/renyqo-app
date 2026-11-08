@@ -33,7 +33,9 @@ export class WorkspaceFixture {
   readonly conversion = new WorkspaceConversion(this.workspaces, this.profiles);
   readonly lifecycle = new WorkspaceLifecycle(this.workspaces);
 
-  async start(stopBeforeMigration?: string) {
+  // Historical domain suites deliberately exercise their pre-RLS contract.
+  // Restricted-role suites apply the RLS migration after privileged seeding.
+  async start(stopBeforeMigration = '20261108120000_workspace_tenant_rls') {
     const url = process.env['E2E_DATABASE_URL'];
     if (!url || process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true')
       throw new Error(

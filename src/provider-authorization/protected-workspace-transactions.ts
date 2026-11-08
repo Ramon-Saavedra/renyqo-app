@@ -18,6 +18,7 @@ import { captureRequirement } from './domain/workspace-authority.policy';
 import { AuthorityLockRepository } from './persistence/authority-lock.repository';
 import { GlobalAuthorityReader } from './persistence/global-authority.reader';
 import { WorkspaceMembershipResolver } from './workspace-membership.resolver';
+import { MembershipBootstrap } from '../provider-tenancy/membership-bootstrap';
 
 @Injectable()
 export class ProtectedWorkspaceTransactions {
@@ -62,6 +63,11 @@ export class ProtectedWorkspaceTransactions {
       await tx.$executeRaw`SET LOCAL statement_timeout='4000ms'`;
       await this.locks.global(tx, principal);
       await this.global.assert(tx, principal);
+      const actorId = await new MembershipBootstrap(this.global).enter(
+        tx,
+        principal,
+        selection.workspaceId,
+      );
       await this.locks.workspace(tx, selection.workspaceId, lockPlan);
       // Routing read only: no resource or membership tuple locks before root.
       const actor = await tx.workspaceMembership.findUnique({
@@ -77,7 +83,7 @@ export class ProtectedWorkspaceTransactions {
       await this.locks.memberships(
         tx,
         selection.workspaceId,
-        actor.id,
+        actorId,
         lockPlan,
       );
       const context = await this.resolver.resolve(tx, principal, selection);

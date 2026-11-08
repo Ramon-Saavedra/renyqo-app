@@ -11,6 +11,9 @@ import {
 } from './domain/workspace-authority.policy';
 import { GlobalAuthorityReader } from './persistence/global-authority.reader';
 import { WorkspaceAuthorityReader } from './persistence/workspace-authority.reader';
+import type { PrismaClient } from '../generated/prisma/client';
+import { MembershipBootstrap } from '../provider-tenancy/membership-bootstrap';
+import { assertDelegatedScope } from './domain/authority-reference';
 
 @Injectable()
 export class WorkspaceMembershipResolver {
@@ -18,6 +21,32 @@ export class WorkspaceMembershipResolver {
     private readonly global: GlobalAuthorityReader,
     private readonly snapshots: WorkspaceAuthorityReader,
   ) {}
+
+  // Short, non-locking read transaction; never carry it over external work.
+  async read<T>(
+    db: Pick<PrismaClient, '$transaction'>,
+    authority: HumanAuthority,
+    requirement: AuthorizationRequirement,
+    produce: (
+      context: Awaited<ReturnType<WorkspaceMembershipResolver['resolve']>>,
+      tx: Prisma.TransactionClient,
+    ) => Promise<T>,
+  ): Promise<T> {
+    const principal = captureHumanAuthority(authority);
+    const selection = captureRequirement(requirement);
+    assertDelegatedScope(principal, selection);
+    return db.$transaction(
+      async (tx) => {
+        await new MembershipBootstrap(this.global).enter(
+          tx,
+          principal,
+          selection.workspaceId,
+        );
+        return produce(await this.resolve(tx, principal, selection), tx);
+      },
+      { isolationLevel: 'ReadCommitted' },
+    );
+  }
 
   async resolve(
     db: Prisma.TransactionClient,

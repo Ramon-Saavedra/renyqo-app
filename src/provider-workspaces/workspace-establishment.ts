@@ -48,7 +48,11 @@ export class WorkspaceEstablishment {
       const owner = await this.memberships.findOwner(tx, existing.id);
       const detail =
         input.kind === 'PERSONAL'
-          ? await this.allocations.find(tx, input.allocationId)
+          ? await this.allocations.find(
+              tx,
+              input.workspaceId,
+              input.allocationId,
+            )
           : await this.profiles.find(tx, existing.id);
       const matchesDetail =
         input.kind === 'PERSONAL'

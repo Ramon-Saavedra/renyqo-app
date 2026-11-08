@@ -3,8 +3,10 @@ import type { Prisma } from '../../generated/prisma/client';
 
 @Injectable()
 export class PersonalAllocationRepository {
-  find(tx: Prisma.TransactionClient, id: string) {
-    return tx.personalWorkspaceAllocation.findUnique({ where: { id } });
+  find(tx: Prisma.TransactionClient, workspaceId: string, id: string) {
+    return tx.personalWorkspaceAllocation.findUnique({
+      where: { id, workspaceId },
+    });
   }
 
   allocate(
