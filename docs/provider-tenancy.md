@@ -38,10 +38,12 @@ global authority SELECT/row-lock privileges, and prints no credentials. Existing
 global auth and legacy modules still require their separately reviewed application
 grants; this script does not grant blanket access to every legacy table.
 
-Production `PrismaService` initialization rejects unsafe runtime attributes,
-privileged memberships, schema CREATE, table ownership, missing FORCE RLS,
-TRUNCATE privileges or direct private-baseline access. Development/admin tools
-may use their separate credential; they provide no RLS security proof.
+`assertRestrictedWorkspaceRuntime` remains an explicit validation entry point for
+restricted-runtime tests and future deployment cutover. It rejects unsafe role
+attributes/memberships, schema CREATE, table ownership, missing FORCE RLS and
+excessive foundation/private-baseline privileges. Shared `PrismaService` startup
+does not invoke it: the current application DATABASE_URL also serves legacy
+modules and is not yet the final restricted workspace runtime credential.
 
 ## Context, bootstrap and creation
 
@@ -127,7 +129,7 @@ round trips; monitor latency, transaction-ID consumption and vacuum health under
 production load. These checks are not a production throughput benchmark.
 
 Provision roles before rollout, quiesce structural writers for DDL/function
-replacement, run migration/security/regression checks, then supply restricted
-application credentials. Do not reset development/production data or silently
+replacement, run migration/security/regression checks, validate restricted credentials separately. Switching the shared application
+credential requires the later reviewed application cutover. Do not reset development/production data or silently
 fall back to owner credentials. 4.5.4 cannot pass its exit gate without real
-restricted-login proof; production privilege verification remains a deployment gate.
+restricted-login proof; production restricted-role verification remains a future cutover gate.

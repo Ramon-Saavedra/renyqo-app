@@ -1,7 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../generated/prisma/client';
-import { assertRestrictedWorkspaceRuntime } from '../provider-tenancy/runtime-role-verifier';
 
 @Injectable()
 export class PrismaService
@@ -17,8 +16,6 @@ export class PrismaService
 
   async onModuleInit(): Promise<void> {
     await this.$connect();
-    if (process.env['NODE_ENV'] === 'production')
-      await assertRestrictedWorkspaceRuntime(this);
   }
 
   async onModuleDestroy(): Promise<void> {

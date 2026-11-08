@@ -73,7 +73,7 @@ async function main() {
       throw new Error('Unsafe existing runtime object grants');
     await c.query('COMMIT');
     console.log(
-      'Workspace runtime login provisioned; verify application grants and runtime-role startup checks before rollout.',
+      'Workspace runtime login provisioned; explicitly validate runtime privileges before future cutover.',
     );
   } catch (error) {
     await c.query('ROLLBACK');
