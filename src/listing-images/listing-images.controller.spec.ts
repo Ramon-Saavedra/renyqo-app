@@ -1,3 +1,4 @@
+import { unitRequest, unitProvider } from '../../test/unit-workspace-authority';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ListingImage } from '../generated/prisma/client';
@@ -86,12 +87,12 @@ describe('ListingImagesController', () => {
       const result = await controller.uploadImage(
         { listingId: LISTING_ID },
         file,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(listingImagesService.upload).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         file,
       );
       expect(result).toEqual(image);
@@ -104,7 +105,7 @@ describe('ListingImagesController', () => {
       const result = await controller.uploadImage(
         { listingId: LISTING_ID },
         makeFile(),
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(result.isCover).toBe(true);
@@ -120,12 +121,12 @@ describe('ListingImagesController', () => {
 
       const result = await controller.findAll(
         { listingId: LISTING_ID },
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(listingImagesService.findAllByListing).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(result).toEqual(items);
     });
@@ -140,12 +141,12 @@ describe('ListingImagesController', () => {
       const result = await controller.reorder(
         { listingId: LISTING_ID },
         dto,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(listingImagesService.reorder).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         dto,
       );
       expect(result).toEqual(items);
@@ -158,13 +159,13 @@ describe('ListingImagesController', () => {
 
       await controller.remove(
         { listingId: LISTING_ID, imageId: IMAGE_ID },
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(listingImagesService.remove).toHaveBeenCalledWith(
         LISTING_ID,
         IMAGE_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
     });
   });

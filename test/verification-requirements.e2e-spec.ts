@@ -3,21 +3,30 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { ConfigService } from '@nestjs/config';
-import { SessionInfrastructureService } from '../src/auth/session/session-infrastructure.service';
-import passport from 'passport';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaClient, type Prisma } from '../src/generated/prisma/client';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { prismaServiceWithSharedPool } from './e2e-prisma-override';
 import { ApplicationLifecycleService } from '../src/applications/application-lifecycle.service';
 import { VerificationRequirementService } from '../src/application-documents/verification-requirement.service';
 import { VerificationSubjectService } from '../src/application-documents/verification-subject.service';
 import { ApplicationDocumentActivityService } from '../src/application-documents/application-document-activity.service';
 import { ApplicationDocumentFinalizationService } from '../src/application-documents/application-document-finalization.service';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  createPublishedListingForProvider,
+  ensurePersonalWorkspaceForProvider,
+} from './e2e-workspace-listing';
+import {
+  applicantAuthorityFor,
+  providerActorFor,
+} from './e2e-provider-context';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
 
 jest.setTimeout(20000);
 
@@ -38,6 +47,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
   let agent: ReturnType<typeof request.agent>;
   let foreignAgent: ReturnType<typeof request.agent>;
   let providerId: string;
+  let providerActor: ProviderActor;
   let lifecycle: ApplicationLifecycleService;
   let created = false;
   let requirements: VerificationRequirementService;
@@ -84,7 +94,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     scoped.searchParams.set('options', `-c search_path=${schema}`);
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
-      .useValue(prisma)
+      .useValue(prismaServiceWithSharedPool(prisma, pool, schema))
       .overrideProvider(ConfigService)
       .useValue(
         new ConfigService({ ...process.env, DATABASE_URL: scoped.href }),
@@ -101,9 +111,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       }),
     );
     // Grants require real persisted session rows in this suite's isolated schema.
-    app.use(app.get(SessionInfrastructureService).createMiddleware());
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     await app.init();
     requirements = app.get(VerificationRequirementService);
     subjects = app.get(VerificationSubjectService);
@@ -128,7 +136,10 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
         .expect(201);
     }
     providerId = String(body(await register(agent))['id']);
-    await register(foreignAgent);
+    await ensurePersonalWorkspaceForProvider(prisma, providerId);
+    providerActor = await providerActorFor(prisma, providerId);
+    const foreignProviderId = String(body(await register(foreignAgent))['id']);
+    await ensurePersonalWorkspaceForProvider(prisma, foreignProviderId);
   }, 30000);
 
   afterAll(async () => {
@@ -218,14 +229,14 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
   }
 
   async function fixture() {
-    const listing = await prisma.listing.create({
-      data: {
-        providerId,
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      providerId,
+      {
         displayOrder: ++order,
-        status: 'PUBLISHED',
         title: 'Verification fixture',
       },
-    });
+    );
     const user = await prisma.user.create({
       data: {
         name: 'Applicant',
@@ -290,14 +301,14 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       key = randomUUID();
     const member = await subjects.householdMember(
       f.application.id,
-      providerId,
+      providerActor,
       key,
       'Member B',
     );
     expect(
       await subjects.householdMember(
         f.application.id,
-        providerId,
+        providerActor,
         key,
         'Member B',
       ),
@@ -305,7 +316,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     await expect(
       subjects.householdMember(
         f.application.id,
-        providerId,
+        providerActor,
         key,
         'Changed label',
       ),
@@ -313,7 +324,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     expect(await scope(f.application.id)).toBe(0);
     const result = await requirements.execute(
       f.application.id,
-      providerId,
+      providerActor,
       {
         operation: 'REQUEST',
         items: [
@@ -345,14 +356,14 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     await expect(
       requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         requestCommand('INCOME_PROOF'),
       ),
     ).rejects.toMatchObject({ status: 409 });
     expect(await scope(f.application.id)).toBe(1);
     expect(
       (
-        await requirements.execute(f.application.id, providerId, {
+        await requirements.execute(f.application.id, providerActor, {
           operation: 'REQUEST',
           items: [{ type: 'IDENTITY_DOCUMENT' }],
         })
@@ -373,25 +384,30 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     };
     const result = await requirements.execute(
       f.application.id,
-      providerId,
+      providerActor,
       command,
       key,
     );
     expect(
       await requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         { ...command, items: [...command.items].reverse() },
         key,
       ),
     ).toEqual(result);
     await expect(
-      requirements.execute(f.application.id, providerId, requestCommand(), key),
+      requirements.execute(
+        f.application.id,
+        providerActor,
+        requestCommand(),
+        key,
+      ),
     ).rejects.toMatchObject({ status: 409 });
     await expect(
       requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         { operation: 'CANCEL', requestId: result.requirements[0].id },
         key,
       ),
@@ -400,16 +416,24 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       body(await foreignAgent.get('/api/v1/auth/me').expect(200))['id'],
     );
     await expect(
-      requirements.execute(f.application.id, foreign, command, key),
+      requirements.execute(
+        f.application.id,
+        await providerActorFor(prisma, foreign),
+        command,
+        key,
+      ),
     ).rejects.toMatchObject({ status: 404 });
-    await lifecycle.withdraw(f.application.id, f.user.id);
+    await lifecycle.withdraw(
+      f.application.id,
+      await applicantAuthorityFor(prisma, f.user.id),
+    );
     expect(
-      await requirements.execute(f.application.id, providerId, command, key),
+      await requirements.execute(f.application.id, providerActor, command, key),
     ).toEqual(result);
     await expect(
       requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         { operation: 'CANCEL', requestId: result.requirements[0].id },
         randomUUID(),
       ),
@@ -426,7 +450,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       await expect(
         requirements.execute(
           f.application.id,
-          providerId,
+          providerActor,
           requestCommand(),
           key,
         ),
@@ -454,7 +478,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       (
         await requirements.execute(
           f.application.id,
-          providerId,
+          providerActor,
           requestCommand(),
           key,
         )
@@ -465,7 +489,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     const f = await fixture(),
       first = await requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         requestCommand(),
       ),
       id = first.requirements[0].id;
@@ -473,7 +497,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       key = randomUUID();
     const cancelled = await requirements.execute(
       f.application.id,
-      providerId,
+      providerActor,
       { operation: 'CANCEL', requestId: id, expectedRevision: 1 },
       key,
     );
@@ -493,14 +517,14 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     expect(
       await requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         { operation: 'CANCEL', requestId: id, expectedRevision: 1 },
         key,
       ),
     ).toEqual(cancelled);
     const next = await requirements.execute(
       f.application.id,
-      providerId,
+      providerActor,
       requestCommand(),
     );
     expect(await row(next.requirements[0].id)).toMatchObject({
@@ -515,12 +539,12 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     const f = await fixture(),
       first = await requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         requestCommand(),
       ),
       id = first.requirements[0].id;
     const file = await evidence(id, 'PROCESSING');
-    await requirements.execute(f.application.id, providerId, {
+    await requirements.execute(f.application.id, providerActor, {
       operation: 'CANCEL',
       requestId: id,
     });
@@ -555,7 +579,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     const f = await fixture(),
       first = await requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         requestCommand(),
       ),
       id = first.requirements[0].id,
@@ -563,13 +587,13 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     const results = await Promise.allSettled([
       requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         { operation: 'REPLACE', requestId: id },
         randomUUID(),
       ),
       requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         { operation: 'REPLACE', requestId: id },
         randomUUID(),
       ),
@@ -601,7 +625,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       Array.from({ length: 3 }, () =>
         requirements.execute(
           f.application.id,
-          providerId,
+          providerActor,
           requestCommand(),
           key,
         ),
@@ -612,13 +636,13 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
     const later = await Promise.all([
       requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         requestCommand('INCOME_PROOF'),
         randomUUID(),
       ),
       requirements.execute(
         f.application.id,
-        providerId,
+        providerActor,
         { operation: 'CANCEL', requestId: duplicate[0].requirements[0].id },
         randomUUID(),
       ),
@@ -650,10 +674,13 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       try {
         first = observe(
           terminalFirst
-            ? lifecycle.withdraw(f.application.id, f.user.id)
+            ? lifecycle.withdraw(
+                f.application.id,
+                await applicantAuthorityFor(prisma, f.user.id),
+              )
             : requirements.execute(
                 f.application.id,
-                providerId,
+                providerActor,
                 requestCommand(),
               ),
         );
@@ -662,10 +689,13 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
           terminalFirst
             ? requirements.execute(
                 f.application.id,
-                providerId,
+                providerActor,
                 requestCommand(),
               )
-            : lifecycle.withdraw(f.application.id, f.user.id),
+            : lifecycle.withdraw(
+                f.application.id,
+                await applicantAuthorityFor(prisma, f.user.id),
+              ),
         );
         await gate.waitForDatabaseWaiter();
         gate.release();
@@ -697,20 +727,20 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
       b = await fixture();
     const one = await requirements.execute(
         a.application.id,
-        providerId,
+        providerActor,
         requestCommand(),
         randomUUID(),
       ),
       two = await requirements.execute(
         b.application.id,
-        providerId,
+        providerActor,
         requestCommand(),
       );
     const first = await row(one.requirements[0].id),
       other = await row(two.requirements[0].id),
       file = await evidence(other.id);
     await expect(
-      requirements.execute(a.application.id, providerId, {
+      requirements.execute(a.application.id, providerActor, {
         operation: 'REQUEST',
         items: [{ type: 'INCOME_PROOF', subjectId: other.subjectId }],
       }),
@@ -750,7 +780,7 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
         where: { applicationId: a.application.id },
       }),
     ).rejects.toThrow();
-    await requirements.execute(a.application.id, providerId, {
+    await requirements.execute(a.application.id, providerActor, {
       operation: 'CANCEL',
       requestId: first.id,
     });

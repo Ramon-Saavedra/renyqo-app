@@ -1,3 +1,4 @@
+import { unitProvider } from '../../test/unit-workspace-authority';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import {
@@ -155,10 +156,12 @@ describe('Verification HTTP contracts', () => {
       expectedDecisionId: null,
       decision: 'WAIVED',
     });
-    expect(await service.execute(id, id, dto, 'decide-1')).toBe(result);
+    expect(await service.execute(id, unitProvider(id), dto, 'decide-1')).toBe(
+      result,
+    );
     expect(decisions).toHaveBeenCalledWith(
       id,
-      id,
+      unitProvider(id),
       verificationCommand(dto),
       'decide-1',
     );
@@ -179,19 +182,21 @@ describe('Verification HTTP contracts', () => {
       requestId: id,
       expectedRevision: 1,
     });
-    expect(await service.execute(id, id, dto, 'retry-1')).toBe(result);
+    expect(await service.execute(id, unitProvider(id), dto, 'retry-1')).toBe(
+      result,
+    );
     expect(execute).toHaveBeenCalledWith(
       id,
-      id,
+      unitProvider(id),
       verificationCommand(dto),
       'retry-1',
     );
-    await expect(service.execute(id, id, dto, undefined)).rejects.toMatchObject(
-      { status: 400 },
-    );
-    await expect(service.execute(id, id, dto, 'bad key')).rejects.toMatchObject(
-      { status: 400 },
-    );
+    await expect(
+      service.execute(id, unitProvider(id), dto, undefined),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      service.execute(id, unitProvider(id), dto, 'bad key'),
+    ).rejects.toMatchObject({ status: 400 });
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
@@ -210,12 +215,16 @@ describe('Verification HTTP contracts', () => {
       requestId: id,
       expectedRevision: 1,
     });
-    await expect(service.execute(id, id, dto, 'retry')).rejects.toMatchObject({
+    await expect(
+      service.execute(id, unitProvider(id), dto, 'retry'),
+    ).rejects.toMatchObject({
       status: 503,
     });
     const failure = new Error('activity persistence failed');
     execute.mockRejectedValueOnce(failure);
-    await expect(service.execute(id, id, dto, 'retry')).rejects.toBe(failure);
+    await expect(
+      service.execute(id, unitProvider(id), dto, 'retry'),
+    ).rejects.toBe(failure);
   });
 
   it.each([
@@ -224,7 +233,7 @@ describe('Verification HTTP contracts', () => {
     ['ACCEPTED', 'RENTED', true, 'LISTING_RENTED'],
     ['REJECTED', 'RENTED', true, 'LISTING_RENTED'],
     ['WITHDRAWN', 'PUBLISHED', true, 'APPLICATION_NOT_ACTIVE'],
-    ['ACTIVE', 'ARCHIVED', true, 'LISTING_UNAVAILABLE'],
+    ['ACTIVE', 'RETIRED', true, 'LISTING_UNAVAILABLE'],
   ] as const)(
     'explains freeze for %s/%s',
     (status, listingStatus, isFrozen, reason) => {

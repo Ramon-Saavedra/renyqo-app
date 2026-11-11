@@ -3,6 +3,10 @@ import {
   type DocumentAttentionFact,
   type ViewingAttentionFact,
 } from './application-pending-action.service';
+import {
+  unitContext,
+  UNIT_WORKSPACE_ID,
+} from '../../test/unit-workspace-authority';
 import { ApplicationPendingActionType as Action } from './application-pending-action';
 import {
   ApplicationStatus,
@@ -22,8 +26,8 @@ import { validate } from 'class-validator';
 
 describe('Application attention derivation', () => {
   it('uses the same provider visibility definition for batched SQL scope', () => {
-    expect(providerApplicationVisibility('provider')).toEqual({
-      listing: { providerId: 'provider' },
+    expect(providerApplicationVisibility(unitContext('provider'))).toEqual({
+      listing: { workspaceId: UNIT_WORKSPACE_ID },
       status: { notIn: [ApplicationStatus.WAITING] },
       OR: [
         { status: { in: [ApplicationStatus.ACTIVE] } },

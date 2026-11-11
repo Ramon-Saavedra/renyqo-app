@@ -23,6 +23,7 @@ export class SessionInfrastructureService implements OnModuleDestroy {
   private readonly secret: string;
   private store: InstanceType<ReturnType<typeof connectPgSimple>> | undefined;
   private pool: Pool | undefined;
+  private ownsPool = false;
   private closing: Promise<void> | undefined;
   private readonly onPoolError = (): void => {
     this.logger.error({
@@ -68,13 +69,13 @@ export class SessionInfrastructureService implements OnModuleDestroy {
   createMiddleware() {
     if (this.store) throw new Error('Session middleware already initialized');
     const PgStore = connectPgSimple(session);
-    this.pool = new Pool({
-      connectionString: this.config.getOrThrow<string>('DATABASE_URL'),
-    });
+    this.pool = this.prisma.getSharedPool();
+    this.ownsPool = false;
     this.attachPoolErrorHandler(this.pool);
     this.store = new PgStore({
       pool: this.pool,
       tableName: 'user_sessions',
+      schemaName: this.prisma.getDatabaseSchema(),
       createTableIfMissing: false,
     });
     return session({
@@ -112,6 +113,6 @@ export class SessionInfrastructureService implements OnModuleDestroy {
 
   private async shutdown(): Promise<void> {
     await Promise.resolve(this.store?.close());
-    await this.pool?.end();
+    if (this.ownsPool) await this.pool?.end();
   }
 }

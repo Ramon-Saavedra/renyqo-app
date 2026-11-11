@@ -1,6 +1,8 @@
 import { ApplicationStatus, ListingStatus } from '../generated/prisma/enums';
 import type { Prisma } from '../generated/prisma/client';
 import { PROVIDER_CURATION_COOLDOWN_MS } from './application-lifecycle.constants';
+import type { AuthorizationContext } from '../provider-authorization/domain/authorization.types';
+import { providerListingWhere } from '../provider-authorization/provider-listing-access';
 
 export function applicationCanWithdraw(status: ApplicationStatus): boolean {
   return (
@@ -50,10 +52,10 @@ export function providerApplicationIsVisible(application: {
 }
 
 export function providerApplicationVisibility(
-  providerId: string,
+  context: AuthorizationContext,
 ): Prisma.ApplicationWhereInput {
   return {
-    listing: { providerId },
+    listing: providerListingWhere(context),
     status: { notIn: providerHiddenStatuses },
     OR: [
       { status: { in: providerVisibleWithoutHistory } },

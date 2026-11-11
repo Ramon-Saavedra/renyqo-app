@@ -4,21 +4,37 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { ConfigService } from '@nestjs/config';
-import { SessionInfrastructureService } from '../src/auth/session/session-infrastructure.service';
-import passport from 'passport';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PrismaClient, type Prisma } from '../src/generated/prisma/client';
+import { PrismaClient } from '../src/generated/prisma/client';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { prismaServiceWithSharedPool } from './e2e-prisma-override';
+import { ListingCreation } from '../src/listings/listing-creation';
 import { ListingsService } from '../src/listings/listings.service';
 import { ApplicationLifecycleService } from '../src/applications/application-lifecycle.service';
 import { ApplicationEligibilityAssessmentService } from '../src/eligibility/application-eligibility-assessment.service';
 import { EligibilityService } from '../src/eligibility/eligibility.service';
 import type { CreateListingDto } from '../src/listings/dto/create-listing.dto';
+import {
+  holdListingRowLockExternal,
+  waitForListingLockContention,
+} from './e2e-listing-lock-barrier';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  createListingInWorkspaceForProvider,
+  createPublishedListingForProvider,
+  ensurePersonalWorkspaceForProvider,
+} from './e2e-workspace-listing';
+import {
+  applicantAuthorityFor,
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
 
 jest.setTimeout(20000);
 
@@ -40,9 +56,12 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
   let agent: ReturnType<typeof request.agent>;
   let foreignAgent: ReturnType<typeof request.agent>;
   let providerId: string;
+  let providerActor: ProviderActor;
   let lifecycle: ApplicationLifecycleService;
   let assessments: ApplicationEligibilityAssessmentService;
   let created = false;
+
+  jest.setTimeout(30_000);
 
   beforeAll(async () => {
     const url = process.env['E2E_DATABASE_URL'];
@@ -84,7 +103,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
     scoped.searchParams.set('options', `-c search_path=${schema}`);
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
-      .useValue(prisma)
+      .useValue(prismaServiceWithSharedPool(prisma, pool, schema))
       .overrideProvider(ConfigService)
       .useValue(
         new ConfigService({ ...process.env, DATABASE_URL: scoped.href }),
@@ -101,9 +120,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       }),
     );
     // Grants require real persisted session rows in this suite's isolated schema.
-    app.use(app.get(SessionInfrastructureService).createMiddleware());
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     await app.init();
     service = app.get(ListingsService);
     lifecycle = app.get(ApplicationLifecycleService);
@@ -128,7 +145,14 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
         .expect(201);
     }
     providerId = String(body(await register(agent))['id']);
+    await ensurePersonalWorkspaceForProvider(prisma, providerId);
+    await bindProviderWorkspaceHeader(prisma, providerId, agent);
+    providerActor = await providerActorFor(prisma, providerId);
     await register(foreignAgent);
+    const foreignProviderId = String(
+      body(await foreignAgent.get('/api/v1/auth/me').expect(200))['id'],
+    );
+    await bindProviderWorkspaceHeader(prisma, foreignProviderId, foreignAgent);
   }, 30000);
 
   afterAll(async () => {
@@ -145,7 +169,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
   });
 
   async function listing(criteria: Partial<CreateListingDto> = {}) {
-    const row = await service.create(providerId, {
+    const row = await createListingInWorkspaceForProvider(prisma, providerId, {
       title: 'Prequalification',
       city: 'Berlin',
       street: 'Teststr. 1',
@@ -154,11 +178,18 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       rooms: 2,
       bedrooms: 1,
       coldRent: 1000,
-      availableFrom: '2027-01-01',
+      availableFrom: new Date('2027-01-01'),
       ...criteria,
     });
-    return service.publish(row.id, providerId);
+    return service.publish(row.id, providerActor);
   }
+  const applyAs = async (listingId: string, userId: string) =>
+    lifecycle.apply(listingId, await applicantAuthorityFor(prisma, userId));
+  const withdrawAs = async (applicationId: string, userId: string) =>
+    lifecycle.withdraw(
+      applicationId,
+      await applicantAuthorityFor(prisma, userId),
+    );
   async function applicant(facts: Record<string, unknown> = {}) {
     const target = request.agent(
       app.getHttpServer() as Parameters<typeof request>[0],
@@ -196,85 +227,16 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       include: { checks: true },
     });
   }
-  type Runner = (
-    operation: (tx: Prisma.TransactionClient) => Promise<unknown>,
-    options?: {
-      isolationLevel?: Prisma.TransactionIsolationLevel;
-      maxWait?: number;
-      timeout?: number;
-    },
-  ) => Promise<unknown>;
-
-  function holdFirstListingLock(id: string) {
-    const run = prisma.$transaction.bind(prisma) as Runner;
-    let acquired!: () => void, release!: () => void;
-    const locked = new Promise<void>((resolve) => {
-      acquired = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let attempts = 0;
-    const spy = jest
-      .spyOn(prisma, '$transaction')
-      .mockImplementation(
-        (operation: Parameters<Runner>[0], options?: Parameters<Runner>[1]) =>
-          run(
-            (tx) =>
-              operation(
-                new Proxy(tx, {
-                  get(target, property) {
-                    if (property === '$queryRaw')
-                      return async (
-                        sql: TemplateStringsArray | Prisma.Sql,
-                        ...values: unknown[]
-                      ) => {
-                        if (!values.includes(id))
-                          return target.$queryRaw(sql, ...values);
-                        const attempt = ++attempts;
-                        const result = await target.$queryRaw(sql, ...values);
-                        if (attempt === 1) {
-                          acquired();
-                          await gate;
-                        }
-                        return result;
-                      };
-                    const value: unknown = Reflect.get(target, property);
-                    return value;
-                  },
-                }),
-              ),
-            options,
-          ),
-      );
-    return {
-      locked,
-      release,
-      spy,
-      attempts: () => attempts,
-      async waitForDatabaseWaiter() {
-        const deadline = Date.now() + 3000;
-        while (Date.now() < deadline) {
-          const result = await admin.query<{ n: number }>(
-            "SELECT count(*)::int n FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE '%listings%'",
-            [applicationName],
-          );
-          if (result.rows[0].n > 0) return;
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        throw new Error(
-          'Competing operation did not wait on the PostgreSQL row lock',
-        );
-      },
-    };
-  }
-
   it('creates native typed revisions through HTTP and ignores non-criteria/no-op patches', async () => {
-    const response = await agent
-      .post('/api/v1/provider/listings')
-      .send({ title: 'HTTP revision', minimumHouseholdNetIncome: 3000 })
-      .expect(201);
-    const id = String(body(response)['id']);
+    const row = await app
+      .get(ListingCreation)
+      .run(
+        providerActor,
+        { title: 'HTTP revision', minimumHouseholdNetIncome: 3000 },
+        randomUUID(),
+        () => Promise.resolve(),
+      );
+    const id = row.id;
     await agent
       .patch(`/api/v1/provider/listings/${id}`)
       .send({ title: 'Other', minimumHouseholdNetIncome: 3000 })
@@ -417,7 +379,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       initial: { status: 'UNKNOWN' },
       current: { status: 'UNKNOWN' },
     });
-    await service.update(row.id, providerId, { petsPolicy: 'NOT_ALLOWED' });
+    await service.update(row.id, providerActor, { petsPolicy: 'NOT_ALLOWED' });
     expect(await history(legacy.id)).toHaveLength(1);
     expect(body(await user.agent.get(path).expect(200))).toMatchObject({
       initial: { status: 'UNKNOWN' },
@@ -439,7 +401,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       .spyOn(assessments, 'record')
       .mockRejectedValueOnce(new Error('assessment failure'));
     try {
-      await expect(lifecycle.apply(row.id, user.id)).rejects.toThrow(
+      await expect(applyAs(row.id, user.id)).rejects.toThrow(
         'assessment failure',
       );
     } finally {
@@ -454,14 +416,16 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
   it('rolls criteria edits and revisions back if one reassessment fails', async () => {
     const row = await listing();
     const user = await applicant();
-    const applied = await lifecycle.apply(row.id, user.id);
+    const applied = await applyAs(row.id, user.id);
     const before = await history(applied.id);
     const spy = jest
       .spyOn(assessments, 'record')
       .mockRejectedValueOnce(new Error('reassessment failure'));
     try {
       await expect(
-        service.update(row.id, providerId, { minimumHouseholdNetIncome: 9000 }),
+        service.update(row.id, providerActor, {
+          minimumHouseholdNetIncome: 9000,
+        }),
       ).rejects.toThrow('reassessment failure');
     } finally {
       spy.mockRestore();
@@ -482,7 +446,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
   it('preserves profile-edit auto-rejection policy and records facts before rejection', async () => {
     const row = await listing({ minimumHouseholdNetIncome: 3000 });
     const user = await applicant();
-    const applied = await lifecycle.apply(row.id, user.id);
+    const applied = await applyAs(row.id, user.id);
     const initial = (await history(applied.id))[0];
     await user.agent
       .patch('/api/v1/applicant/profile')
@@ -559,9 +523,9 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
           : evaluation.result,
       );
       if (evaluation.canApply)
-        expect((await lifecycle.apply(row.id, user.id)).status).toBe('ACTIVE');
+        expect((await applyAs(row.id, user.id)).status).toBe('ACTIVE');
       else
-        await expect(lifecycle.apply(row.id, user.id)).rejects.toMatchObject({
+        await expect(applyAs(row.id, user.id)).rejects.toMatchObject({
           status: 422,
         });
     }
@@ -572,8 +536,8 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
         status: 'WAITING',
       },
     });
-    await service.pause(rows[4].id, providerId);
-    await service.resume(rows[4].id, providerId);
+    await service.pause(rows[4].id, providerActor);
+    await service.resume(rows[4].id, providerActor);
     expect(
       (
         await prisma.application.findUniqueOrThrow({
@@ -599,7 +563,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
   it('database rejects mutation, incomplete checks, unrelated applications and stale criteria', async () => {
     const row = await listing();
     const user = await applicant();
-    const applied = await lifecycle.apply(row.id, user.id);
+    const applied = await applyAs(row.id, user.id);
     const [initial] = await history(applied.id);
     for (const table of [
       'listing_criteria_revisions',
@@ -638,8 +602,11 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       }),
     ).rejects.toThrow();
     const other = await listing();
+    await service.update(other.id, providerActor, {
+      minimumHouseholdNetIncome: 2000,
+    });
     const otherCriteria = await prisma.listingCriteriaRevision.findFirstOrThrow(
-      { where: { listingId: other.id } },
+      { where: { listingId: other.id }, orderBy: { revision: 'desc' } },
     );
     await expect(
       prisma.applicationEligibilityAssessment.create({
@@ -660,7 +627,9 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
         },
       }),
     ).rejects.toThrow();
-    await service.update(row.id, providerId, { petsPolicy: 'BY_ARRANGEMENT' });
+    await service.update(row.id, providerActor, {
+      petsPolicy: 'BY_ARRANGEMENT',
+    });
     await expect(
       prisma.applicationEligibilityAssessment.create({
         data: {
@@ -684,19 +653,24 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
     async (editFirst) => {
       const row = await listing({ minimumHouseholdNetIncome: 3000 });
       const user = await applicant();
-      const gate = holdFirstListingLock(row.id);
+      const gate = await holdListingRowLockExternal(
+        prisma,
+        pool,
+        row.id,
+        admin,
+      );
       let first: Promise<unknown> | undefined,
         second: Promise<unknown> | undefined;
       try {
         first = editFirst
-          ? service.update(row.id, providerId, {
+          ? service.update(row.id, providerActor, {
               minimumHouseholdNetIncome: 3500,
             })
-          : lifecycle.apply(row.id, user.id);
-        await gate.locked;
+          : applyAs(row.id, user.id);
+        await waitForListingLockContention(prisma, admin);
         second = editFirst
-          ? lifecycle.apply(row.id, user.id)
-          : service.update(row.id, providerId, {
+          ? applyAs(row.id, user.id)
+          : service.update(row.id, providerActor, {
               minimumHouseholdNetIncome: 3500,
             });
         await gate.waitForDatabaseWaiter();
@@ -713,27 +687,25 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
         expect(rows[0].criteriaRevisionId).toBe(criteria[editFirst ? 1 : 0].id);
         expect(rows.at(-1)?.criteriaRevisionId).toBe(criteria[1].id);
         expect(rows).toHaveLength(editFirst ? 1 : 2);
-        expect(gate.attempts()).toBeGreaterThan(2);
       } finally {
         gate.release();
         await Promise.allSettled([first, second]);
-        gate.spy.mockRestore();
       }
     },
   );
   it('serializes competing criteria edits with consecutive immutable revisions', async () => {
     const row = await listing();
     const user = await applicant();
-    const applied = await lifecycle.apply(row.id, user.id);
-    const gate = holdFirstListingLock(row.id);
+    const applied = await applyAs(row.id, user.id);
+    const gate = await holdListingRowLockExternal(prisma, pool, row.id, admin);
     let first: Promise<unknown> | undefined,
       second: Promise<unknown> | undefined;
     try {
-      first = service.update(row.id, providerId, {
+      first = service.update(row.id, providerActor, {
         minimumHouseholdNetIncome: 3000,
       });
-      await gate.locked;
-      second = service.update(row.id, providerId, {
+      await waitForListingLockContention(prisma, admin);
+      second = service.update(row.id, providerActor, {
         petsPolicy: 'NOT_ALLOWED',
       });
       await gate.waitForDatabaseWaiter();
@@ -754,7 +726,6 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
     } finally {
       gate.release();
       await Promise.allSettled([first, second]);
-      gate.spy.mockRestore();
     }
   });
   it.each([false, true])(
@@ -762,7 +733,12 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
     async (editFirst) => {
       const row = await listing({ minimumHouseholdNetIncome: 3000 });
       const user = await applicant();
-      const gate = holdFirstListingLock(row.id);
+      const gate = await holdListingRowLockExternal(
+        prisma,
+        pool,
+        row.id,
+        admin,
+      );
       let first: Promise<unknown> | undefined,
         second: Promise<unknown> | undefined;
       // Attach rejection handling immediately so the intentionally rejected submission is observed.
@@ -779,16 +755,16 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       try {
         first = observe(
           editFirst
-            ? service.update(row.id, providerId, {
+            ? service.update(row.id, providerActor, {
                 minimumHouseholdNetIncome: 5000,
               })
-            : lifecycle.apply(row.id, user.id),
+            : applyAs(row.id, user.id),
         );
-        await gate.locked;
+        await waitForListingLockContention(prisma, admin);
         second = observe(
           editFirst
-            ? lifecycle.apply(row.id, user.id)
-            : service.update(row.id, providerId, {
+            ? applyAs(row.id, user.id)
+            : service.update(row.id, providerActor, {
                 minimumHouseholdNetIncome: 5000,
               }),
         );
@@ -815,7 +791,6 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       } finally {
         gate.release();
         await Promise.allSettled([first, second]);
-        gate.spy.mockRestore();
       }
     },
   );
@@ -825,7 +800,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
       minimumHouseholdNetIncome: 3000,
     });
     const user = await applicant({ schufaAvailable: true });
-    const applied = await lifecycle.apply(row.id, user.id);
+    const applied = await applyAs(row.id, user.id);
     const initial = (await history(applied.id))[0];
     await user.agent
       .patch('/api/v1/applicant/profile')
@@ -841,7 +816,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
     const rows = await history(applied.id);
     expect(rows[0]).toEqual(initial);
     expect(rows.at(-1)?.result).toBe('MATCH_WITH_OBSERVATIONS');
-    await lifecycle.withdraw(applied.id, user.id);
+    await withdrawAs(applied.id, user.id);
     await user.agent
       .patch('/api/v1/applicant/profile')
       .send({ householdNetIncome: 2000 })
@@ -853,19 +828,15 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
     });
   });
   it('an observed legacy criteria baseline is created now without inventing application-time history', async () => {
-    const row = await prisma.listing.create({
-      data: {
-        providerId,
-        displayOrder: 10000,
-        status: 'PUBLISHED',
-        title: 'Legacy',
-      },
+    const row = await createPublishedListingForProvider(prisma, providerId, {
+      displayOrder: 10000,
+      title: 'Legacy',
     });
     const user = await applicant();
     const legacy = await prisma.application.create({
       data: { listingId: row.id, applicantId: user.id, status: 'WAITING' },
     });
-    await service.update(row.id, providerId, {
+    await service.update(row.id, providerActor, {
       minimumHouseholdNetIncome: 3000,
     });
     const revisions = await prisma.listingCriteriaRevision.findMany({
@@ -884,8 +855,8 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
     const row = await listing();
     const user = await applicant();
     const results = await Promise.allSettled([
-      lifecycle.apply(row.id, user.id),
-      lifecycle.apply(row.id, user.id),
+      applyAs(row.id, user.id),
+      applyAs(row.id, user.id),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(

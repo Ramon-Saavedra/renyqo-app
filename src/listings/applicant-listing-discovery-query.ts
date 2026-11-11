@@ -1,9 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 
 import type { ApplicantProfile, Prisma } from '../generated/prisma/client';
-import { APPLICANT_LISTING_SUMMARY_LISTING_SELECT } from '../applicant-listing-summaries/applicant-listing-summary-listing.select';
 import { EligibilityService } from '../eligibility/eligibility.service';
-import { PublishedListingsService } from '../published-listings/published-listings.service';
 import type {
   ApplicantListingsQueryDto,
   DiscoverySort,
@@ -140,10 +138,7 @@ function isCursorPayload(value: unknown): value is CursorPayload {
 
 @Injectable()
 export class ApplicantListingDiscoveryQuery {
-  constructor(
-    private readonly eligibilityService: EligibilityService,
-    private readonly publishedListingsService: PublishedListingsService,
-  ) {}
+  constructor(private readonly eligibilityService: EligibilityService) {}
 
   getPageSize(query: ApplicantListingsQueryDto): number {
     return Math.min(
@@ -152,19 +147,49 @@ export class ApplicantListingDiscoveryQuery {
     );
   }
 
-  getSelect(): Prisma.ListingSelect {
-    return APPLICANT_LISTING_SUMMARY_LISTING_SELECT;
+  getSelect(): Prisma.PublicListingProjectionSelect {
+    return {
+      id: true,
+      title: true,
+      city: true,
+      zip: true,
+      district: true,
+      country: true,
+      objectType: true,
+      livingArea: true,
+      rooms: true,
+      bedrooms: true,
+      coldRent: true,
+      additionalCosts: true,
+      deposit: true,
+      depositMonths: true,
+      availableFrom: true,
+      shortDescription: true,
+      minimumHouseholdNetIncome: true,
+      schufaRequired: true,
+      incomeProofRequired: true,
+      suitableForPeopleCount: true,
+      petsPolicy: true,
+      smokingPolicy: true,
+      publishedAt: true,
+      photos: true,
+      publicStreet: true,
+    };
   }
 
-  getSortOrder(sort: DiscoverySort): Prisma.ListingOrderByWithRelationInput[] {
+  getSortOrder(
+    sort: DiscoverySort,
+  ): Prisma.PublicListingProjectionOrderByWithRelationInput[] {
     const isAsc = sort === 'price-asc';
     const field = DISCOVERY_SORT_FIELDS[sort];
     const order: Prisma.SortOrder = isAsc ? 'asc' : 'desc';
 
-    const primary: Prisma.ListingOrderByWithRelationInput = {};
+    const primary: Prisma.PublicListingProjectionOrderByWithRelationInput = {};
     (primary as Record<string, Prisma.SortOrder>)[field] = order;
 
-    const secondary: Prisma.ListingOrderByWithRelationInput = { id: order };
+    const secondary: Prisma.PublicListingProjectionOrderByWithRelationInput = {
+      id: order,
+    };
 
     return [primary, secondary];
   }
@@ -212,10 +237,8 @@ export class ApplicantListingDiscoveryQuery {
     query: ApplicantListingsQueryDto,
     sort: DiscoverySort,
     profile: ApplicantProfile | null,
-  ): Prisma.ListingWhereInput {
-    const conditions: Prisma.ListingWhereInput[] = [
-      ...this.publishedListingsService.getPublicAccessWhereFragments(),
-    ];
+  ): Prisma.PublicListingProjectionWhereInput {
+    const conditions: Prisma.PublicListingProjectionWhereInput[] = [];
 
     if (query.city) {
       conditions.push({
@@ -224,7 +247,8 @@ export class ApplicantListingDiscoveryQuery {
     }
 
     if (query.minRent !== undefined || query.maxRent !== undefined) {
-      const coldRent: Prisma.FloatNullableFilter<'Listing'> = {};
+      const coldRent: Prisma.FloatNullableFilter<'PublicListingProjection'> =
+        {};
 
       if (query.minRent !== undefined) coldRent.gte = query.minRent;
       if (query.maxRent !== undefined) coldRent.lte = query.maxRent;
@@ -233,7 +257,7 @@ export class ApplicantListingDiscoveryQuery {
     }
 
     if (query.minRooms !== undefined || query.maxRooms !== undefined) {
-      const rooms: Prisma.FloatNullableFilter<'Listing'> = {};
+      const rooms: Prisma.FloatNullableFilter<'PublicListingProjection'> = {};
 
       if (query.minRooms !== undefined) rooms.gte = query.minRooms;
       if (query.maxRooms !== undefined) rooms.lte = query.maxRooms;
@@ -245,7 +269,8 @@ export class ApplicantListingDiscoveryQuery {
       query.minLivingArea !== undefined ||
       query.maxLivingArea !== undefined
     ) {
-      const livingArea: Prisma.FloatNullableFilter<'Listing'> = {};
+      const livingArea: Prisma.FloatNullableFilter<'PublicListingProjection'> =
+        {};
 
       if (query.minLivingArea !== undefined) {
         livingArea.gte = query.minLivingArea;
@@ -342,6 +367,10 @@ export class ApplicantListingDiscoveryQuery {
       }
     }
 
-    return conditions.length === 1 ? conditions[0] : { AND: conditions };
+    return conditions.length === 0
+      ? {}
+      : conditions.length === 1
+        ? conditions[0]
+        : { AND: conditions };
   }
 }

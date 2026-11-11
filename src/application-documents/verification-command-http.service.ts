@@ -1,3 +1,4 @@
+import type { ProviderActor } from '../provider-authorization/provider-listing-access';
 import {
   BadRequestException,
   Injectable,
@@ -19,7 +20,7 @@ export class VerificationCommandHttpService {
 
   async execute(
     applicationId: string,
-    actorUserId: string,
+    actor: ProviderActor,
     dto: VerificationCommandDto,
     key: string | undefined,
   ) {
@@ -31,15 +32,10 @@ export class VerificationCommandHttpService {
     try {
       // Return the transaction's receipt result directly, including on replay.
       if (command.operation === 'DECIDE')
-        return await this.decisions.execute(
-          applicationId,
-          actorUserId,
-          command,
-          key,
-        );
+        return await this.decisions.execute(applicationId, actor, command, key);
       return await this.requirements.execute(
         applicationId,
-        actorUserId,
+        actor,
         command,
         key,
       );

@@ -6,6 +6,8 @@ import { ApplicantListingSummaryService } from '../applicant-listing-summaries/a
 import { ListingStatus, ObjectType } from '../generated/prisma/enums';
 import { ApplicantListingSummaryDto } from '../listings/dto/applicant-listing-summary.dto';
 import { ProfileMatch } from '../listings/dto/applicant-listing-profile-match.enum';
+import { unitSession } from '../../test/unit-workspace-authority';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
 import { PublishedListingsService } from '../published-listings/published-listings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role, UserStatus } from '../generated/prisma/enums';
@@ -81,7 +83,7 @@ type PrismaMock = {
     count: jest.MockedFunction<(args?: unknown) => Promise<number>>;
   };
   $transaction: jest.MockedFunction<
-    (args: unknown) => Promise<[number, unknown[]]>
+    <R>(args: (tx: unknown) => Promise<R>) => Promise<R>
   >;
 };
 
@@ -89,10 +91,7 @@ describe('SavedListingsService', () => {
   let service: SavedListingsService;
   let prismaMock: PrismaMock;
   let publishedListingsService: jest.Mocked<
-    Pick<
-      PublishedListingsService,
-      'findPublishedListingOrThrow' | 'getPublicAccessWhere'
-    >
+    Pick<PublishedListingsService, 'findPublishedListingOrThrow'>
   >;
   let applicantListingSummaryService: jest.Mocked<
     Pick<ApplicantListingSummaryService, 'buildSummaries'>
@@ -109,19 +108,13 @@ describe('SavedListingsService', () => {
           .fn<(args?: unknown) => Promise<number>>()
           .mockResolvedValue(0),
       },
-      $transaction: jest.fn<(args: unknown) => Promise<[number, unknown[]]>>(),
+      $transaction: jest.fn(async <R>(work: (tx: unknown) => Promise<R>) =>
+        work({}),
+      ) as PrismaMock['$transaction'],
     };
 
     publishedListingsService = {
       findPublishedListingOrThrow: jest.fn(),
-      getPublicAccessWhere: jest
-        .fn<
-          () => import('../generated/prisma/client').Prisma.ListingWhereInput
-        >()
-        .mockReturnValue({
-          status: ListingStatus.PUBLISHED,
-          publishedAt: { not: null },
-        }),
     };
 
     applicantListingSummaryService = {
@@ -139,6 +132,10 @@ describe('SavedListingsService', () => {
         {
           provide: ApplicantListingSummaryService,
           useValue: applicantListingSummaryService,
+        },
+        {
+          provide: ApplicantListingAccess,
+          useValue: { assertPrincipal: () => Promise.resolve() },
         },
       ],
     }).compile();
@@ -201,97 +198,204 @@ describe('SavedListingsService', () => {
       );
     });
 
-    it('filters by applicant and published listings only', async () => {
-      prismaMock.$transaction.mockResolvedValue([0, []]);
-
-      await service.findSavedListingsPage(applicantUser, {});
-
-      expect(prismaMock.savedListing.count).toHaveBeenCalledWith({
-        where: {
-          AND: [
-            { applicantId: APPLICANT_ID },
-            {
-              listing: {
-                status: ListingStatus.PUBLISHED,
-                publishedAt: { not: null },
-              },
+    it('filters by applicant and the public listing projection only', async () => {
+      const queries: unknown[][] = [];
+      prismaMock.$transaction.mockImplementation(async (work) => {
+        const tx = {
+          $queryRaw: jest.fn<(...args: unknown[]) => Promise<unknown[]>>(
+            (...args: unknown[]) => {
+              queries.push(args);
+              return Promise.resolve(
+                queries.length === 1 ? [{ count: 0n }] : [],
+              );
             },
-          ],
-        },
+          ),
+          publicListingProjection: {
+            findMany: jest.fn(() => Promise.resolve([])),
+          },
+        };
+        return work(tx);
       });
+
+      await service.findSavedListingsPage(
+        applicantUser,
+        {},
+        undefined,
+        unitSession(APPLICANT_ID),
+      );
+
+      expect(queries[0]?.join(' ')).toContain('public_listing_projections');
+      expect(queries[0]).toContain(APPLICANT_ID);
+      expect(prismaMock.savedListing.count).not.toHaveBeenCalled();
     });
 
     it('orders by newest saved first and paginates', async () => {
-      prismaMock.$transaction.mockResolvedValue([
-        3,
-        [
-          {
-            id: SAVED_ROW_ID,
-            listingId: LISTING_ID,
-            createdAt: SAVED_AT,
-            listing: makeListing(LISTING_ID),
+      const rows = [
+        { id: SAVED_ROW_ID, listing_id: LISTING_ID, created_at: SAVED_AT },
+        {
+          id: '00000000-0000-4000-8000-000000000011',
+          listing_id: OTHER_LISTING_ID,
+          created_at: new Date('2025-12-31T00:00:00.000Z'),
+        },
+      ];
+      prismaMock.$transaction.mockImplementation(async (work) => {
+        const tx = {
+          $queryRaw: jest
+            .fn<() => Promise<unknown[]>>()
+            .mockResolvedValueOnce([{ count: 3n }])
+            .mockResolvedValueOnce(rows),
+          publicListingProjection: {
+            findMany: jest.fn(() =>
+              Promise.resolve(
+                rows.map((row) => ({
+                  id: row.listing_id,
+                  title: 'Saved',
+                  city: 'Berlin',
+                  zip: '10115',
+                  district: null,
+                  country: 'DE',
+                  objectType: null,
+                  livingArea: null,
+                  rooms: null,
+                  bedrooms: null,
+                  coldRent: null,
+                  additionalCosts: null,
+                  deposit: null,
+                  depositMonths: 2,
+                  availableFrom: null,
+                  shortDescription: null,
+                  publicStreet: null,
+                  photos: [],
+                  publishedAt: SAVED_AT,
+                  minimumHouseholdNetIncome: null,
+                  schufaRequired: false,
+                  incomeProofRequired: false,
+                  suitableForPeopleCount: null,
+                  petsPolicy: null,
+                  smokingPolicy: null,
+                })),
+              ),
+            ),
           },
-          {
-            id: '00000000-0000-4000-8000-000000000011',
-            listingId: OTHER_LISTING_ID,
-            createdAt: new Date('2025-12-31T00:00:00.000Z'),
-            listing: makeListing(OTHER_LISTING_ID),
-          },
-        ],
-      ]);
-
-      const result = await service.findSavedListingsPage(applicantUser, {
-        limit: 1,
+        };
+        return work(tx);
       });
 
-      expect(prismaMock.savedListing.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          take: 2,
-        }),
+      const result = await service.findSavedListingsPage(
+        applicantUser,
+        { limit: 1 },
+        undefined,
+        unitSession(APPLICANT_ID),
       );
+
       expect(result.items).toHaveLength(1);
       expect(result.nextCursor).not.toBeNull();
       expect(result.total).toBe(3);
     });
 
     it('marks every returned item as saved through buildSummaries', async () => {
-      prismaMock.$transaction.mockResolvedValue([
-        1,
-        [
-          {
-            id: SAVED_ROW_ID,
-            listingId: LISTING_ID,
-            createdAt: SAVED_AT,
-            listing: makeListing(LISTING_ID),
+      prismaMock.$transaction.mockImplementation(async (work) => {
+        const tx = {
+          $queryRaw: jest
+            .fn<() => Promise<unknown[]>>()
+            .mockResolvedValueOnce([{ count: 1n }])
+            .mockResolvedValueOnce([
+              {
+                id: SAVED_ROW_ID,
+                listing_id: LISTING_ID,
+                created_at: SAVED_AT,
+              },
+            ]),
+          publicListingProjection: {
+            findMany: jest.fn(() =>
+              Promise.resolve([
+                {
+                  id: LISTING_ID,
+                  title: 'Saved',
+                  city: 'Berlin',
+                  zip: '10115',
+                  district: null,
+                  country: 'DE',
+                  objectType: null,
+                  livingArea: null,
+                  rooms: null,
+                  bedrooms: null,
+                  coldRent: null,
+                  additionalCosts: null,
+                  deposit: null,
+                  depositMonths: 2,
+                  availableFrom: null,
+                  shortDescription: null,
+                  publicStreet: null,
+                  photos: [],
+                  publishedAt: SAVED_AT,
+                  minimumHouseholdNetIncome: null,
+                  schufaRequired: false,
+                  incomeProofRequired: false,
+                  suitableForPeopleCount: null,
+                  petsPolicy: null,
+                  smokingPolicy: null,
+                },
+              ]),
+            ),
           },
-        ],
-      ]);
+        };
+        return work(tx);
+      });
 
-      const result = await service.findSavedListingsPage(applicantUser, {});
+      const result = await service.findSavedListingsPage(
+        applicantUser,
+        {},
+        undefined,
+        unitSession(APPLICANT_ID),
+      );
 
       expect(
         applicantListingSummaryService.buildSummaries,
-      ).toHaveBeenCalledWith(applicantUser, [makeListing(LISTING_ID)], {
-        isSavedByListingId: new Set([LISTING_ID]),
-      });
+      ).toHaveBeenCalledWith(
+        applicantUser,
+        [expect.objectContaining({ id: LISTING_ID })],
+        {
+          isSavedByListingId: new Set([LISTING_ID]),
+          authority: unitSession(APPLICANT_ID),
+        },
+      );
       expect(result.items[0].isSaved).toBe(true);
       expect(result.nextCursor).toBeNull();
     });
 
     it('rejects invalid cursors', async () => {
       await expect(
-        service.findSavedListingsPage(applicantUser, {
-          cursor: 'not-valid-base64',
-        }),
+        service.findSavedListingsPage(
+          applicantUser,
+          { cursor: 'not-valid-base64' },
+          undefined,
+          unitSession(APPLICANT_ID),
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('sets private cache headers when a response object is provided', async () => {
-      prismaMock.$transaction.mockResolvedValue([0, []]);
+      prismaMock.$transaction.mockImplementation(async (work) => {
+        const tx = {
+          $queryRaw: jest
+            .fn<() => Promise<unknown[]>>()
+            .mockResolvedValueOnce([{ count: 0n }])
+            .mockResolvedValueOnce([]),
+          publicListingProjection: {
+            findMany: jest.fn(() => Promise.resolve([])),
+          },
+        };
+        return work(tx);
+      });
       const res = { setHeader: jest.fn() };
 
-      await service.findSavedListingsPage(applicantUser, {}, res);
+      await service.findSavedListingsPage(
+        applicantUser,
+        {},
+        res,
+        unitSession(APPLICANT_ID),
+      );
 
       expect(res.setHeader).toHaveBeenCalledWith('Vary', 'Cookie');
       expect(res.setHeader).toHaveBeenCalledWith(

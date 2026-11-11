@@ -3,7 +3,8 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import type { ApplicantProfile } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
+import { ProfileRevalidationTransactions } from './profile-revalidation-transactions';
 import type { UpdateApplicantProfileDto } from './dto/update-applicant-profile.dto';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class ApplicantProfileService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly applicationLifecycleService: ApplicationLifecycleService,
+    private readonly revalidation: ProfileRevalidationTransactions,
   ) {}
 
   async findByApplicant(applicantId: string): Promise<ApplicantProfile | null> {
@@ -18,48 +20,36 @@ export class ApplicantProfileService {
   }
 
   async upsert(
-    applicantId: string,
+    authority: HumanAuthority,
     dto: UpdateApplicantProfileDto,
   ): Promise<ApplicantProfile> {
     this.assertHasMeaningfulData(dto);
+    const applicantId = authority.userId;
+    return this.revalidation.run(authority, async (tx, listings) => {
+      const existing = await tx.applicantProfile.findUnique({
+        where: { applicantId },
+      });
 
-    return runSerializableTransaction(
-      this.prisma,
-      async (tx) => {
-        // Match admission/promotion: acquire all relevant listings before writing the profile.
-        const applications = await tx.application.findMany({
-          where: { applicantId, status: { in: ['ACTIVE', 'WAITING'] } },
-          select: { listingId: true },
-          distinct: ['listingId'],
-          orderBy: { listingId: 'asc' },
-        });
-        for (const application of applications)
-          await tx.$queryRaw`SELECT id FROM listings WHERE id=${application.listingId}::uuid FOR UPDATE`;
-        const existing = await tx.applicantProfile.findUnique({
-          where: { applicantId },
-        });
+      const merged = this.mergeProfile(existing, dto);
+      this.assertRequiredIntroduction(existing, merged.introduction);
+      this.assertHouseholdConsistency(merged);
+      const peopleCount = this.calculatePeopleCount(merged);
 
-        const merged = this.mergeProfile(existing, dto);
-        this.assertRequiredIntroduction(existing, merged.introduction);
-        this.assertHouseholdConsistency(merged);
-        const peopleCount = this.calculatePeopleCount(merged);
+      const profile = await tx.applicantProfile.upsert({
+        where: { applicantId },
+        create: { applicantId, ...merged, peopleCount },
+        update: { ...merged, peopleCount },
+      });
 
-        const profile = await tx.applicantProfile.upsert({
-          where: { applicantId },
-          create: { applicantId, ...merged, peopleCount },
-          update: { ...merged, peopleCount },
-        });
+      await this.applicationLifecycleService.revalidateActiveAndWaitingApplications(
+        tx,
+        applicantId,
+        profile,
+        listings,
+      );
 
-        await this.applicationLifecycleService.revalidateActiveAndWaitingApplications(
-          tx,
-          applicantId,
-          profile,
-        );
-
-        return profile;
-      },
-      { fallbackMessage: 'Profile update could not be completed' },
-    );
+      return profile;
+    });
   }
 
   private assertHasMeaningfulData(dto: UpdateApplicantProfileDto): void {

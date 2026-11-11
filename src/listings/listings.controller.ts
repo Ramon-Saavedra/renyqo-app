@@ -1,5 +1,8 @@
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import {
   Body,
+  Req,
   Controller,
   Get,
   Param,
@@ -13,14 +16,11 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import {
   LISTING_IMAGE_FILE_FIELD,
   LISTING_IMAGE_MULTER_OPTIONS,
   OPTIONAL_LISTING_IMAGE_FILE_PIPE,
 } from '../listing-images/listing-image-upload.constants';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
 import { ProviderListingOverviewResponseDto } from './dto/provider-listing-overview-response.dto';
@@ -29,7 +29,7 @@ import { UpdateListingPositionDto } from './dto/update-listing-position.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsService } from './listings.service';
 
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 @Controller('provider/listings')
 export class ListingsController {
   constructor(private readonly listingsService: ListingsService) {}
@@ -42,9 +42,13 @@ export class ListingsController {
     @Body() dto: CreateListingDto,
     @UploadedFile(OPTIONAL_LISTING_IMAGE_FILE_PIPE)
     file: Express.Multer.File | undefined,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.create(user.id, dto, file);
+    const listing = await this.listingsService.create(
+      providerActorFromRequest(request),
+      dto,
+      file,
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
@@ -52,9 +56,11 @@ export class ListingsController {
 
   @Get()
   async findAll(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ProviderListingOverviewResponseDto[]> {
-    const listings = await this.listingsService.findAllByProvider(user.id);
+    const listings = await this.listingsService.findAllByProvider(
+      providerActorFromRequest(request),
+    );
     return this.listingsService.toProviderListingOverviewResponses(listings, {
       exposeExactAddress: true,
     });
@@ -63,11 +69,11 @@ export class ListingsController {
   @Get(':id')
   async findOne(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
     const listing = await this.listingsService.findOneDetailByProvider(
       id,
-      user.id,
+      providerActorFromRequest(request),
     );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
@@ -78,9 +84,13 @@ export class ListingsController {
   async update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateListingDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.update(id, user.id, dto);
+    const listing = await this.listingsService.update(
+      id,
+      providerActorFromRequest(request),
+      dto,
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
@@ -89,9 +99,12 @@ export class ListingsController {
   @Patch(':id/publish')
   async publish(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.publish(id, user.id);
+    const listing = await this.listingsService.publish(
+      id,
+      providerActorFromRequest(request),
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
@@ -100,20 +113,26 @@ export class ListingsController {
   @Patch(':id/draft')
   async moveToDraft(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.moveToDraft(id, user.id);
+    const listing = await this.listingsService.moveToDraft(
+      id,
+      providerActorFromRequest(request),
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
   }
 
-  @Patch(':id/archive')
-  async archive(
+  @Patch(':id/retire')
+  async retire(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.archive(id, user.id);
+    const listing = await this.listingsService.retire(
+      id,
+      providerActorFromRequest(request),
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
@@ -122,9 +141,12 @@ export class ListingsController {
   @Patch(':id/pause')
   async pause(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.pause(id, user.id);
+    const listing = await this.listingsService.pause(
+      id,
+      providerActorFromRequest(request),
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
@@ -133,9 +155,12 @@ export class ListingsController {
   @Patch(':id/resume')
   async resume(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.resume(id, user.id);
+    const listing = await this.listingsService.resume(
+      id,
+      providerActorFromRequest(request),
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
@@ -145,9 +170,13 @@ export class ListingsController {
   async rent(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: RentListingDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.rentListing(id, user.id, dto);
+    const listing = await this.listingsService.rentListing(
+      id,
+      providerActorFromRequest(request),
+      dto,
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });
@@ -157,9 +186,13 @@ export class ListingsController {
   async updatePosition(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateListingPositionDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingResponseDto> {
-    const listing = await this.listingsService.updatePosition(id, user.id, dto);
+    const listing = await this.listingsService.updatePosition(
+      id,
+      providerActorFromRequest(request),
+      dto,
+    );
     return this.listingsService.toListingResponse(listing, {
       exposeExactAddress: true,
     });

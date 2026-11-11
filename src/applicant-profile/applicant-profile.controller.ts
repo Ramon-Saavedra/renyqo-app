@@ -6,6 +6,7 @@ import {
   HttpStatus,
   NotFoundException,
   Patch,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 
@@ -16,6 +17,8 @@ import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantProfileService } from './applicant-profile.service';
 import { ApplicantProfileResponseDto } from './dto/applicant-profile-response.dto';
 import { UpdateApplicantProfileDto } from './dto/update-applicant-profile.dto';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 
 @UseGuards(AuthenticatedGuard, ApplicantOnlyGuard)
 @Controller('applicant/profile')
@@ -40,10 +43,13 @@ export class ApplicantProfileController {
   @Patch()
   @HttpCode(HttpStatus.OK)
   async updateProfile(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Body() dto: UpdateApplicantProfileDto,
   ): Promise<ApplicantProfileResponseDto> {
-    const profile = await this.applicantProfileService.upsert(user.id, dto);
+    const profile = await this.applicantProfileService.upsert(
+      sessionAuthorityFromRequest(request),
+      dto,
+    );
 
     return new ApplicantProfileResponseDto(profile);
   }

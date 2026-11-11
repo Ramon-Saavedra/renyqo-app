@@ -1,3 +1,4 @@
+import { unitRequest, unitSession } from '../../test/unit-workspace-authority';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -56,7 +57,7 @@ describe('ApplicantListingsController', () => {
       const page = new ApplicantListingsPageDto([], null, 0);
       listingsService.findPublishedForApplicant.mockResolvedValue(page);
 
-      const result = await controller.findAll({}, null, {
+      const result = await controller.findAll(unitRequest(null), {}, null, {
         setHeader: jest.fn(),
       } as never);
 
@@ -64,6 +65,7 @@ describe('ApplicantListingsController', () => {
         {},
         null,
         expect.any(Object),
+        undefined,
       );
       expect(result).toBe(page);
     });
@@ -72,9 +74,14 @@ describe('ApplicantListingsController', () => {
       const page = new ApplicantListingsPageDto([], null, 0);
       listingsService.findPublishedForApplicant.mockResolvedValue(page);
 
-      await controller.findAll({ city: 'Berlin', minRent: 500 }, null, {
-        setHeader: jest.fn(),
-      } as never);
+      await controller.findAll(
+        unitRequest(null),
+        { city: 'Berlin', minRent: 500 },
+        null,
+        {
+          setHeader: jest.fn(),
+        } as never,
+      );
 
       expect(listingsService.findPublishedForApplicant).toHaveBeenCalledWith(
         {
@@ -83,12 +90,13 @@ describe('ApplicantListingsController', () => {
         },
         null,
         expect.any(Object),
+        undefined,
       );
     });
 
     it('throws BadRequestException when onlyMatching is true with null user', async () => {
       await expect(
-        controller.findAll({ onlyMatching: true }, null, {
+        controller.findAll(unitRequest(null), { onlyMatching: true }, null, {
           setHeader: jest.fn(),
         } as never),
       ).rejects.toThrow(BadRequestException);
@@ -111,9 +119,14 @@ describe('ApplicantListingsController', () => {
       };
 
       await expect(
-        controller.findAll({ onlyMatching: true }, providerUser, {
-          setHeader: jest.fn(),
-        } as never),
+        controller.findAll(
+          unitRequest(providerUser),
+          { onlyMatching: true },
+          providerUser,
+          {
+            setHeader: jest.fn(),
+          } as never,
+        ),
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -135,9 +148,14 @@ describe('ApplicantListingsController', () => {
       listingsService.isProfileCompleteForUser.mockResolvedValue(false);
 
       await expect(
-        controller.findAll({ onlyMatching: true }, applicantUser, {
-          setHeader: jest.fn(),
-        } as never),
+        controller.findAll(
+          unitRequest(applicantUser),
+          { onlyMatching: true },
+          applicantUser,
+          {
+            setHeader: jest.fn(),
+          } as never,
+        ),
       ).resolves.toBeUndefined();
     });
 
@@ -161,6 +179,7 @@ describe('ApplicantListingsController', () => {
       listingsService.findPublishedForApplicant.mockResolvedValue(page);
 
       const result = await controller.findAll(
+        unitRequest(applicantUser),
         { onlyMatching: true },
         applicantUser,
         { setHeader: jest.fn() } as never,
@@ -170,6 +189,7 @@ describe('ApplicantListingsController', () => {
         { onlyMatching: true },
         applicantUser,
         expect.any(Object),
+        unitSession(applicantUser.id),
       );
       expect(result).toBe(page);
     });
@@ -190,7 +210,7 @@ describe('ApplicantListingsController', () => {
         },
       );
 
-      await controller.findAll({}, null, res as never);
+      await controller.findAll(unitRequest(null), {}, null, res as never);
 
       expect(res.setHeader).toHaveBeenCalledWith('Vary', 'Cookie');
       expect(res.setHeader).toHaveBeenCalledWith(
@@ -241,13 +261,18 @@ describe('ApplicantListingsController', () => {
       );
       listingsService.findPublishedDetailForApplicant.mockResolvedValue(detail);
 
-      const result = await controller.findOne(LISTING_ID, null, {
-        setHeader: jest.fn(),
-      } as never);
+      const result = await controller.findOne(
+        unitRequest(null),
+        LISTING_ID,
+        null,
+        {
+          setHeader: jest.fn(),
+        } as never,
+      );
 
       expect(
         listingsService.findPublishedDetailForApplicant,
-      ).toHaveBeenCalledWith(LISTING_ID, null, expect.any(Object));
+      ).toHaveBeenCalledWith(LISTING_ID, null, expect.any(Object), undefined);
       expect(result).toBe(detail);
     });
   });

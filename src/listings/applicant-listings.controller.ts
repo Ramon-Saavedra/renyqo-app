@@ -7,8 +7,10 @@ import {
   ParseUUIDPipe,
   Query,
   Res,
+  Req,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Response, Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import { Role } from '../generated/prisma/enums';
 import { CurrentUserOptional } from '../common/decorators/current-user.decorator';
 import type { SafeUser } from '../users/types/safe-user.type';
@@ -25,6 +27,7 @@ export class ApplicantListingsController {
 
   @Get()
   async findAll(
+    @Req() request: Request,
     @Query() query: ApplicantListingsQueryDto,
     @CurrentUserOptional() user: SafeUser | null,
     @Res({ passthrough: true }) res: Response,
@@ -45,11 +48,13 @@ export class ApplicantListingsController {
       query,
       user,
       res,
+      user ? sessionAuthorityFromRequest(request) : undefined,
     );
   }
 
   @Get(':id')
   async findOne(
+    @Req() request: Request,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUserOptional() user: SafeUser | null,
     @Res({ passthrough: true }) res: Response,
@@ -58,6 +63,7 @@ export class ApplicantListingsController {
       id,
       user,
       res,
+      user ? sessionAuthorityFromRequest(request) : undefined,
     );
   }
 }

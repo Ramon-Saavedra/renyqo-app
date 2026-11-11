@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import type { Prisma, Listing } from '../generated/prisma/client';
+import type { ListingEligibilityState } from '../eligibility/profile-eligibility-evaluator';
+import type { Prisma } from '../generated/prisma/client';
 import {
   ApplicationActivityActorType,
   ApplicationActivityType,
@@ -28,7 +29,7 @@ export class ApplicationWaitingPromotionService {
 
   async promoteWithinTransaction(
     tx: Prisma.TransactionClient,
-    listing: Listing,
+    listing: ListingEligibilityState,
   ): Promise<number> {
     return (await this.reconcileWithinTransaction(tx, listing)).promotedCount;
   }
@@ -38,7 +39,7 @@ export class ApplicationWaitingPromotionService {
    */
   async reconcileWithinTransaction(
     tx: Prisma.TransactionClient,
-    listing: Listing,
+    listing: ListingEligibilityState,
   ): Promise<{ promotedCount: number; remainingCapacity: number }> {
     if (listing.status !== ListingStatus.PUBLISHED) {
       return { promotedCount: 0, remainingCapacity: 0 };

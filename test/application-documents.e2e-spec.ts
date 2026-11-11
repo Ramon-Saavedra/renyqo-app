@@ -8,9 +8,12 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
+import { expectSessionAuthSetCookie } from './e2e-session-cookie-expectations';
+import {
+  blockedApplicantRouteStatus,
+  wrongAudienceStatus,
+} from './e2e-wrong-audience';
 import request, { type Response } from 'supertest';
 import { jest } from '@jest/globals';
 import { AppModule } from '../src/app.module';
@@ -34,10 +37,19 @@ import {
   ListingStatus,
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  createPublishedListingForProvider,
+  republishListingAfterRentForProvider,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import {
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function body(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -60,7 +72,6 @@ function getString(record: Record<string, unknown>, key: string): string {
 describe('Application documents E2E', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -68,6 +79,7 @@ describe('Application documents E2E', () => {
   let applicant: { agent: Agent; id: string };
   let applicationId: string;
   let listingId: string;
+  let providerActor: ProviderActor;
 
   function path(
     side: 'provider' | 'applicant',
@@ -90,15 +102,12 @@ describe('Application documents E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
-    const cookies: unknown = response.headers['set-cookie'];
-    expect(cookies).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/; Secure(?:;|$)/),
-        expect.stringMatching(/; HttpOnly(?:;|$)/),
-        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
-      ]),
-    );
-    return { agent, id: getString(body(response), 'id') };
+    expectSessionAuthSetCookie(response.headers['set-cookie']);
+    const id = getString(body(response), 'id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
+    return { agent, id };
   }
 
   beforeAll(async () => {
@@ -167,24 +176,7 @@ describe('Application documents E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     await app.init();
     const target: unknown = app.getHttpServer();
@@ -195,15 +187,15 @@ describe('Application documents E2E', () => {
   beforeEach(async () => {
     provider = await register('provider');
     applicant = await register('applicant');
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    providerActor = await providerActorFor(prisma, provider.id);
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         title: 'Conversation listing',
-        publishedAt: new Date(),
       },
-    });
+    );
     listingId = listing.id;
     const application = await prisma.application.create({
       data: {
@@ -236,12 +228,7 @@ describe('Application documents E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
 
@@ -383,14 +370,14 @@ describe('Application documents E2E', () => {
     await applicant.agent
       .post(path('provider'))
       .send({ requests: [{ type: 'SCHUFA' }] })
-      .expect(403);
+      .expect(wrongAudienceStatus);
     await provider.agent
       .post(path('applicant', `/document-requests/${requestId}/document`))
       .attach('file', pdf, {
         filename: 'document.pdf',
         contentType: 'application/pdf',
       })
-      .expect(403);
+      .expect(blockedApplicantRouteStatus);
     const otherProvider = await register('provider');
     const otherApplicant = await register('applicant');
     await otherProvider.agent.get(path('provider')).expect(404);
@@ -436,13 +423,11 @@ describe('Application documents E2E', () => {
 
   it('rejects real cross-application IDs even when both applications have the same owners', async () => {
     const primaryRequest = await createRequest();
-    const secondListing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 2,
-        status: ListingStatus.PUBLISHED,
-      },
-    });
+    const secondListing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      { displayOrder: 2 },
+    );
     const secondApplication = await prisma.application.create({
       data: {
         listingId: secondListing.id,
@@ -453,7 +438,7 @@ describe('Application documents E2E', () => {
     });
     const [secondRequest] = await app
       .get(ApplicationDocumentRequestService)
-      .create(secondApplication.id, provider.id, [
+      .create(secondApplication.id, providerActor, [
         { type: ApplicationDocumentType.SCHUFA },
       ]);
     const storage = app.get(ApplicationDocumentStorageService);
@@ -691,8 +676,8 @@ describe('Application documents E2E', () => {
     const requests = app.get(ApplicationDocumentRequestService);
     const input = [{ type: ApplicationDocumentType.SCHUFA }];
     const results = await Promise.allSettled([
-      requests.create(applicationId, provider.id, input),
-      requests.create(applicationId, provider.id, input),
+      requests.create(applicationId, providerActor, input),
+      requests.create(applicationId, providerActor, input),
     ]);
     expect(results.map((result) => result.status).sort()).toEqual([
       'fulfilled',
@@ -702,8 +687,8 @@ describe('Application documents E2E', () => {
     const file = await upload(first.id);
     await finalize(file);
     const replacements = await Promise.allSettled([
-      requests.replace(applicationId, first.id, provider.id),
-      requests.replace(applicationId, first.id, provider.id),
+      requests.replace(applicationId, first.id, providerActor),
+      requests.replace(applicationId, first.id, providerActor),
     ]);
     expect(replacements.map((result) => result.status).sort()).toEqual([
       'fulfilled',
@@ -734,7 +719,7 @@ describe('Application documents E2E', () => {
     await finalize(first);
     await app
       .get(ApplicationDocumentService)
-      .review(applicationId, first.id, provider.id);
+      .review(applicationId, first.id, providerActor);
     const result = await provider.agent
       .post(path('provider', `/document-requests/${requestId}/replacements`))
       .send({})
@@ -772,7 +757,7 @@ describe('Application documents E2E', () => {
     await finalize(first);
     const replacement = await app
       .get(ApplicationDocumentRequestService)
-      .replace(applicationId, requestId, provider.id);
+      .replace(applicationId, requestId, providerActor);
     const second = await upload(replacement.id);
     await app
       .get(ApplicationDocumentFinalizationService)
@@ -1020,9 +1005,8 @@ describe('Application documents E2E', () => {
   it('blocks RENTED mutations and pending finalization, then resumes outstanding requests on ACTIVE restoration', async () => {
     const requestId = await createRequest();
     const file = await upload(requestId);
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { status: ListingStatus.RENTED },
+    await updateListingForProvider(prisma, listingId, {
+      status: ListingStatus.RENTED,
     });
     await finalize(file);
     expect(
@@ -1036,10 +1020,6 @@ describe('Application documents E2E', () => {
       .post(path('provider'))
       .send({ requests: [{ type: 'INCOME_PROOF' }] })
       .expect(409);
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { status: ListingStatus.PUBLISHED },
-    });
     await prisma.application.update({
       where: { id: applicationId },
       data: { status: ApplicationStatus.REJECTED },
@@ -1051,14 +1031,31 @@ describe('Application documents E2E', () => {
         contentType: 'application/pdf',
       })
       .expect(409);
-    await prisma.application.update({
-      where: { id: applicationId },
-      data: { status: ApplicationStatus.ACTIVE },
-    });
-    const second = await upload(requestId);
+    const reopened = await republishListingAfterRentForProvider(
+      prisma,
+      provider.id,
+      listingId,
+    );
+    listingId = reopened.id;
+    applicationId = (
+      await prisma.application.create({
+        data: {
+          listingId,
+          applicantId: applicant.id,
+          status: ApplicationStatus.ACTIVE,
+          activeAt: new Date(),
+        },
+      })
+    ).id;
+    const resumedRequestId = await createRequest();
+    const second = await upload(resumedRequestId);
     expect(second.id).not.toBe(file.id);
     await finalize(second);
-    expect(await prisma.applicationDocumentRequest.count()).toBe(1);
+    expect(
+      await prisma.applicationDocumentRequest.count({
+        where: { applicationId },
+      }),
+    ).toBe(1);
     expect(await prisma.applicationDocumentFile.count()).toBe(2);
   });
 
@@ -1216,7 +1213,7 @@ describe('Application documents E2E', () => {
       await finalize(reviewedFile);
       await app
         .get(ApplicationDocumentService)
-        .review(applicationId, reviewedFile.id, provider.id);
+        .review(applicationId, reviewedFile.id, providerActor);
       await expectDocumentEvidencePreserved(prisma, reviewedFile.id, () =>
         provider.agent.patch(cancelPath(reviewedId)).expect(200),
       );
@@ -1233,10 +1230,10 @@ describe('Application documents E2E', () => {
       const results = await Promise.allSettled([
         app
           .get(ApplicationDocumentRequestService)
-          .cancel(applicationId, requestId, provider.id),
+          .cancel(applicationId, requestId, providerActor),
         app
           .get(ApplicationDocumentRequestService)
-          .replace(applicationId, requestId, provider.id),
+          .replace(applicationId, requestId, providerActor),
       ]);
       expect(results.map((result) => result.status).sort()).toEqual([
         'fulfilled',

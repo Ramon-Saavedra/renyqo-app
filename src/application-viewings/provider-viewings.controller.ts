@@ -1,3 +1,6 @@
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import {
   Body,
   Controller,
@@ -9,10 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import { ViewingOutcome } from '../generated/prisma/enums';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationViewingService } from './application-viewing.service';
 import { ApplicationViewingOutcomeService } from './application-viewing-outcome.service';
 import { ApplicationViewingQueryService } from './application-viewing-query.service';
@@ -25,7 +25,7 @@ import {
   ViewingQueryDto,
 } from './dto/viewing-input.dto';
 
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 @Controller('provider/applications/:applicationId/viewings')
 export class ProviderViewingsController {
   constructor(
@@ -36,36 +36,45 @@ export class ProviderViewingsController {
   @Get() list(
     @Param() params: ViewingApplicationParamsDto,
     @Query() query: ViewingQueryDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.queries.list(params.applicationId, user.id, 'provider', query);
+    return this.queries.list(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      query,
+    );
   }
   @Get(':viewingId') detail(
     @Param() params: ViewingParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.queries.detail(
       params.applicationId,
       params.viewingId,
-      user.id,
+      providerActorFromRequest(request),
       'provider',
     );
   }
   @Post() propose(
     @Param() params: ViewingApplicationParamsDto,
     @Body() dto: ProposeViewingDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.viewings.propose(params.applicationId, user.id, dto);
+    return this.viewings.propose(
+      params.applicationId,
+      providerActorFromRequest(request),
+      dto,
+    );
   }
   @Post(':viewingId/reschedule') reschedule(
     @Param() params: ViewingParamsDto,
     @Body() dto: ProposeViewingDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.viewings.propose(
       params.applicationId,
-      user.id,
+      providerActorFromRequest(request),
       dto,
       params.viewingId,
     );
@@ -73,48 +82,48 @@ export class ProviderViewingsController {
   @Patch(':viewingId/cancel') cancel(
     @Param() params: ViewingParamsDto,
     @Body() _dto: ViewingActionDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.viewings.respond(
       params.applicationId,
       params.viewingId,
-      user.id,
+      providerActorFromRequest(request),
       'cancel',
     );
   }
   @Patch(':viewingId/complete') complete(
     @Param() params: ViewingParamsDto,
     @Body() _dto: ViewingActionDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.outcomes.record(
       params.applicationId,
       params.viewingId,
-      user.id,
+      providerActorFromRequest(request),
       ViewingOutcome.COMPLETED,
     );
   }
   @Patch(':viewingId/no-show') noShow(
     @Param() params: ViewingParamsDto,
     @Body() _dto: ViewingActionDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.outcomes.record(
       params.applicationId,
       params.viewingId,
-      user.id,
+      providerActorFromRequest(request),
       ViewingOutcome.NO_SHOW,
     );
   }
   @Patch(':viewingId/correct-outcome') correct(
     @Param() params: ViewingParamsDto,
     @Body() dto: CorrectViewingOutcomeDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.outcomes.record(
       params.applicationId,
       params.viewingId,
-      user.id,
+      providerActorFromRequest(request),
       dto.outcome,
       dto,
     );

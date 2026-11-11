@@ -5,7 +5,12 @@ import { ListingResponseMapper } from './listing-response.mapper';
 
 const listing = {
   id: 'listing-id',
-  providerId: 'provider-id',
+  workspaceId: '00000000-0000-4000-8000-000000000010',
+  createdByMembershipId: '00000000-0000-4000-8000-000000000011',
+  responsibleMembershipId: '00000000-0000-4000-8000-000000000011',
+  revision: 1,
+  assignmentSequence: 1,
+  retiredAt: null,
   status: 'DRAFT',
   city: 'Berlin',
   zip: '10115',

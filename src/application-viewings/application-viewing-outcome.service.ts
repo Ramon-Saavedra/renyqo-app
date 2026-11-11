@@ -15,7 +15,11 @@ import {
   ViewingInterest,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import {
+  ApplicationListingAccess,
+  actorUserId,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
 import { ApplicationViewingAccessService } from './application-viewing-access.service';
 import { ApplicationViewingQueryService } from './application-viewing-query.service';
 import {
@@ -36,161 +40,176 @@ export class ApplicationViewingOutcomeService {
     private readonly clock: ViewingClock,
     private readonly activity: ApplicationActivityService,
     private readonly lifecycle: ApplicationLifecycleService,
+    private readonly listings: ApplicationListingAccess,
   ) {}
 
   record(
     applicationId: string,
     viewingId: string,
-    userId: string,
+    actor: ApplicationActor,
     outcome: ViewingOutcome,
     correction?: CorrectViewingOutcomeDto,
   ): Promise<ViewingResponseDto> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const application = await this.access.mutation(
-        tx,
-        applicationId,
-        userId,
-        'provider',
-      );
-      await this.access.assertLegacy(tx, applicationId);
-      const row = await this.query.find(tx, applicationId, viewingId);
-      const now = this.clock.now();
-      const latest = await tx.applicationViewing.findFirst({
-        where: { applicationId },
-        orderBy: { round: 'desc' },
-        select: { id: true },
-      });
-      const status =
-        outcome === ViewingOutcome.COMPLETED
-          ? Status.COMPLETED
-          : Status.NO_SHOW;
-      const previous = row.outcomes.at(-1);
-      const reason = correction ? this.policy.text(correction.reason) : null;
-      if (
-        correction &&
-        previous?.revision === 2 &&
-        previous.outcome === outcome &&
-        previous.correctionReason === reason
-      )
-        return this.query.response(tx, application, 'provider', viewingId);
-      if (!correction && row.outcomes[0]?.outcome === outcome)
-        return this.query.response(tx, application, 'provider', viewingId);
-      const flags = this.policy.capabilities(
-        row,
-        'provider',
-        true,
-        latest?.id === row.id,
-        now,
-      );
-      if (
-        correction
-          ? !flags.canCorrectOutcome || previous?.outcome === outcome
-          : !flags.canMarkCompleted
-      )
-        throw new ConflictException(
-          'Viewing does not allow this outcome operation',
+    const userId = actorUserId(actor);
+    return this.listings.mutate(
+      actor,
+      'provider',
+      applicationId,
+      async () => {},
+      async (tx) => {
+        const application = await this.access.mutation(
+          tx,
+          applicationId,
+          userId,
+          'provider',
         );
-      const revision = correction ? 2 : 1;
-      await tx.applicationViewingOutcome.create({
-        data: {
+        await this.access.assertLegacy(tx, applicationId);
+        const row = await this.query.find(tx, applicationId, viewingId);
+        const now = this.clock.now();
+        const latest = await tx.applicationViewing.findFirst({
+          where: { applicationId },
+          orderBy: { round: 'desc' },
+          select: { id: true },
+        });
+        const status =
+          outcome === ViewingOutcome.COMPLETED
+            ? Status.COMPLETED
+            : Status.NO_SHOW;
+        const previous = row.outcomes.at(-1);
+        const reason = correction ? this.policy.text(correction.reason) : null;
+        if (
+          correction &&
+          previous?.revision === 2 &&
+          previous.outcome === outcome &&
+          previous.correctionReason === reason
+        )
+          return this.query.response(tx, application, 'provider', viewingId);
+        if (!correction && row.outcomes[0]?.outcome === outcome)
+          return this.query.response(tx, application, 'provider', viewingId);
+        const flags = this.policy.capabilities(
+          row,
+          'provider',
+          true,
+          latest?.id === row.id,
+          now,
+        );
+        if (
+          correction
+            ? !flags.canCorrectOutcome || previous?.outcome === outcome
+            : !flags.canMarkCompleted
+        )
+          throw new ConflictException(
+            'Viewing does not allow this outcome operation',
+          );
+        const revision = correction ? 2 : 1;
+        await tx.applicationViewingOutcome.create({
+          data: {
+            viewingId,
+            revision,
+            outcome,
+            correctionReason: reason,
+            recordedAt: now,
+          },
+        });
+        await tx.applicationViewing.update({
+          where: { id: viewingId },
+          data: { status },
+        });
+        await this.append(
+          tx,
+          applicationId,
           viewingId,
+          row.round,
+          userId,
+          correction
+            ? Event.VIEWING_OUTCOME_CORRECTED
+            : outcome === ViewingOutcome.COMPLETED
+              ? Event.VIEWING_COMPLETED
+              : Event.VIEWING_NO_SHOW,
+          now,
           revision,
-          outcome,
-          correctionReason: reason,
-          recordedAt: now,
-        },
-      });
-      await tx.applicationViewing.update({
-        where: { id: viewingId },
-        data: { status },
-      });
-      await this.append(
-        tx,
-        applicationId,
-        viewingId,
-        row.round,
-        userId,
-        correction
-          ? Event.VIEWING_OUTCOME_CORRECTED
-          : outcome === ViewingOutcome.COMPLETED
-            ? Event.VIEWING_COMPLETED
-            : Event.VIEWING_NO_SHOW,
-        now,
-        revision,
-      );
-      return this.query.response(tx, application, 'provider', viewingId);
-    });
+        );
+        return this.query.response(tx, application, 'provider', viewingId);
+      },
+    );
   }
 
   interest(
     applicationId: string,
     viewingId: string,
-    userId: string,
+    actor: ApplicationActor,
     interest: ViewingInterest,
     confirmWithdrawal = false,
   ): Promise<ViewingResponseDto> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const application = await this.access.mutation(
-        tx,
-        applicationId,
-        userId,
-        'applicant',
-      );
-      await this.access.assertLegacy(tx, applicationId);
-      const row = await this.query.find(tx, applicationId, viewingId);
-      if (row.status !== Status.COMPLETED)
-        throw new ConflictException('Interest requires a completed viewing');
-      if (row.interest) {
-        if (row.interest.interest !== interest)
-          throw new ConflictException(
-            'Post-viewing interest response is final',
-          );
-        return this.query.response(tx, application, 'applicant', viewingId);
-      }
-      const workflow = await tx.viewingWorkflow.findUnique({
-        where: { applicationId },
-        select: { state: true, closedAt: true, updatedAt: true },
-      });
-      const appointment = await tx.viewingAppointment.findUnique({
-        where: { viewingId },
-        select: { interestState: true },
-      });
-      if (legacyInterestClosedByLifecycle(workflow, { ...row, appointment }))
-        throw new ConflictException(
-          'Post-viewing interest was closed by the application lifecycle',
-        );
-      if (interest === ViewingInterest.NOT_INTERESTED && !confirmWithdrawal)
-        throw new BadRequestException('Withdrawal confirmation required');
-      const now = this.clock.now();
-      await tx.applicationViewingInterest.create({
-        data: { viewingId, interest, respondedAt: now },
-      });
-      await this.append(
-        tx,
-        applicationId,
-        viewingId,
-        row.round,
-        userId,
-        interest === ViewingInterest.STILL_INTERESTED
-          ? Event.VIEWING_INTEREST_CONFIRMED
-          : Event.VIEWING_INTEREST_DECLINED,
-        now,
-      );
-      if (interest === ViewingInterest.NOT_INTERESTED)
-        await this.lifecycle.withdrawWithinTransaction(
+    const userId = actorUserId(actor);
+    return this.listings.mutate(
+      actor,
+      'applicant',
+      applicationId,
+      async () => {},
+      async (tx) => {
+        const application = await this.access.mutation(
           tx,
           applicationId,
           userId,
+          'applicant',
         );
-      return this.query.response(
-        tx,
-        interest === ViewingInterest.NOT_INTERESTED
-          ? { ...application, status: 'WITHDRAWN' }
-          : application,
-        'applicant',
-        viewingId,
-      );
-    });
+        await this.access.assertLegacy(tx, applicationId);
+        const row = await this.query.find(tx, applicationId, viewingId);
+        if (row.status !== Status.COMPLETED)
+          throw new ConflictException('Interest requires a completed viewing');
+        if (row.interest) {
+          if (row.interest.interest !== interest)
+            throw new ConflictException(
+              'Post-viewing interest response is final',
+            );
+          return this.query.response(tx, application, 'applicant', viewingId);
+        }
+        const workflow = await tx.viewingWorkflow.findUnique({
+          where: { applicationId },
+          select: { state: true, closedAt: true, updatedAt: true },
+        });
+        const appointment = await tx.viewingAppointment.findUnique({
+          where: { viewingId },
+          select: { interestState: true },
+        });
+        if (legacyInterestClosedByLifecycle(workflow, { ...row, appointment }))
+          throw new ConflictException(
+            'Post-viewing interest was closed by the application lifecycle',
+          );
+        if (interest === ViewingInterest.NOT_INTERESTED && !confirmWithdrawal)
+          throw new BadRequestException('Withdrawal confirmation required');
+        const now = this.clock.now();
+        await tx.applicationViewingInterest.create({
+          data: { viewingId, interest, respondedAt: now },
+        });
+        await this.append(
+          tx,
+          applicationId,
+          viewingId,
+          row.round,
+          userId,
+          interest === ViewingInterest.STILL_INTERESTED
+            ? Event.VIEWING_INTEREST_CONFIRMED
+            : Event.VIEWING_INTEREST_DECLINED,
+          now,
+        );
+        if (interest === ViewingInterest.NOT_INTERESTED)
+          await this.lifecycle.withdrawWithinTransaction(
+            tx,
+            applicationId,
+            userId,
+          );
+        return this.query.response(
+          tx,
+          interest === ViewingInterest.NOT_INTERESTED
+            ? { ...application, status: 'WITHDRAWN' }
+            : application,
+          'applicant',
+          viewingId,
+        );
+      },
+    );
   }
 
   private append(

@@ -1,3 +1,5 @@
+import type { ProviderActor } from '../provider-authorization/provider-listing-access';
+import { NotFoundException } from '@nestjs/common';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 
 import { Role } from '../generated/prisma/enums';
@@ -9,9 +11,13 @@ import type { OnboardingState } from './types/onboarding-state.type';
 export class MeService {
   constructor(private readonly listingsService: ListingsService) {}
 
-  async getOnboardingState(user: SafeUser): Promise<OnboardingState> {
-    if (user.role === Role.PROVIDER) {
-      const count = await this.listingsService.countByProvider(user.id);
+  async getOnboardingState(
+    user: SafeUser,
+    actor?: ProviderActor,
+  ): Promise<OnboardingState> {
+    if (actor || user.role === Role.PROVIDER) {
+      if (!actor) throw new NotFoundException('Workspace selection required');
+      const count = await this.listingsService.countByProvider(actor);
       return {
         role: 'provider',
         hasCreatedFirstListing: count > 0,

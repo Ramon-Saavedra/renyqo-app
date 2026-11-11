@@ -32,6 +32,8 @@ export type ApplicantEligibilityFacts = Pick<
   | 'schufaAvailable'
   | 'incomeProofAvailable'
 >;
+export type ListingEligibilityState = ListingEligibilityCriteria &
+  Pick<Listing, 'id' | 'status'>;
 export type EligibilityCheck = {
   criterion: Criterion;
   outcome: Outcome;
@@ -53,7 +55,9 @@ type Rule = {
     criteria: ListingEligibilityCriteria,
     facts: Facts,
   ): Omit<EligibilityCheck, 'criterion'>;
-  where(facts: Facts): Prisma.ListingWhereInput;
+  where(
+    facts: Facts,
+  ): Prisma.ListingWhereInput & Prisma.PublicListingProjectionWhereInput;
 };
 const numberFact = (value: number | null | undefined): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -273,7 +277,7 @@ export function evaluateProfile(
 }
 export function hardProfileMatchWhere(
   profile: ApplicantEligibilityFacts | null,
-): Prisma.ListingWhereInput {
+): Prisma.ListingWhereInput & Prisma.PublicListingProjectionWhereInput {
   const facts = normalized(profile);
   return { AND: rules.map((rule) => rule.where(facts)) };
 }

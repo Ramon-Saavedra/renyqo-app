@@ -11,9 +11,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import type { SafeUser } from '../users/types/safe-user.type';
+
 import { ViewingApplicationParamsDto } from './dto/viewing-input.dto';
 import {
   WorkflowCommandDto,
@@ -35,22 +37,22 @@ export class ApplicantViewingWorkflowController {
   @Get('proposals') proposals(
     @Param() params: ViewingApplicationParamsDto,
     @Query() query: ViewingQueryDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.history.proposals(
       params.applicationId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
       query,
     );
   }
   @Get('proposals/:proposalId') proposal(
     @Param() params: WorkflowProposalParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.history.proposals(
       params.applicationId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
       new ViewingQueryDto(),
       params.proposalId,
@@ -61,108 +63,152 @@ export class ApplicantViewingWorkflowController {
   interest(
     @Param() params: WorkflowAppointmentParamsDto,
     @Body() body: WorkflowInterestDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'applicant', {
-      action: 'interest',
-      appointmentId: params.appointmentId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      {
+        action: 'interest',
+        appointmentId: params.appointmentId,
+        body,
+      },
+    );
   }
   @Get() snapshot(
     @Param() params: ViewingApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.snapshot(params.applicationId, user.id, 'applicant');
+    return this.commands.snapshot(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+    );
   }
   @Post('reconcile')
   @HttpCode(200)
   reconcile(
     @Param() params: ViewingApplicationParamsDto,
     @Body() body: WorkflowCommandDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'applicant', {
-      action: 'reconcile',
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      {
+        action: 'reconcile',
+        body,
+      },
+    );
   }
   @Post('proposals/:proposalId/accept')
   @HttpCode(200)
   accept(
     @Param() params: WorkflowProposalParamsDto,
     @Body() body: WorkflowCommandDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'applicant', {
-      action: 'accept',
-      proposalId: params.proposalId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      {
+        action: 'accept',
+        proposalId: params.proposalId,
+        body,
+      },
+    );
   }
   @Post('proposals/:proposalId/reject')
   @HttpCode(200)
   reject(
     @Param() params: WorkflowProposalParamsDto,
     @Body() body: WorkflowCommandDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'applicant', {
-      action: 'reject',
-      proposalId: params.proposalId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      {
+        action: 'reject',
+        proposalId: params.proposalId,
+        body,
+      },
+    );
   }
   @Post('proposals/:proposalId/alternative')
   @HttpCode(200)
   alternative_proposal(
     @Param() params: WorkflowProposalParamsDto,
     @Body() body: WorkflowScheduleDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'applicant', {
-      action: 'alternative-proposal',
-      proposalId: params.proposalId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      {
+        action: 'alternative-proposal',
+        proposalId: params.proposalId,
+        body,
+      },
+    );
   }
   @Post('appointments/:appointmentId/alternative')
   @HttpCode(200)
   alternative_appointment(
     @Param() params: WorkflowAppointmentParamsDto,
     @Body() body: WorkflowScheduleDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'applicant', {
-      action: 'alternative-appointment',
-      appointmentId: params.appointmentId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      {
+        action: 'alternative-appointment',
+        appointmentId: params.appointmentId,
+        body,
+      },
+    );
   }
   @Post('proposals/:proposalId/withdraw')
   @HttpCode(200)
   withdraw(
     @Param() params: WorkflowProposalParamsDto,
     @Body() body: WorkflowCommandDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'applicant', {
-      action: 'withdraw',
-      proposalId: params.proposalId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      {
+        action: 'withdraw',
+        proposalId: params.proposalId,
+        body,
+      },
+    );
   }
   @Post('appointments/:appointmentId/cancel')
   @HttpCode(200)
   cancel(
     @Param() params: WorkflowAppointmentParamsDto,
     @Body() body: WorkflowCancelDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'applicant', {
-      action: 'cancel',
-      appointmentId: params.appointmentId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      {
+        action: 'cancel',
+        appointmentId: params.appointmentId,
+        body,
+      },
+    );
   }
 }

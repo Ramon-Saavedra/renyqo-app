@@ -1,3 +1,4 @@
+import { hasListingParticipation } from '../provider-authorization/domain/listing-participation';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import { ConversationSide } from '../generated/prisma/enums';
@@ -8,7 +9,9 @@ export const conversationApplicationSelect = {
   applicantId: true,
   status: true,
   activeAt: true,
-  listing: { select: { providerId: true, status: true } },
+  listing: {
+    select: { workspaceId: true, responsibleMembershipId: true, status: true },
+  },
   conversation: {
     select: { id: true, openedAt: true, applicantRepliesEnabled: true },
   },
@@ -33,7 +36,7 @@ export class ApplicationConversationAccessService {
     const authorized =
       application &&
       (side === ConversationSide.PROVIDER
-        ? application.listing.providerId === userId &&
+        ? (await hasListingParticipation(tx, userId, application.listing)) &&
           providerApplicationIsVisible(application)
         : application.applicantId === userId);
     if (!authorized || !application) {

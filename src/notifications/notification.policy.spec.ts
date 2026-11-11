@@ -80,7 +80,7 @@ describe('Deliberate bell notification policy', () => {
   });
   it('includes a listing closure only when it actually affects a viewing commitment', () => {
     const metadata = {
-      viewingClosureReason: 'LISTING_ARCHIVED' as const,
+      viewingClosureReason: 'LISTING_RETIRED' as const,
       appointmentId: 'appointment',
     };
     expect(

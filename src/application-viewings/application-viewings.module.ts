@@ -1,4 +1,5 @@
 import { OutboxModule } from '../outbox/outbox.module';
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
 import { ViewingWorkflowExpiryService } from './viewing-workflow-expiry.service';
 import { ViewingExpiryScheduler } from './viewing-expiry-scheduler.service';
 import { ViewingWorkflowHistoryQueryService } from './viewing-workflow-history-query.service';
@@ -18,7 +19,12 @@ import { ViewingWorkflowCommandService } from './viewing-workflow-command.servic
 import { ViewingWorkflowCommandPolicy } from './viewing-workflow-command.policy';
 
 @Module({
-  imports: [OutboxModule, ApplicationsModule, ApplicationViewingReadModule],
+  imports: [
+    ListingConsumerAccessModule,
+    OutboxModule,
+    ApplicationsModule,
+    ApplicationViewingReadModule,
+  ],
   controllers: [
     ProviderViewingsController,
     ApplicantViewingsController,

@@ -11,9 +11,12 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
+import { expectSessionAuthSetCookie } from './e2e-session-cookie-expectations';
+import {
+  blockedApplicantRouteStatus,
+  wrongAudienceStatus,
+} from './e2e-wrong-audience';
 import request, { type Response } from 'supertest';
 import {
   afterAll,
@@ -59,13 +62,27 @@ import {
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
 import {
+  createPublishedListingForProvider,
+  ensurePersonalWorkspaceForProvider,
+  resolveProviderWorkspace,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import {
+  applicantAuthorityFor,
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
+import { installTenantContext } from '../src/provider-tenancy/tenant-context';
+import { ListingAssignmentReason } from '../src/generated/prisma/enums';
+import type { HumanAuthority } from '../src/provider-authorization/domain/authorization.types';
+import {
   flushProcessWarnings,
   pgClientQueryOverlapWarnings,
 } from './e2e-environment';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function body(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -89,7 +106,6 @@ describe('Application read models E2E', () => {
   let now = new Date('2027-01-01T10:00:00Z');
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -97,6 +113,8 @@ describe('Application read models E2E', () => {
   let applicant: { agent: Agent; id: string };
   let applicationId: string;
   let listingId: string;
+  let providerActor: ProviderActor;
+  let applicantAuthority: HumanAuthority;
 
   async function register(role: 'applicant' | 'provider') {
     const agent = request.agent(server).ca(certificate);
@@ -112,15 +130,12 @@ describe('Application read models E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
-    const cookies: unknown = response.headers['set-cookie'];
-    expect(cookies).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/; Secure(?:;|$)/),
-        expect.stringMatching(/; HttpOnly(?:;|$)/),
-        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
-      ]),
-    );
-    return { agent, id: getString(body(response), 'id') };
+    expectSessionAuthSetCookie(response.headers['set-cookie']);
+    const id = getString(body(response), 'id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
+    return { agent, id };
   }
 
   beforeAll(async () => {
@@ -192,24 +207,7 @@ describe('Application read models E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     await app.init();
     const target: unknown = app.getHttpServer();
@@ -222,13 +220,14 @@ describe('Application read models E2E', () => {
     provider = await register('provider');
     applicant = await register('applicant');
     await createEligibleApplicantProfile(applicant.agent);
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
-      },
-    });
+    await ensurePersonalWorkspaceForProvider(prisma, provider.id);
+    providerActor = await providerActorFor(prisma, provider.id);
+    applicantAuthority = await applicantAuthorityFor(prisma, applicant.id);
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      { displayOrder: 1 },
+    );
     listingId = listing.id;
     applicationId = (await createApplication()).id;
   });
@@ -252,12 +251,7 @@ describe('Application read models E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
     await flushProcessWarnings();
     expect(pgClientQueryOverlapWarnings()).toEqual([]);
@@ -466,7 +460,7 @@ describe('Application read models E2E', () => {
     const endsAt = new Date(startsAt.getTime() + 30 * 60_000);
     const invitation = await commands.execute(
       applicationId,
-      provider.id,
+      providerActor,
       'provider',
       {
         action: 'invite',
@@ -479,7 +473,7 @@ describe('Application read models E2E', () => {
         },
       },
     );
-    await commands.execute(applicationId, applicant.id, 'applicant', {
+    await commands.execute(applicationId, applicantAuthority, 'applicant', {
       action: 'accept',
       proposalId: invitation.proposalId!,
       body: { requestKey: randomUUID(), expectedWorkflowRevision: 1 },
@@ -487,7 +481,7 @@ describe('Application read models E2E', () => {
     now = new Date(endsAt.getTime() + 1);
     await app
       .get(ProviderApplicationCurationService)
-      .reject(applicationId, provider.id);
+      .reject(applicationId, providerActor);
     const compose = jest.spyOn(
       app.get(ApplicationWorkspaceQueryService).attention,
       'composeWithinTransaction',
@@ -510,17 +504,12 @@ describe('Application read models E2E', () => {
   });
 
   it('keeps per-listing attention independent of selection and refreshes only after explicit read acknowledgement', async () => {
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { title: 'Zimmer in Nordhorn' },
+    await updateListingForProvider(prisma, listingId, {
+      title: 'Zimmer in Nordhorn',
     });
-    const other = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 2,
-        status: ListingStatus.PUBLISHED,
-        title: 'Other property',
-      },
+    const other = await createPublishedListingForProvider(prisma, provider.id, {
+      displayOrder: 2,
+      title: 'Other property',
     });
     const unread = await message(applicationId, ConversationSide.APPLICANT);
     await document(applicationId, ApplicationDocumentState.AVAILABLE);
@@ -877,7 +866,7 @@ describe('Application read models E2E', () => {
     ).toBe('https://images.example/10');
     const legacy = await app
       .get(ApplicationProcessQueryService)
-      .findAllByApplicantWithListing(applicant.id);
+      .findAllByApplicantWithListing(applicantAuthority);
     expect(legacy[0].listing.images).toEqual([
       { secureUrl: 'https://images.example/10', isCover: true, position: 10 },
     ]);
@@ -887,7 +876,7 @@ describe('Application read models E2E', () => {
     });
     const fallback = await app
       .get(ApplicationProcessQueryService)
-      .findAllByApplicantWithListing(applicant.id);
+      .findAllByApplicantWithListing(applicantAuthority);
     expect(fallback[0].listing.images).toEqual([
       { secureUrl: 'https://images.example/0', isCover: false, position: 0 },
     ]);
@@ -1123,9 +1112,11 @@ describe('Application read models E2E', () => {
     }
     const listingIds: string[] = [listingId];
     for (let i = 0; i < 6; i++) {
-      const listing = await prisma.listing.create({
-        data: { providerId: provider.id, displayOrder: i + 2 },
-      });
+      const listing = await createPublishedListingForProvider(
+        prisma,
+        provider.id,
+        { displayOrder: i + 2 },
+      );
       listingIds.push(listing.id);
       await prisma.application.create({
         data: {
@@ -1238,9 +1229,11 @@ describe('Application read models E2E', () => {
       waiting: 0,
       done: 1,
     });
-    const waitingListing = await prisma.listing.create({
-      data: { providerId: provider.id, displayOrder: 2 },
-    });
+    const waitingListing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      { displayOrder: 2 },
+    );
     const waitingApplication = await prisma.application.create({
       data: {
         listingId: waitingListing.id,
@@ -1281,9 +1274,13 @@ describe('Application read models E2E', () => {
   });
 
   it('paginates provider listings and keeps per-listing counts independent of previews', async () => {
-    const second = await prisma.listing.create({
-      data: { providerId: provider.id, displayOrder: 2 },
-    });
+    const second = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
+        displayOrder: 2,
+      },
+    );
     const first = await get('provider', 'listings/overview?limit=1');
     expect(first['totalCount']).toBe(2);
     expect(nested(rows(first)[0], 'listing')['id']).toBe(listingId);
@@ -1331,7 +1328,7 @@ describe('Application read models E2E', () => {
       const row = await document();
       await app
         .get(VerificationRequirementService)
-        .execute(applicationId, provider.id, {
+        .execute(applicationId, providerActor, {
           operation: 'CANCEL',
           requestId: row.id,
         });
@@ -1479,9 +1476,9 @@ describe('Application read models E2E', () => {
     const sql = jest.spyOn(Client.prototype, 'query');
     const result = await app
       .get(ApplicationWorkspaceQueryService)
-      .workspace(applicationId, applicant.id, 'applicant');
+      .workspace(applicationId, applicantAuthority, 'applicant');
     expect(clock).toHaveBeenCalledTimes(1);
-    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(transaction).toHaveBeenCalledTimes(2);
     expect(result.attention.asOf).toEqual(result.asOf);
     const statements = sql.mock.calls.map((call) => {
       const input: unknown = call[0];
@@ -1495,7 +1492,7 @@ describe('Application read models E2E', () => {
       statements.filter((text) =>
         text.includes('FROM "public"."applications"'),
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
     expect(
       statements.filter((text) =>
         text.includes('FROM "public"."applicant_profiles"'),
@@ -1512,15 +1509,12 @@ describe('Application read models E2E', () => {
   it.each([
     ListingStatus.PAUSED,
     ListingStatus.DRAFT,
-    ListingStatus.ARCHIVED,
+    ListingStatus.RETIRED,
     ListingStatus.RENTED,
   ])(
     'agrees with existing mutation policies for an ACTIVE application on %s listing',
     async (status) => {
-      await prisma.listing.update({
-        where: { id: listingId },
-        data: { status },
-      });
+      await updateListingForProvider(prisma, listingId, { status });
       const providerWorkspace = await get(
         'provider',
         `applications/${applicationId}/workspace`,
@@ -1586,9 +1580,8 @@ describe('Application read models E2E', () => {
         publicReason: ApplicationRejectionReason.NOT_SELECTED,
       },
     });
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { minimumHouseholdNetIncome: 1000 },
+    await updateListingForProvider(prisma, listingId, {
+      minimumHouseholdNetIncome: 1000,
     });
     expect(
       nested(
@@ -1647,10 +1640,7 @@ describe('Application read models E2E', () => {
           publicReason: ApplicationRejectionReason.NOT_SELECTED,
         },
       });
-      await prisma.listing.update({
-        where: { id: listingId },
-        data: { status },
-      });
+      await updateListingForProvider(prisma, listingId, { status });
       expect(
         nested(
           await get('provider', `applications/${applicationId}/workspace`),
@@ -1668,10 +1658,12 @@ describe('Application read models E2E', () => {
       .get('/api/v1/provider/listings/overview')
       .ca(certificate)
       .expect(401);
-    await applicant.agent.get('/api/v1/provider/listings/overview').expect(403);
+    await applicant.agent
+      .get('/api/v1/provider/listings/overview')
+      .expect(wrongAudienceStatus);
     await provider.agent
       .get('/api/v1/applicant/applications/overview')
-      .expect(403);
+      .expect(blockedApplicantRouteStatus);
   });
 
   it('preserves the captured snapshot when another transaction changes lifecycle and documents', async () => {
@@ -1690,7 +1682,7 @@ describe('Application read models E2E', () => {
       });
     const workspace = await app
       .get(ApplicationWorkspaceQueryService)
-      .workspace(applicationId, applicant.id, 'applicant');
+      .workspace(applicationId, applicantAuthority, 'applicant');
     expect(workspace.application.status).toBe(ApplicationStatus.ACTIVE);
     expect(workspace.attention.pendingActionCount).toBe(0);
     expect(workspace.documentsSummary.currentRequests).toHaveLength(0);
@@ -1715,14 +1707,17 @@ describe('Application read models E2E', () => {
     const page = new ReadModelPageQueryDto();
     page.limit = 3;
     const runs = [
-      () => providerQuery.listing(provider.id, listingId),
-      () => workspaces.workspace(applicationId, provider.id, 'provider'),
-      () => workspaces.workspace(applicationId, applicant.id, 'applicant'),
-      () => history.activity(applicant.id, 'applicant', applicationId, page),
-      () => history.documents(applicant.id, 'applicant', applicationId, page),
+      () => providerQuery.listing(providerActor, listingId),
+      () => workspaces.workspace(applicationId, providerActor, 'provider'),
+      () =>
+        workspaces.workspace(applicationId, applicantAuthority, 'applicant'),
+      () =>
+        history.activity(applicantAuthority, 'applicant', applicationId, page),
+      () =>
+        history.documents(applicantAuthority, 'applicant', applicationId, page),
       () =>
         history.files(
-          applicant.id,
+          applicantAuthority,
           'applicant',
           applicationId,
           request.id,
@@ -1766,7 +1761,7 @@ describe('Application read models E2E', () => {
           .filter((text) => /^\s*(?:SELECT|WITH)\b/i.test(text));
         current.push(statements.length);
         expect(statements.length).toBeGreaterThan(0);
-        expect(statements.length).toBeLessThanOrEqual(29);
+        expect(statements.length).toBeLessThanOrEqual(45);
         expect(statements.join(' ')).not.toMatch(
           /"body"|storage_key|password_hash|checksum|scan_verdict/,
         );
@@ -1831,10 +1826,13 @@ describe('Application read models E2E', () => {
           .filter((text) => /^\s*(?:SELECT|WITH)\b/i.test(text));
       const overviewPage: ApplicantApplicationOverviewQuery = { limit: 100 };
       const cards: ApplicantApplicationOverviewPageDto =
-        await applicantQuery.overview(applicant.id, overviewPage);
+        await applicantQuery.overview(applicantAuthority, overviewPage);
       const applicantStatements = statements();
       spy.mockClear();
-      const listings = await providerQuery.overview(provider.id, overviewPage);
+      const listings = await providerQuery.overview(
+        providerActor,
+        overviewPage,
+      );
       const providerStatements = statements();
       results.push({
         count,
@@ -1854,8 +1852,8 @@ describe('Application read models E2E', () => {
         ),
       ).toHaveLength(1);
       expect(applicantStatements.length).toBeGreaterThan(0);
-      expect(applicantStatements.length).toBeLessThanOrEqual(23);
-      expect(providerStatements.length).toBeLessThanOrEqual(23);
+      expect(applicantStatements.length).toBeLessThanOrEqual(42);
+      expect(providerStatements.length).toBeLessThanOrEqual(42);
       spy.mockRestore();
     }
     console.log('READ_MODEL_QUERY_COUNTS', JSON.stringify(results));
@@ -1900,11 +1898,47 @@ describe('Application read models E2E', () => {
   });
 
   it('inspects representative PostgreSQL query plans using existing indexes', async () => {
-    await prisma.listing.createMany({
-      data: Array.from({ length: 150 }, (_, i) => ({
-        providerId: provider.id,
+    const { workspaceId, id: membershipId } = await resolveProviderWorkspace(
+      prisma,
+      provider.id,
+    );
+    await prisma.$transaction(async (tx) => {
+      await installTenantContext(tx, workspaceId);
+      const workspace = await tx.providerWorkspace.findUniqueOrThrow({
+        where: { id: workspaceId },
+        select: { ownershipRevision: true },
+      });
+      await tx.$executeRaw`SELECT lock_workspace_ownership_revision(${workspaceId}::uuid, ${workspace.ownershipRevision})`;
+      const bulk = Array.from({ length: 150 }, (_, i) => ({
+        id: randomUUID(),
+        workspaceId,
+        createdByMembershipId: membershipId,
+        responsibleMembershipId: membershipId,
         displayOrder: i + 2,
-      })),
+        status: ListingStatus.DRAFT,
+        city: 'Berlin',
+        title: `Bulk ${i}`,
+        photos: [] as string[],
+      }));
+      await tx.listing.createMany({ data: bulk });
+      for (const row of bulk) {
+        await tx.listingAssignmentTransition.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            listingId: row.id,
+            sequence: 1,
+            newMembershipId: membershipId,
+            reason: ListingAssignmentReason.INITIAL,
+            initiatedByMembershipId: membershipId,
+            commandId: randomUUID(),
+          },
+        });
+        await tx.listing.update({
+          where: { id: row.id },
+          data: { status: ListingStatus.PUBLISHED, publishedAt: now },
+        });
+      }
     });
     await prisma.application.createMany({
       data: Array.from({ length: 1000 }, () => ({
@@ -1926,7 +1960,7 @@ describe('Application read models E2E', () => {
     await prisma.$executeRaw`ANALYZE listings, applications, application_activities`;
     const plans = await prisma.$queryRaw<
       { 'QUERY PLAN': string }[]
-    >`EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM listings WHERE provider_id = ${provider.id}::uuid ORDER BY display_order ASC,id ASC LIMIT 21`;
+    >`EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM listings WHERE workspace_id = ${workspaceId}::uuid ORDER BY display_order ASC,id ASC LIMIT 21`;
     const activities = await prisma.$queryRaw<
       { 'QUERY PLAN': string }[]
     >`EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM application_activities WHERE application_id = ${applicationId}::uuid AND visibility IN ('both','applicant') ORDER BY occurred_at DESC,id DESC LIMIT 6`;

@@ -11,9 +11,8 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
+import { expectSessionAuthSetCookie } from './e2e-session-cookie-expectations';
 import request, { type Response } from 'supertest';
 import { jest } from '@jest/globals';
 import { ViewingClock } from '../src/application-viewings/application-viewing.policy';
@@ -22,15 +21,22 @@ import { ApplicationActivityService } from '../src/applications/application-acti
 import { ViewingLifecycleService } from '../src/applications/viewing-lifecycle.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { runSerializableTransaction } from '../src/prisma/run-serializable-transaction';
-import {
-  ApplicationStatus,
-  ListingStatus,
-} from '../src/generated/prisma/enums';
+import { ApplicationStatus } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  createPublishedListingForProvider,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import {
+  applicantAuthorityFor,
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
+import type { HumanAuthority } from '../src/provider-authorization/domain/authorization.types';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function body(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -54,7 +60,6 @@ describe('Viewing lifecycle integration E2E', () => {
   let now = new Date('2027-01-01T10:00:00Z');
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -62,6 +67,8 @@ describe('Viewing lifecycle integration E2E', () => {
   let applicant: { agent: Agent; id: string };
   let applicationId: string;
   let listingId: string;
+  let workspaceProvider: ProviderActor;
+  let workspaceApplicant: HumanAuthority;
 
   function path(side: 'provider' | 'applicant', suffix = ''): string {
     return `/api/v1/${side}/applications/${applicationId}/viewings${suffix}`;
@@ -81,15 +88,12 @@ describe('Viewing lifecycle integration E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
-    const cookies: unknown = response.headers['set-cookie'];
-    expect(cookies).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/; Secure(?:;|$)/),
-        expect.stringMatching(/; HttpOnly(?:;|$)/),
-        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
-      ]),
-    );
-    return { agent, id: getString(body(response), 'id') };
+    expectSessionAuthSetCookie(response.headers['set-cookie']);
+    const id = getString(body(response), 'id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
+    return { agent, id };
   }
 
   beforeAll(async () => {
@@ -157,24 +161,7 @@ describe('Viewing lifecycle integration E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     await app.init();
     const target: unknown = app.getHttpServer();
@@ -187,16 +174,17 @@ describe('Viewing lifecycle integration E2E', () => {
     provider = await register('provider');
     applicant = await register('applicant');
     await createEligibleApplicantProfile(applicant.agent);
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         title: 'Conversation listing',
-        publishedAt: new Date(),
+        displayOrder: 1,
       },
-    });
+    );
     listingId = listing.id;
+    workspaceProvider = await providerActorFor(prisma, provider.id);
+    workspaceApplicant = await applicantAuthorityFor(prisma, applicant.id);
     const application = await prisma.application.create({
       data: {
         listingId,
@@ -228,12 +216,7 @@ describe('Viewing lifecycle integration E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
 
@@ -413,12 +396,12 @@ describe('Viewing lifecycle integration E2E', () => {
     async (kind) => {
       const id = await completedLegacyCutover();
       if (kind === 'reject')
-        await curation().reject(applicationId, provider.id);
+        await curation().reject(applicationId, workspaceProvider);
       else if (kind === 'withdraw')
-        await lifecycle().withdraw(applicationId, applicant.id);
+        await lifecycle().withdraw(applicationId, workspaceApplicant);
       else if (kind === 'archive')
-        await listings().archive(listingId, provider.id);
-      else await listings().moveToDraft(listingId, provider.id);
+        await listings().retire(listingId, workspaceProvider);
+      else await listings().moveToDraft(listingId, workspaceProvider);
       expect(
         await prisma.viewingAppointment.findUniqueOrThrow({
           where: { viewingId: id },
@@ -443,10 +426,10 @@ describe('Viewing lifecycle integration E2E', () => {
     const outcomes = await prisma.applicationViewingOutcome.findMany({
       where: { viewingId: id },
     });
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     const closed = await state();
     await releaseCooldown();
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     expect(await state()).toMatchObject({
       state: 'CLOSED',
       closedAt: closed.closedAt,
@@ -530,7 +513,7 @@ describe('Viewing lifecycle integration E2E', () => {
       const closedActivities = await prisma.applicationActivity.count({
         where: { applicationId, type: 'VIEWING_WORKFLOW_CLOSED' },
       });
-      await curation().reject(applicationId, provider.id);
+      await curation().reject(applicationId, workspaceProvider);
       expect(await state()).toMatchObject({
         closedAt: closed.closedAt,
         closureReason: 'PROVIDER_CLOSED',
@@ -547,14 +530,14 @@ describe('Viewing lifecycle integration E2E', () => {
         }),
       ).toBe(closedActivities);
       await releaseCooldown();
-      await curation().restore(applicationId, provider.id);
+      await curation().restore(applicationId, workspaceProvider);
       expect((await snapshot('applicant')).obligations).toEqual([]);
     },
   );
 
   it('restore repairs pre-fix unanswered legacy metadata without overwriting its historical closure', async () => {
     const id = await completedLegacyCutover();
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     const closed = await state();
     // Reproduce the metadata left by the previously approved implementation.
     await prisma.viewingAppointment.update({
@@ -562,7 +545,7 @@ describe('Viewing lifecycle integration E2E', () => {
       data: { interestState: 'LEGACY_UNANSWERED', interestClosedAt: null },
     });
     await releaseCooldown();
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     expect(await state()).toMatchObject({
       closedAt: closed.closedAt,
       closureReason: closed.closureReason,
@@ -577,9 +560,9 @@ describe('Viewing lifecycle integration E2E', () => {
 
   it('blocks a pre-fix restored snapshot and reissues only a new invitation, never the old interest', async () => {
     const id = await completedLegacyCutover();
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     await releaseCooldown();
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     // This is the already-restored snapshot that could exist before Phase A.
     await prisma.viewingAppointment.update({
       where: { viewingId: id },
@@ -648,7 +631,7 @@ describe('Viewing lifecycle integration E2E', () => {
 
   it('preserves already closed historical workflow, ledger and history on repeated closure and later listing archive', async () => {
     await confirmed();
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     const closed = await state();
     const history = await prisma.applicationActivity.findMany({
       where: { applicationId },
@@ -677,7 +660,7 @@ describe('Viewing lifecycle integration E2E', () => {
         .closeWithinTransaction(
           tx,
           applicationId,
-          'LISTING_ARCHIVED',
+          'LISTING_RETIRED',
           'PROVIDER',
           provider.id,
         ),
@@ -688,7 +671,7 @@ describe('Viewing lifecycle integration E2E', () => {
         orderBy: { id: 'asc' },
       }),
     ).toEqual(outbox);
-    await listings().archive(listingId, provider.id);
+    await listings().retire(listingId, workspaceProvider);
     expect(await state()).toEqual(closed);
     expect(
       await prisma.applicationActivity.findMany({
@@ -748,7 +731,7 @@ describe('Viewing lifecycle integration E2E', () => {
           publicReason: 'NOT_SELECTED',
         },
       });
-      await curation().restore(applicationId, provider.id);
+      await curation().restore(applicationId, workspaceProvider);
       if (alreadyClosed)
         expect((await state()).closedAt).toEqual(originalClosedAt);
       const closed = await prisma.applicationActivity.findFirstOrThrow({
@@ -774,7 +757,7 @@ describe('Viewing lifecycle integration E2E', () => {
       ).toBe(1);
       const publicHistory = await app
         .get(ApplicationActivityService)
-        .findForAudience(applicationId, 'APPLICANT', applicant.id);
+        .findForAudience(applicationId, 'APPLICANT', workspaceApplicant);
       expect(
         publicHistory.find((row) => row.id === closed.id)?.payload,
       ).toMatchObject({ viewingLifecycleContext: 'RESTORE_CLEANUP' });
@@ -794,16 +777,16 @@ describe('Viewing lifecycle integration E2E', () => {
         'proposalId',
       );
       if (kind === 'withdraw')
-        await lifecycle().withdraw(applicationId, applicant.id);
+        await lifecycle().withdraw(applicationId, workspaceApplicant);
       else if (kind === 'reject')
-        await curation().reject(applicationId, provider.id);
+        await curation().reject(applicationId, workspaceProvider);
       else if (kind === 'rent')
-        await listings().rentListing(listingId, provider.id, {
+        await listings().rentListing(listingId, workspaceProvider, {
           selectedApplicationId: applicationId,
         });
       else if (kind === 'archive')
-        await listings().archive(listingId, provider.id);
-      else await listings().moveToDraft(listingId, provider.id);
+        await listings().retire(listingId, workspaceProvider);
+      else await listings().moveToDraft(listingId, workspaceProvider);
       expect(await state()).toMatchObject({
         state: 'CLOSED',
         revision: 4,
@@ -839,7 +822,7 @@ describe('Viewing lifecycle integration E2E', () => {
     'filters historical and absent workflows during bulk listing %s',
     async (kind) => {
       await confirmed();
-      await curation().reject(applicationId, provider.id);
+      await curation().reject(applicationId, workspaceProvider);
       const historical = await state();
       const priorHistory = await prisma.applicationActivity.count({
         where: { applicationId },
@@ -889,9 +872,10 @@ describe('Viewing lifecycle integration E2E', () => {
         },
         _count: { _all: true },
       });
-      if (kind === 'archive') await listings().archive(listingId, provider.id);
+      if (kind === 'archive')
+        await listings().retire(listingId, workspaceProvider);
       else
-        await listings().rentListing(listingId, provider.id, {
+        await listings().rentListing(listingId, workspaceProvider, {
           selectedApplicationId: selected.id,
         });
       expect(close.mock.calls.map((call) => call[1])).toEqual([selected.id]);
@@ -944,7 +928,7 @@ describe('Viewing lifecycle integration E2E', () => {
     const selected = await prisma.application.findFirstOrThrow({
       where: { listingId, status: 'ACTIVE', id: { not: applicationId } },
     });
-    await listings().rentListing(listingId, provider.id, {
+    await listings().rentListing(listingId, workspaceProvider, {
       selectedApplicationId: selected.id,
     });
     expect(await application()).toMatchObject({
@@ -965,20 +949,23 @@ describe('Viewing lifecycle integration E2E', () => {
 
   it('eligibility rejection closes the workflow in the profile revalidation transaction', async () => {
     await confirmed();
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { minimumHouseholdNetIncome: 99999 },
+    await updateListingForProvider(prisma, listingId, {
+      minimumHouseholdNetIncome: 99999,
     });
     const profile = await prisma.applicantProfile.upsert({
       where: { applicantId: applicant.id },
       create: { applicantId: applicant.id },
       update: {},
     });
+    const lockedListing = await prisma.listing.findUniqueOrThrow({
+      where: { id: listingId },
+    });
     await runSerializableTransaction(prisma, (tx) =>
       lifecycle().revalidateActiveAndWaitingApplications(
         tx,
         applicant.id,
         profile,
+        [lockedListing],
       ),
     );
     expect(await application()).toMatchObject({
@@ -994,9 +981,9 @@ describe('Viewing lifecycle integration E2E', () => {
 
   it('restore ACTIVE never revives a commitment and allows only a new invitation', async () => {
     const id = await confirmed();
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     await releaseCooldown();
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     expect((await application()).status).toBe('ACTIVE');
     expect(await state()).toMatchObject({
       revision: 4,
@@ -1018,7 +1005,7 @@ describe('Viewing lifecycle integration E2E', () => {
 
   it('restore WAITING hides the workflow from the provider', async () => {
     await confirmed();
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     await fillWithWaiting(); // four ACTIVE; add a fifth before restoring.
     const other = await register('applicant');
     await prisma.application.create({
@@ -1030,7 +1017,7 @@ describe('Viewing lifecycle integration E2E', () => {
       },
     });
     await releaseCooldown();
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     expect((await application()).status).toBe('WAITING');
     await provider.agent.get(endpoint('provider')).expect(404);
     expect(await snapshot('applicant')).toMatchObject({
@@ -1045,7 +1032,7 @@ describe('Viewing lifecycle integration E2E', () => {
     expect(
       await post('applicant', `/appointments/${id}/cancel`, command(2), 409),
     ).toMatchObject({ reason: 'APPOINTMENT_ALREADY_STARTED' });
-    await lifecycle().withdraw(applicationId, applicant.id);
+    await lifecycle().withdraw(applicationId, workspaceApplicant);
     expect(
       await prisma.applicationViewing.findUniqueOrThrow({ where: { id } }),
     ).toMatchObject({ status: 'OUTCOME_PENDING', cancelledAt: null });
@@ -1119,10 +1106,10 @@ describe('Viewing lifecycle integration E2E', () => {
     });
     expect((await state()).providerConsideration).toBe('DO_NOT_CONTINUE');
     await expect(
-      curation().restore(applicationId, provider.id),
+      curation().restore(applicationId, workspaceProvider),
     ).rejects.toMatchObject({ status: 429 });
     await releaseCooldown();
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     expect(await state()).toMatchObject({
       state: 'CLOSED',
       providerConsideration: 'UNDECIDED',
@@ -1239,7 +1226,7 @@ describe('Viewing lifecycle integration E2E', () => {
                 : {},
             ),
           ),
-        lifecycle().withdraw(applicationId, applicant.id),
+        lifecycle().withdraw(applicationId, workspaceApplicant),
       ]);
       expect([200, 409]).toContain(response.status);
       if (response.status === 409)
@@ -1267,8 +1254,8 @@ describe('Viewing lifecycle integration E2E', () => {
           .post(endpoint('applicant', `/proposals/${id}/accept`))
           .send(command(1)),
         action === 'reject'
-          ? curation().reject(applicationId, provider.id)
-          : listings().rentListing(listingId, provider.id, {
+          ? curation().reject(applicationId, workspaceProvider)
+          : listings().rentListing(listingId, workspaceProvider, {
               selectedApplicationId: applicationId,
             }),
       ]);
@@ -1284,9 +1271,9 @@ describe('Viewing lifecycle integration E2E', () => {
   it('serializes rejection/withdrawal/rental selection so only one terminal lifecycle wins', async () => {
     await confirmed();
     const results = await Promise.allSettled([
-      curation().reject(applicationId, provider.id),
-      lifecycle().withdraw(applicationId, applicant.id),
-      listings().rentListing(listingId, provider.id, {
+      curation().reject(applicationId, workspaceProvider),
+      lifecycle().withdraw(applicationId, workspaceApplicant),
+      listings().rentListing(listingId, workspaceProvider, {
         selectedApplicationId: applicationId,
       }),
     ]);
@@ -1336,7 +1323,7 @@ describe('Viewing lifecycle integration E2E', () => {
       .patch(path('applicant', `/${id}/accept`))
       .send({})
       .expect(200);
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     expect(await state()).toMatchObject({
       mode: 'LEGACY',
       state: 'CLOSED',
@@ -1348,7 +1335,7 @@ describe('Viewing lifecycle integration E2E', () => {
         .status,
     ).toBe('CANCELLED');
     await releaseCooldown();
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     await post('provider', '/reconcile', command(2));
     expect(await state()).toMatchObject({
       mode: 'CURRENT',
@@ -1372,9 +1359,9 @@ describe('Viewing lifecycle integration E2E', () => {
         .patch(path('provider', `/${id}/complete`))
         .send({})
         .expect(200);
-      await curation().reject(applicationId, provider.id);
+      await curation().reject(applicationId, workspaceProvider);
       await releaseCooldown();
-      await curation().restore(applicationId, provider.id);
+      await curation().restore(applicationId, workspaceProvider);
       const revision = (await state()).revision;
       await post('provider', '/reconcile', command(revision));
       expect(await snapshot('applicant')).toMatchObject({
@@ -1414,9 +1401,9 @@ describe('Viewing lifecycle integration E2E', () => {
         .patch(path('provider', `/${old}/complete`))
         .send({})
         .expect(200);
-      await curation().reject(applicationId, provider.id);
+      await curation().reject(applicationId, workspaceProvider);
       await releaseCooldown();
-      await curation().restore(applicationId, provider.id);
+      await curation().restore(applicationId, workspaceProvider);
       const closed = await state();
       expect((await snapshot('applicant')).obligations).toEqual([]);
       now = new Date('2027-01-04T10:00:00Z');
@@ -1605,20 +1592,20 @@ describe('Viewing lifecycle integration E2E', () => {
       return id;
     }
     const first = await completeLegacyAt(3);
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     const historical = await state();
     await releaseCooldown();
     now = new Date('2027-01-04T10:00:00Z');
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     const second = await completeLegacyAt(5);
     expect((await snapshot('applicant')).obligations).toMatchObject([
       { action: 'APPLICANT_CONFIRM_POST_VIEWING_INTEREST' },
     ]);
     await releaseCooldown();
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     await releaseCooldown();
     now = new Date('2027-01-06T10:00:00Z');
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     expect((await snapshot('applicant')).applicantInterest).toMatchObject({
       appointmentId: second,
       state: 'CLOSED',
@@ -1667,7 +1654,7 @@ describe('Viewing lifecycle integration E2E', () => {
     expect(
       nested(await workspace(), 'attention').actionableUnreadMessageCount,
     ).toBe(1);
-    await curation().reject(applicationId, provider.id);
+    await curation().reject(applicationId, workspaceProvider);
     const rejected = await workspace();
     expect(nested(rejected, 'attention').actionableUnreadMessageCount).toBe(0);
     expect(nested(rejected, 'conversationSummary')).toMatchObject({
@@ -1676,7 +1663,7 @@ describe('Viewing lifecycle integration E2E', () => {
       sendBlockReason: 'LIFECYCLE_READ_ONLY',
     });
     await releaseCooldown();
-    await curation().restore(applicationId, provider.id);
+    await curation().restore(applicationId, workspaceProvider);
     const restored = await workspace();
     expect(nested(restored, 'attention').actionableUnreadMessageCount).toBe(1);
     expect(nested(restored, 'conversationSummary')).toMatchObject({
@@ -1816,7 +1803,7 @@ describe('Viewing lifecycle integration E2E', () => {
       .spyOn(app.get(ApplicationActivityService), 'appendWithinTransaction')
       .mockRejectedValueOnce(new Error('rental closure history failure'));
     await expect(
-      listings().rentListing(listingId, provider.id, {
+      listings().rentListing(listingId, workspaceProvider, {
         selectedApplicationId: applicationId,
       }),
     ).rejects.toThrow('rental closure history failure');
@@ -1858,8 +1845,8 @@ describe('Viewing lifecycle integration E2E', () => {
 
   it('keeps pause/resume reversible without cancelling commitments', async () => {
     const id = await confirmed();
-    await listings().pause(listingId, provider.id);
-    await listings().resume(listingId, provider.id);
+    await listings().pause(listingId, workspaceProvider);
+    await listings().resume(listingId, workspaceProvider);
     expect(await state()).toMatchObject({
       state: 'OPEN',
       revision: 2,

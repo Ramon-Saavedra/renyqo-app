@@ -17,6 +17,12 @@ import {
   ViewingCancellationReason,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  ApplicationListingAccess,
+  actorUserId,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
+import { providerApplicationVisibility } from './application-process.policy';
 
 export type ApplicationActivityMetadata = {
   viewingLifecycleContext?: 'RESTORE_CLEANUP';
@@ -71,6 +77,7 @@ export class ApplicationActivityService {
     private readonly prisma: PrismaService,
     private readonly invalidation: ApplicationOutboxProducer,
     private readonly notifications: NotificationProducer,
+    private readonly listings: ApplicationListingAccess,
   ) {}
 
   append(input: AppendApplicationActivityInput): Promise<ApplicationActivity> {
@@ -141,53 +148,39 @@ export class ApplicationActivityService {
   findForAudience(
     applicationId: string,
     audience: PublicActivityAudience,
-    userId: string,
+    actor: ApplicationActor,
   ): Promise<ApplicationActivityTimelineItem[]> {
-    return this.prisma.application
-      .findUnique({
-        where: { id: applicationId },
-        select: {
-          applicantId: true,
-          status: true,
-          activeAt: true,
-          listing: { select: { providerId: true } },
-        },
-      })
-      .then((application) => {
-        const ownsApplication =
-          audience === ApplicationActivityVisibility.PROVIDER
-            ? application?.listing.providerId === userId &&
-              application.status !== ApplicationStatus.WAITING &&
-              (application.status === ApplicationStatus.ACTIVE ||
-                application.activeAt !== null)
-            : application?.applicantId === userId;
-
-        if (!ownsApplication) {
-          throw new NotFoundException('Application not found');
-        }
-
-        return this.prisma.applicationActivity
-          .findMany({
-            where: {
-              applicationId,
-              visibility: {
-                in: [audience, ApplicationActivityVisibility.BOTH],
-              },
-            },
-            orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
-          })
-          .then((activities) =>
-            activities
-              .filter(
-                (activity) =>
-                  activity.visibility === audience ||
-                  activity.visibility === ApplicationActivityVisibility.BOTH,
-              )
-              .map((activity) => this.toTimelineItem(activity)),
-          );
-      });
+    const side =
+      audience === ApplicationActivityVisibility.PROVIDER
+        ? 'provider'
+        : 'applicant';
+    return this.listings.read(
+      actor,
+      side,
+      applicationId,
+      async () => {},
+      async (tx, _listingId, context) => {
+        const application = await tx.application.findFirst({
+          where: {
+            id: applicationId,
+            ...(side === 'provider'
+              ? providerApplicationVisibility(context!)
+              : { applicantId: actorUserId(actor) }),
+          },
+          select: { id: true },
+        });
+        if (!application) throw new NotFoundException('Application not found');
+        const activities = await tx.applicationActivity.findMany({
+          where: {
+            applicationId,
+            visibility: { in: [audience, ApplicationActivityVisibility.BOTH] },
+          },
+          orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+        });
+        return activities.map((activity) => this.toTimelineItem(activity));
+      },
+    );
   }
-
   private toTimelineItem(
     activity: ApplicationActivity,
   ): ApplicationActivityTimelineItem {

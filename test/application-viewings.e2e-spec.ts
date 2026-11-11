@@ -8,9 +8,10 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
+import { expectSessionAuthSetCookie } from './e2e-session-cookie-expectations';
+import { wrongAudienceStatus } from './e2e-wrong-audience';
+import { installTenantContext } from '../src/provider-tenancy/tenant-context';
 import request, { type Response } from 'supertest';
 import { jest } from '@jest/globals';
 import { ViewingClock } from '../src/application-viewings/application-viewing.policy';
@@ -27,10 +28,15 @@ import {
   ListingStatus,
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  createPublishedListingForProvider,
+  resolveProviderWorkspace,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function body(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -54,7 +60,6 @@ describe('Application viewings E2E', () => {
   let now = new Date('2027-01-01T10:00:00Z');
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -81,15 +86,12 @@ describe('Application viewings E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
-    const cookies: unknown = response.headers['set-cookie'];
-    expect(cookies).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/; Secure(?:;|$)/),
-        expect.stringMatching(/; HttpOnly(?:;|$)/),
-        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
-      ]),
-    );
-    return { agent, id: getString(body(response), 'id') };
+    expectSessionAuthSetCookie(response.headers['set-cookie']);
+    const id = getString(body(response), 'id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
+    return { agent, id };
   }
 
   beforeAll(async () => {
@@ -157,24 +159,7 @@ describe('Application viewings E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     await app.init();
     const target: unknown = app.getHttpServer();
@@ -186,15 +171,14 @@ describe('Application viewings E2E', () => {
     now = new Date('2027-01-01T10:00:00Z');
     provider = await register('provider');
     applicant = await register('applicant');
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         title: 'Conversation listing',
-        publishedAt: new Date(),
       },
-    });
+    );
     listingId = listing.id;
     const application = await prisma.application.create({
       data: {
@@ -227,12 +211,7 @@ describe('Application viewings E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
 
@@ -447,7 +426,10 @@ describe('Application viewings E2E', () => {
       .patch(path('applicant', `/${id}/accept`))
       .send({})
       .expect(404);
-    await applicant.agent.post(path('provider')).send(proposal()).expect(403);
+    await applicant.agent
+      .post(path('provider'))
+      .send(proposal())
+      .expect(wrongAudienceStatus);
     const other = await prisma.application.create({
       data: {
         listingId,
@@ -518,15 +500,13 @@ describe('Application viewings E2E', () => {
   );
 
   it('permits PAUSED appointments but freezes RENTED listings', async () => {
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { status: ListingStatus.PAUSED },
+    await updateListingForProvider(prisma, listingId, {
+      status: ListingStatus.PAUSED,
     });
     const id = await propose();
     await accept(id);
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { status: ListingStatus.RENTED },
+    await updateListingForProvider(prisma, listingId, {
+      status: ListingStatus.RENTED,
     });
     await provider.agent
       .patch(path('provider', `/${id}/cancel`))
@@ -1099,11 +1079,18 @@ describe('Application viewings E2E', () => {
           const activity = app.get(ApplicationActivityService);
           const activities = jest.spyOn(activity, 'appendWithinTransaction');
           const transactions = jest.spyOn(prisma, '$transaction');
+          const transactionBaseline = transactions.mock.calls.length;
           const failure = new Error('outer command failed after promotion');
           const attempts: object[] = [];
+          const { workspaceId } = await resolveProviderWorkspace(
+            prisma,
+            provider.id,
+          );
           const command = runSerializableTransaction(prisma, async (tx) => {
+            await installTenantContext(tx, workspaceId);
             attempts.push(tx);
-            const transactionCalls = transactions.mock.calls.length;
+            const transactionCalls =
+              transactions.mock.calls.length - transactionBaseline;
             const activityOffset = activities.mock.calls.length;
             await viewings.cancelWithinTransaction(
               tx,
@@ -1124,6 +1111,7 @@ describe('Application viewings E2E', () => {
                 applicant.id,
               );
             }
+            if (rollback) throw failure;
             expect(
               (
                 await tx.application.findUniqueOrThrow({
@@ -1141,13 +1129,14 @@ describe('Application viewings E2E', () => {
             expect(
               attemptActivities.map(([activityTx]) => activityTx === tx),
             ).toEqual([true, true, true, true]);
-            if (rollback) throw failure;
           });
           if (rollback) await expect(command).rejects.toBe(failure);
           else await command;
 
           // No helper opens its own transaction, and every activity uses the same tx.
-          expect(transactions.mock.calls.length).toBe(attempts.length);
+          expect(transactions.mock.calls.length - transactionBaseline).toBe(
+            attempts.length,
+          );
           expect(
             transactions.mock.calls.map(
               ([, options]) => options?.isolationLevel,
@@ -1250,7 +1239,12 @@ describe('Application viewings E2E', () => {
 
       it('rolls back prior work when the lifecycle helper rejects ownership', async () => {
         const id = await propose();
+        const { workspaceId } = await resolveProviderWorkspace(
+          prisma,
+          provider.id,
+        );
         const command = runSerializableTransaction(prisma, async (tx) => {
+          await installTenantContext(tx, workspaceId);
           await app
             .get(ApplicationViewingService)
             .cancelWithinTransaction(tx, applicationId, id, provider.id);

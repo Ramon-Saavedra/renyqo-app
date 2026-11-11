@@ -1,3 +1,9 @@
+import {
+  unitRequest,
+  unitProvider,
+  UNIT_WORKSPACE_ID,
+  UNIT_MEMBERSHIP_ID,
+} from '../../test/unit-workspace-authority';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ParseUUIDPipe } from '@nestjs/common';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
@@ -36,7 +42,12 @@ const makeProviderUser = (): SafeUser => ({
 
 const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
-  providerId: PROVIDER_ID,
+  workspaceId: UNIT_WORKSPACE_ID,
+  createdByMembershipId: UNIT_MEMBERSHIP_ID,
+  responsibleMembershipId: UNIT_MEMBERSHIP_ID,
+  revision: 1,
+  assignmentSequence: 1,
+  retiredAt: null,
   status: ListingStatus.DRAFT,
   city: 'Berlin',
   zip: '10115',
@@ -109,7 +120,7 @@ describe('ListingsController', () => {
             update: jest.fn(),
             publish: jest.fn(),
             moveToDraft: jest.fn(),
-            archive: jest.fn(),
+            retire: jest.fn(),
             pause: jest.fn(),
             resume: jest.fn(),
             rentListing: jest.fn(),
@@ -161,11 +172,11 @@ describe('ListingsController', () => {
       const result = await controller.create(
         dto,
         undefined,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(listingsService.create).toHaveBeenCalledWith(
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         dto,
         undefined,
       );
@@ -181,10 +192,10 @@ describe('ListingsController', () => {
       const listings = [{ ...makeListing(), _count: { applications: 2 } }];
       listingsService.findAllByProvider.mockResolvedValue(listings);
 
-      const result = await controller.findAll(makeProviderUser());
+      const result = await controller.findAll(unitRequest(makeProviderUser()));
 
       expect(listingsService.findAllByProvider).toHaveBeenCalledWith(
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(
         listingsService.toProviderListingOverviewResponses,
@@ -211,11 +222,14 @@ describe('ListingsController', () => {
       const listing = { ...makeListing(), images: [] };
       listingsService.findOneDetailByProvider.mockResolvedValue(listing);
 
-      const result = await controller.findOne(LISTING_ID, makeProviderUser());
+      const result = await controller.findOne(
+        LISTING_ID,
+        unitRequest(makeProviderUser()),
+      );
 
       expect(listingsService.findOneDetailByProvider).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
@@ -236,7 +250,10 @@ describe('ListingsController', () => {
       const listing = { ...makeListing(), images: [image] };
       listingsService.findOneDetailByProvider.mockResolvedValue(listing);
 
-      const result = await controller.findOne(LISTING_ID, makeProviderUser());
+      const result = await controller.findOne(
+        LISTING_ID,
+        unitRequest(makeProviderUser()),
+      );
 
       expect(result.images).toEqual([
         {
@@ -255,11 +272,15 @@ describe('ListingsController', () => {
       const dto: UpdateListingPositionDto = { position: 1 };
       listingsService.updatePosition.mockResolvedValue(listing);
 
-      await controller.updatePosition(LISTING_ID, dto, makeProviderUser());
+      await controller.updatePosition(
+        LISTING_ID,
+        dto,
+        unitRequest(makeProviderUser()),
+      );
 
       expect(listingsService.updatePosition).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         dto,
       );
     });
@@ -281,12 +302,12 @@ describe('ListingsController', () => {
       const result = await controller.update(
         LISTING_ID,
         dto,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(listingsService.update).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         dto,
       );
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
@@ -308,11 +329,14 @@ describe('ListingsController', () => {
       const listing = makeListing({ status: ListingStatus.PUBLISHED });
       listingsService.publish.mockResolvedValue(listing);
 
-      const result = await controller.publish(LISTING_ID, makeProviderUser());
+      const result = await controller.publish(
+        LISTING_ID,
+        unitRequest(makeProviderUser()),
+      );
 
       expect(listingsService.publish).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
@@ -335,12 +359,12 @@ describe('ListingsController', () => {
 
       const result = await controller.moveToDraft(
         LISTING_ID,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(listingsService.moveToDraft).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
@@ -349,28 +373,31 @@ describe('ListingsController', () => {
     });
   });
 
-  describe('archive', () => {
+  describe('retire', () => {
     it('validates id as a UUID v4 route parameter', () => {
-      const metadata = getRouteArgMetadata('archive', 0);
+      const metadata = getRouteArgMetadata('retire', 0);
 
       expect(metadata?.data).toBe('id');
       expect(metadata?.pipes?.[0]).toBeInstanceOf(ParseUUIDPipe);
     });
 
-    it('calls listingsService.archive with id and provider id', async () => {
-      const listing = makeListing({ status: ListingStatus.ARCHIVED });
-      listingsService.archive.mockResolvedValue(listing);
+    it('calls listingsService.retire with id and provider id', async () => {
+      const listing = makeListing({ status: ListingStatus.RETIRED });
+      listingsService.retire.mockResolvedValue(listing);
 
-      const result = await controller.archive(LISTING_ID, makeProviderUser());
-
-      expect(listingsService.archive).toHaveBeenCalledWith(
+      const result = await controller.retire(
         LISTING_ID,
-        PROVIDER_ID,
+        unitRequest(makeProviderUser()),
+      );
+
+      expect(listingsService.retire).toHaveBeenCalledWith(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
       });
-      expect(result.status).toBe(ListingStatus.ARCHIVED);
+      expect(result.status).toBe(ListingStatus.RETIRED);
     });
   });
 
@@ -386,11 +413,14 @@ describe('ListingsController', () => {
       const listing = makeListing({ status: ListingStatus.PAUSED });
       listingsService.pause.mockResolvedValue(listing);
 
-      const result = await controller.pause(LISTING_ID, makeProviderUser());
+      const result = await controller.pause(
+        LISTING_ID,
+        unitRequest(makeProviderUser()),
+      );
 
       expect(listingsService.pause).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
@@ -411,11 +441,14 @@ describe('ListingsController', () => {
       const listing = makeListing({ status: ListingStatus.PUBLISHED });
       listingsService.resume.mockResolvedValue(listing);
 
-      const result = await controller.resume(LISTING_ID, makeProviderUser());
+      const result = await controller.resume(
+        LISTING_ID,
+        unitRequest(makeProviderUser()),
+      );
 
       expect(listingsService.resume).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
@@ -432,11 +465,15 @@ describe('ListingsController', () => {
       const listing = makeListing({ status: ListingStatus.RENTED });
       listingsService.rentListing.mockResolvedValue(listing);
 
-      const result = await controller.rent(LISTING_ID, dto, makeProviderUser());
+      const result = await controller.rent(
+        LISTING_ID,
+        dto,
+        unitRequest(makeProviderUser()),
+      );
 
       expect(listingsService.rentListing).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         dto,
       );
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {

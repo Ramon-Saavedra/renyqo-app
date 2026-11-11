@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { unitRequest, unitSession } from '../../test/unit-workspace-authority';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { Response } from 'express';
 
@@ -54,12 +55,18 @@ describe('ApplicantSavedListingsController', () => {
       setHeader: jest.fn(),
     } as unknown as Response;
 
-    const result = await controller.findAll(applicantUser, {}, res);
+    const result = await controller.findAll(
+      unitRequest(applicantUser),
+      applicantUser,
+      {},
+      res,
+    );
 
     expect(savedListingsService.findSavedListingsPage).toHaveBeenCalledWith(
       applicantUser,
       {},
       res,
+      unitSession(applicantUser.id),
     );
     expect(result).toBe(page);
   });

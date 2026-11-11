@@ -45,7 +45,8 @@ export class ProtectedWorkspaceTransactions {
     assertDelegatedScope(principal, selection);
     if (
       plan.kind === 'STRUCTURAL' &&
-      plan.membershipIds.some((id) => !isAuthorityId(id))
+      (plan.membershipIds.some((id) => !isAuthorityId(id)) ||
+        (plan.userIds ?? []).some((id) => !isAuthorityId(id)))
     )
       throw new NotFoundException('Workspace not found');
     const lockPlan: AuthorityLockPlan = Object.freeze(
@@ -55,13 +56,20 @@ export class ProtectedWorkspaceTransactions {
             membershipIds: Object.freeze(
               plan.membershipIds.map((id) => id.toLowerCase()),
             ),
+            userIds: Object.freeze(
+              (plan.userIds ?? []).map((id) => id.toLowerCase()),
+            ),
           }
         : { ...plan },
     );
     return runSerializableTransaction(this.prisma, async (tx) => {
       await tx.$executeRaw`SET LOCAL lock_timeout='1500ms'`;
       await tx.$executeRaw`SET LOCAL statement_timeout='4000ms'`;
-      await this.locks.global(tx, principal);
+      await this.locks.global(
+        tx,
+        principal,
+        lockPlan.kind === 'STRUCTURAL' ? lockPlan.userIds : [],
+      );
       await this.global.assert(tx, principal);
       const actorId = await new MembershipBootstrap(this.global).enter(
         tx,

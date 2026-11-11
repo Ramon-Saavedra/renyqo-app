@@ -8,9 +8,12 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
+import { expectSessionAuthSetCookie } from './e2e-session-cookie-expectations';
+import {
+  blockedApplicantRouteStatus,
+  wrongAudienceStatus,
+} from './e2e-wrong-audience';
 import request, { type Response } from 'supertest';
 import { jest } from '@jest/globals';
 import { AppModule } from '../src/app.module';
@@ -23,10 +26,14 @@ import {
   Role,
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  createPublishedListingForProvider,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function body(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -49,7 +56,6 @@ function getString(record: Record<string, unknown>, key: string): string {
 describe('Application conversation E2E', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -76,15 +82,12 @@ describe('Application conversation E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
-    const cookies: unknown = response.headers['set-cookie'];
-    expect(cookies).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/; Secure(?:;|$)/),
-        expect.stringMatching(/; HttpOnly(?:;|$)/),
-        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
-      ]),
-    );
-    return { agent, id: getString(body(response), 'id') };
+    expectSessionAuthSetCookie(response.headers['set-cookie']);
+    const id = getString(body(response), 'id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
+    return { agent, id };
   }
 
   async function open() {
@@ -158,24 +161,7 @@ describe('Application conversation E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     await app.init();
     const target: unknown = app.getHttpServer();
@@ -187,15 +173,14 @@ describe('Application conversation E2E', () => {
     provider = await register('provider');
     applicant = await register('applicant');
     await createEligibleApplicantProfile(applicant.agent);
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         title: 'Conversation listing',
-        publishedAt: new Date(),
       },
-    });
+    );
     listingId = listing.id;
     const application = await prisma.application.create({
       data: {
@@ -228,12 +213,7 @@ describe('Application conversation E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
 
@@ -534,9 +514,8 @@ describe('Application conversation E2E', () => {
   });
 
   it('allows existing participants to communicate while PAUSED and disables sending while ARCHIVED', async () => {
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { status: ListingStatus.PAUSED },
+    await updateListingForProvider(prisma, listingId, {
+      status: ListingStatus.PAUSED,
     });
     await open();
     await setReplies(true);
@@ -544,9 +523,8 @@ describe('Application conversation E2E', () => {
       .post(path('applicant', '/messages'))
       .send({ body: 'Paused reply' })
       .expect(201);
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { status: ListingStatus.ARCHIVED },
+    await updateListingForProvider(prisma, listingId, {
+      status: ListingStatus.RETIRED,
     });
     await provider.agent
       .post(path('provider', '/messages'))
@@ -589,9 +567,8 @@ describe('Application conversation E2E', () => {
 
   it('disables sending on a rented listing while retaining readable history', async () => {
     await open();
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { status: ListingStatus.RENTED },
+    await updateListingForProvider(prisma, listingId, {
+      status: ListingStatus.RENTED,
     });
     await applicant.agent
       .post(path('applicant', '/messages'))
@@ -684,6 +661,10 @@ describe('Application conversation E2E', () => {
       const foreign =
         side === 'provider' ? otherProvider.agent : otherApplicant.agent;
       const wrongRole = side === 'provider' ? applicant.agent : provider.agent;
+      const crossAudienceStatus =
+        side === 'applicant'
+          ? blockedApplicantRouteStatus
+          : wrongAudienceStatus;
       for (const suffix of ['', '/summary']) {
         await request
           .agent(server)
@@ -691,7 +672,7 @@ describe('Application conversation E2E', () => {
           .get(path(side, suffix))
           .expect(401);
         await foreign.get(path(side, suffix)).expect(404);
-        await wrongRole.get(path(side, suffix)).expect(403);
+        await wrongRole.get(path(side, suffix)).expect(crossAudienceStatus);
       }
       await foreign
         .post(path(side, '/messages'))
@@ -704,11 +685,11 @@ describe('Application conversation E2E', () => {
       await wrongRole
         .post(path(side, '/messages'))
         .send({ body: 'Wrong role' })
-        .expect(403);
+        .expect(crossAudienceStatus);
       await wrongRole
         .patch(path(side, '/read'))
         .send({ throughSequence: 1 })
-        .expect(403);
+        .expect(crossAudienceStatus);
       await request
         .agent(server)
         .ca(certificate)
@@ -746,7 +727,7 @@ describe('Application conversation E2E', () => {
       where: { id: otherProvider.id },
       data: { role: Role.ADMIN },
     });
-    await otherProvider.agent.get(path('provider')).expect(403);
+    await otherProvider.agent.get(path('provider')).expect(404);
   });
 
   it('rolls back opening, message and activities when message activity fails', async () => {
@@ -777,7 +758,7 @@ describe('Application conversation E2E', () => {
     await applicant.agent
       .patch(path('provider', '/applicant-replies'))
       .send({ applicantRepliesEnabled: true })
-      .expect(403);
+      .expect(wrongAudienceStatus);
     await request
       .agent(server)
       .ca(certificate)

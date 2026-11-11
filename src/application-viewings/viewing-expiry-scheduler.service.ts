@@ -58,7 +58,7 @@ export class ViewingExpiryScheduler implements OnModuleInit, OnModuleDestroy {
     } catch {
       this.logger.error({ signal: 'VIEWING_EXPIRY_POLL_FAILED' });
     } finally {
-      this.schedule(this.intervalMs);
+      if (!this.stopped) this.schedule(this.intervalMs);
     }
   }
   async onModuleDestroy() {

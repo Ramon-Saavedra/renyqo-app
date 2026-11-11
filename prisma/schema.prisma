@@ -27,7 +27,7 @@ enum ListingStatus {
   DRAFT     @map("draft")
   PUBLISHED @map("published")
   PAUSED    @map("paused")
-  ARCHIVED  @map("archived")
+  RETIRED   @map("retired")
   RENTED    @map("rented")
 }
 
@@ -182,7 +182,6 @@ model User {
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @updatedAt @map("updated_at")
 
-  listings     Listing[]
   applications Application[]
   listingEvents ListingEvent[] @relation("ListingEventActor")
   applicationActivities ApplicationActivity[] @relation("ApplicationActivityActor")
@@ -247,6 +246,7 @@ model ProviderWorkspace {
   updatedAt           DateTime                      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   closingAt           DateTime?                     @map("closing_at") @db.Timestamptz(3)
   closedAt            DateTime?                     @map("closed_at") @db.Timestamptz(3)
+  listings            Listing[]
   memberships         WorkspaceMembership[]
   organizationProfile OrganizationProfile?
   personalAllocations PersonalWorkspaceAllocation[]
@@ -268,6 +268,15 @@ model WorkspaceMembership {
   updatedAt    DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   workspace    ProviderWorkspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   user         User                      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  previousAssignments ListingAssignmentTransition[] @relation("AssignmentPrevious")
+  newAssignments ListingAssignmentTransition[] @relation("AssignmentNew")
+  initiatedAssignments ListingAssignmentTransition[] @relation("AssignmentInitiator")
+  approvedAssignments ListingAssignmentTransition[] @relation("AssignmentApprover")
+  outgoingListingTransfers ListingTransferRequest[] @relation("ListingTransferSource")
+  incomingListingTransfers ListingTransferRequest[] @relation("ListingTransferTarget")
+  decidedListingTransfers ListingTransferRequest[] @relation("ListingTransferDecider")
+  createdListings Listing[] @relation("ListingCreator")
+  responsibleListings Listing[] @relation("ListingResponsible")
   outgoingOwnershipIntents OwnershipTransferIntent[] @relation("TransferCurrentOwner")
   incomingOwnershipIntents OwnershipTransferIntent[] @relation("TransferTarget")
 
@@ -357,11 +366,21 @@ model PasswordResetToken {
 }
 
 model Listing {
+  assignmentTransitions ListingAssignmentTransition[]
+  transferRequests ListingTransferRequest[]
+  publicProjection PublicListingProjection?
+  tenantRoutes ListingTenantRoute[]
+
   criteriaRevisions ListingCriteriaRevision[]
   id         String        @id @default(uuid()) @db.Uuid
-  providerId String        @map("provider_id") @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  createdByMembershipId String @map("created_by_membership_id") @db.Uuid
+  responsibleMembershipId String @map("responsible_membership_id") @db.Uuid
+  revision Int @default(1)
+  assignmentSequence Int @default(1) @map("assignment_sequence")
+  retiredAt DateTime? @map("retired_at") @db.Timestamptz(3)
   status     ListingStatus @default(DRAFT)
-  displayOrder Int          @map("display_order")
+  displayOrder Int?         @map("display_order")
 
   city             String?
   zip              String?
@@ -396,7 +415,9 @@ model Listing {
   publishedAt DateTime? @map("published_at")
   rentedAt    DateTime? @map("rented_at") @db.Timestamptz(6)
 
-  provider User @relation(fields: [providerId], references: [id])
+  workspace ProviderWorkspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  createdByMembership WorkspaceMembership @relation("ListingCreator",fields:[createdByMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict,map:"listings_creator_tenant")
+  responsibleMembership WorkspaceMembership @relation("ListingResponsible",fields:[responsibleMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict,map:"listings_responsible_tenant")
 
   considerationPositions ApplicationConsiderationPosition[]
   applications Application[]
@@ -409,8 +430,8 @@ model Listing {
   @@index([status, coldRent, id])
   @@index([status, livingArea, id])
   @@index([status, availableFrom])
-  @@unique([providerId, displayOrder])
-  @@index([providerId, displayOrder, id])
+  @@unique([id,workspaceId],map:"listings_id_workspace_key")
+  @@index([workspaceId,responsibleMembershipId,id],map:"listing_responsibility")
   @@map("listings")
 }
 
@@ -567,7 +588,7 @@ enum ViewingClosureReason {
   APPLICATION_REJECTED @map("application_rejected")
   APPLICATION_ACCEPTED @map("application_accepted")
   LISTING_RENTED @map("listing_rented")
-  LISTING_ARCHIVED @map("listing_archived")
+  LISTING_RETIRED @map("listing_retired")
   ELIGIBILITY_REJECTED @map("eligibility_rejected")
   POST_VIEWING_RESPONSE_EXPIRED @map("post_viewing_response_expired")
 }
@@ -1198,4 +1219,109 @@ model VerificationDecision {
   @@index([applicationId, decidedAt, id])
   @@index([requirementId, decidedAt, id])
   @@map("verification_decisions")
+}
+
+
+enum ListingAssignmentReason {
+  INITIAL
+  OWNER_REASSIGNMENT
+  APPROVED_TRANSFER
+  MEMBERSHIP_REMOVAL
+}
+
+enum ListingTransferStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+model ListingAssignmentTransition {
+  id String @id @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  listingId String @map("listing_id") @db.Uuid
+  sequence Int
+  previousMembershipId String? @map("previous_membership_id") @db.Uuid
+  newMembershipId String @map("new_membership_id") @db.Uuid
+  reason ListingAssignmentReason
+  initiatedByMembershipId String @map("initiated_by_membership_id") @db.Uuid
+  approvedByMembershipId String? @map("approved_by_membership_id") @db.Uuid
+  transferRequestId String? @unique @map("transfer_request_id") @db.Uuid
+  commandId String @map("command_id") @db.Uuid
+  correlationId String? @map("correlation_id") @db.Uuid
+  occurredAt DateTime @default(dbgenerated("clock_timestamp()")) @map("occurred_at") @db.Timestamptz(3)
+  listing Listing @relation(fields:[listingId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict)
+  previousMembership WorkspaceMembership? @relation("AssignmentPrevious",fields:[previousMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict,map:"assignment_previous_tenant")
+  newMembership WorkspaceMembership @relation("AssignmentNew",fields:[newMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict,map:"assignment_new_tenant")
+  initiator WorkspaceMembership @relation("AssignmentInitiator",fields:[initiatedByMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict,map:"assignment_initiator_tenant")
+  approver WorkspaceMembership? @relation("AssignmentApprover",fields:[approvedByMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict,map:"assignment_approver_tenant")
+  request ListingTransferRequest? @relation(fields:[transferRequestId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict,map:"assignment_request_tenant")
+  @@unique([listingId,sequence])
+  @@unique([workspaceId,commandId])
+  @@map("listing_assignment_transitions")
+}
+
+model ListingTransferRequest {
+  id String @id @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  listingId String @map("listing_id") @db.Uuid
+  sourceMembershipId String @map("source_membership_id") @db.Uuid
+  targetMembershipId String @map("target_membership_id") @db.Uuid
+  expectedListingRevision Int @map("expected_listing_revision")
+  expectedSourceRevision Int @map("expected_source_revision")
+  expectedTargetRevision Int @map("expected_target_revision")
+  expectedOwnershipRevision Int @map("expected_ownership_revision")
+  status ListingTransferStatus @default(REQUESTED)
+  commandId String @map("command_id") @db.Uuid
+  correlationId String? @map("correlation_id") @db.Uuid
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  decidedAt DateTime? @map("decided_at") @db.Timestamptz(3)
+  decidedByMembershipId String? @map("decided_by_membership_id") @db.Uuid
+  listing Listing @relation(fields:[listingId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict)
+  sourceMembership WorkspaceMembership @relation("ListingTransferSource",fields:[sourceMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict)
+  targetMembership WorkspaceMembership @relation("ListingTransferTarget",fields:[targetMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict)
+  decider WorkspaceMembership? @relation("ListingTransferDecider",fields:[decidedByMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict)
+  assignments ListingAssignmentTransition[]
+  @@unique([id,workspaceId])
+  @@unique([workspaceId,commandId])
+  @@map("listing_transfer_requests")
+}
+
+model PublicListingProjection {
+  id String @id @db.Uuid
+  title String?
+  city String?
+  zip String?
+  district String?
+  country String
+  objectType ObjectType? @map("object_type")
+  livingArea Float? @map("living_area")
+  rooms Float?
+  bedrooms Float?
+  coldRent Float? @map("cold_rent")
+  additionalCosts Float? @map("additional_costs")
+  deposit Float?
+  depositMonths Int @map("deposit_months")
+  availableFrom DateTime? @map("available_from") @db.Timestamp(3)
+  shortDescription String? @map("short_description")
+  publicStreet String? @map("public_street")
+  photos String[]
+  publishedAt DateTime @map("published_at") @db.Timestamp(3)
+  minimumHouseholdNetIncome Float? @map("minimum_household_net_income")
+  schufaRequired Boolean @map("schufa_required")
+  incomeProofRequired Boolean @map("income_proof_required")
+  suitableForPeopleCount Int? @map("suitable_for_people_count")
+  petsPolicy PetsPolicy? @map("pets_policy")
+  smokingPolicy SmokingPolicy? @map("smoking_policy")
+  listing Listing @relation(fields:[id],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  @@map("public_listing_projections")
+}
+
+model ListingTenantRoute {
+  listingId String @id @map("listing_id") @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  listing Listing @relation(fields:[listingId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict)
+  @@map("listing_tenant_routes")
 }

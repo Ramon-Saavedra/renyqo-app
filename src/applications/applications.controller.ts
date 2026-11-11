@@ -9,9 +9,11 @@ import {
 } from '@nestjs/common';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import type { SafeUser } from '../users/types/safe-user.type';
+
 import { ApplicationsService } from './applications.service';
 import { ApplicationResponseDto } from './dto/application-response.dto';
 import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-application-action-throttler.guard';
@@ -29,11 +31,11 @@ export class ApplicationsController {
   @HttpCode(HttpStatus.CREATED)
   async apply(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ApplicationResponseDto> {
     const application = await this.applicationsService.apply(
       listingId,
-      user.id,
+      sessionAuthorityFromRequest(request),
     );
     return new ApplicationResponseDto(application);
   }

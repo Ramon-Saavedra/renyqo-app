@@ -8,9 +8,7 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import request, { type Response } from 'supertest';
 import { jest } from '@jest/globals';
 import { ApplicationAttentionQueryService } from '../src/application-attention/application-attention-query.service';
@@ -23,13 +21,13 @@ import {
   ApplicationStatus,
   ApplicationViewingStatus as ViewingStatus,
   ConversationSide,
-  ListingStatus,
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import { createPublishedListingForProvider } from './e2e-workspace-listing';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -60,7 +58,6 @@ describe('Attention read-model preparation E2E', () => {
   let now = new Date('2027-01-01T10:00:00Z');
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -87,6 +84,9 @@ describe('Attention read-model preparation E2E', () => {
       .expect(201);
     const id = body(response)['id'];
     if (typeof id !== 'string') throw new Error('Expected user id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
     return { agent, id };
   }
 
@@ -153,24 +153,7 @@ describe('Attention read-model preparation E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     queries = app.get(ApplicationAttentionQueryService);
     await app.init();
@@ -183,15 +166,15 @@ describe('Attention read-model preparation E2E', () => {
     now = new Date('2027-01-01T10:00:00Z');
     provider = await register('provider');
     applicant = await register('applicant');
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         publishedAt: now,
         title: 'Attention listing',
       },
-    });
+    );
     listingId = listing.id;
     const application = await prisma.application.create({
       data: {
@@ -223,12 +206,7 @@ describe('Attention read-model preparation E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
 
@@ -433,14 +411,11 @@ describe('Attention read-model preparation E2E', () => {
 
   it('keeps aggregate category totals independent of pagination', async () => {
     await requestDocument(ApplicationDocumentType.SCHUFA, null);
-    const secondListing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 2,
-        status: ListingStatus.PUBLISHED,
-        publishedAt: now,
-      },
-    });
+    const secondListing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      { displayOrder: 2, publishedAt: now },
+    );
     const second = await prisma.application.create({
       data: {
         listingId: secondListing.id,
@@ -526,15 +501,15 @@ describe('Attention read-model preparation E2E', () => {
 
   it('enriches the authenticated applicant listings in one batch and omits everyone else', async () => {
     await requestDocument(ApplicationDocumentType.OTHER, 'Guarantor letter');
-    const second = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    const second = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 2,
-        status: ListingStatus.PUBLISHED,
         publishedAt: new Date(now.getTime() - 1000),
         title: 'Second listing',
       },
-    });
+    );
     const secondApplication = await prisma.application.create({
       data: {
         listingId: second.id,

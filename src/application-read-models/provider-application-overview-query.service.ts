@@ -1,4 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { AuthorizationContext } from '../provider-authorization/domain/authorization.types';
+import {
+  ProviderListingAccess,
+  providerListingWhere,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
 import { activeConsiderationOrder } from '../applications/application-consideration-read';
 import { Prisma } from '../generated/prisma/client';
 import { ApplicationStatus } from '../generated/prisma/enums';
@@ -38,11 +44,12 @@ export class ProviderApplicationOverviewQueryService {
   constructor(
     private readonly workspace: ApplicationWorkspaceQueryService,
     private readonly recentExits: ProviderRecentExitsQueryService,
+    private readonly listings: ProviderListingAccess,
   ) {}
 
   private async summaries(
     tx: Prisma.TransactionClient,
-    userId: string,
+    context: AuthorizationContext,
     listings: { id: string }[],
     asOf: Date,
     retainIds: readonly string[] = [],
@@ -80,7 +87,7 @@ export class ProviderApplicationOverviewQueryService {
       }
     }
     const exits =
-      exitSelections ?? (await this.recentExits.select(tx, userId, ids));
+      exitSelections ?? (await this.recentExits.select(tx, context, ids));
     for (const [listingId, selection] of exits) {
       const total = totals.get(listingId);
       if (total) total.exited = selection.totalCount;
@@ -90,7 +97,7 @@ export class ProviderApplicationOverviewQueryService {
       const applications = await tx.application.findMany({
         where: {
           AND: [
-            providerApplicationVisibility(userId),
+            providerApplicationVisibility(context),
             { listingId: { in: ids } },
             // Retain attendance/correction candidates even after termination.
             // Skip only inactive rows without potentially relevant viewing history.
@@ -144,14 +151,18 @@ export class ProviderApplicationOverviewQueryService {
     return { totals, attention };
   }
 
-  overview(userId: string, query: ReadModelPageQueryDto) {
+  overview(actor: ProviderActor, query: ReadModelPageQueryDto) {
     const cursor = decodeReadModelCursor(query.cursor, 'listings');
-    return this.workspace.prisma.$transaction(
-      async (tx) => {
+    return this.listings.read(
+      actor,
+      'listing.overview',
+      undefined,
+      async (tx, context) => {
         const asOf = this.workspace.clock.now();
         const rows = await tx.listing.findMany({
           where: {
-            providerId: userId,
+            ...providerListingWhere(context),
+            status: { not: 'RETIRED' },
             ...(cursor
               ? {
                   OR: [
@@ -170,9 +181,12 @@ export class ProviderApplicationOverviewQueryService {
         });
         const page = rows.slice(0, query.limit);
         const totalCount = await tx.listing.count({
-          where: { providerId: userId },
+          where: {
+            ...providerListingWhere(context),
+            status: { not: 'RETIRED' },
+          },
         });
-        const { totals } = await this.summaries(tx, userId, page, asOf);
+        const { totals } = await this.summaries(tx, context, page, asOf);
         const images = await this.workspace.coverImages(
           tx,
           page.map((row) => row.id),
@@ -190,6 +204,8 @@ export class ProviderApplicationOverviewQueryService {
         });
         const hasMore = rows.length > query.limit;
         const last = page.at(-1);
+        if (last && last.displayOrder === null)
+          throw new Error('Operational listing requires display order');
         return new ReadModelPageDto(
           asOf,
           items,
@@ -200,23 +216,25 @@ export class ProviderApplicationOverviewQueryService {
               ? encodeReadModelCursor({
                   kind: 'listings',
                   id: last.id,
-                  value: last.displayOrder,
+                  value: last.displayOrder!,
                 })
               : null,
           ),
           totalCount,
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
-  listing(userId: string, listingId: string) {
-    return this.workspace.prisma.$transaction(
-      async (tx) => {
+  listing(actor: ProviderActor, listingId: string) {
+    return this.listings.read(
+      actor,
+      'listing.application-overview',
+      listingId,
+      async (tx, context) => {
         const asOf = this.workspace.clock.now();
         const listing = await tx.listing.findFirst({
-          where: { id: listingId, providerId: userId },
+          where: { id: listingId, ...providerListingWhere(context) },
           select: compactListingSelect,
         });
         if (!listing) throw new NotFoundException('Listing not found');
@@ -227,12 +245,12 @@ export class ProviderApplicationOverviewQueryService {
           orderBy: activeConsiderationOrder,
           take: 5,
         });
-        const exits = await this.recentExits.select(tx, userId, [listingId]);
+        const exits = await this.recentExits.select(tx, context, [listingId]);
         const selection = exits.get(listingId);
         if (!selection) throw new Error('Missing recent-exit selection');
         const exited = await this.recentExits.cards(
           tx,
-          userId,
+          context,
           selection.items,
           asOf,
         );
@@ -245,7 +263,7 @@ export class ProviderApplicationOverviewQueryService {
           );
         const summaries = await this.summaries(
           tx,
-          userId,
+          context,
           [listing],
           asOf,
           active.map((row) => row.id),
@@ -287,7 +305,6 @@ export class ProviderApplicationOverviewQueryService {
           }),
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 }

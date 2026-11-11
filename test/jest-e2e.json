@@ -3,6 +3,7 @@
   "rootDir": ".",
   "testEnvironment": "node",
   "setupFiles": ["<rootDir>/e2e-environment.ts"],
+  "setupFilesAfterEnv": ["<rootDir>/e2e-suite-hooks.ts"],
   "testRegex": ".e2e-spec.ts$",
   "transform": {
     "[/\\\\]node_modules[/\\\\]cookie[/\\\\].+\\.js$": [
@@ -23,7 +24,8 @@
     ]
   },
   "moduleNameMapper": {
-    "^(\\.{1,2}/.*)\\.js$": "$1"
+    "^(\\.{1,2}/.*)\\.js$": "$1",
+    "^cookie$": "<rootDir>/cookie-vm-shim.cjs"
   },
   "transformIgnorePatterns": ["node_modules[/\\\\](?!cookie[/\\\\])"]
 }

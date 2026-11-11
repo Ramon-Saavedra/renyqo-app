@@ -1,4 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
+import { unitProvider } from '../../test/unit-workspace-authority';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -49,6 +50,7 @@ describe('MeService', () => {
 
       const result = await service.getOnboardingState(
         makeSafeUser(Role.PROVIDER),
+        unitProvider(USER_ID),
       );
 
       expect(result).toEqual({
@@ -63,6 +65,7 @@ describe('MeService', () => {
 
       const result = await service.getOnboardingState(
         makeSafeUser(Role.PROVIDER),
+        unitProvider(USER_ID),
       );
 
       expect(result).toEqual({

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { jest } from '@jest/globals';
-import { connected, quietPeriod, realtimeTestApp } from './realtime-test-app';
+import { connected, realtimeTestApp } from './realtime-test-app';
+import { waitForDomainEvents } from './e2e-realtime-sync';
 import { Role } from '../src/generated/prisma/enums';
 import {
   ViewingWorkflowCommandService,
@@ -14,7 +15,6 @@ import { OutboxWriter } from '../src/outbox/outbox-writer.service';
 import { RealtimeOutboxPublisher } from '../src/realtime/realtime-outbox.publisher';
 import { RealtimeEventRouter } from '../src/realtime/realtime-event-router.service';
 import type { OutboxEvent } from '../src/generated/prisma/client';
-
 const VIEWING = 'application.viewing.changed',
   LIFECYCLE = 'application.lifecycle.changed';
 describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
@@ -50,12 +50,8 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
   async function fixture() {
     const provider = await context.user(Role.PROVIDER),
       applicant = await person();
-    const listing = await context.prisma.listing.create({
-      data: {
-        providerId: provider.userId,
-        displayOrder: 1,
-        status: 'PUBLISHED',
-      },
+    const listing = await context.publishedListing(provider.userId, {
+      displayOrder: 1,
     });
     const application = await context.prisma.application.create({
       data: {
@@ -103,7 +99,9 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
     });
     const result = await commands().execute(
       f.application.id,
-      side === 'provider' ? f.provider.userId : f.applicant.userId,
+      side === 'provider'
+        ? await context.providerActor(f.provider.userId)
+        : await context.applicantAuthority(f.applicant.userId),
       side,
       command,
     );
@@ -222,7 +220,7 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
     expect(
       await commands().execute(
         f.application.id,
-        f.applicant.userId,
+        await context.applicantAuthority(f.applicant.userId),
         'applicant',
         accept,
       ),
@@ -337,10 +335,15 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
       throw new Error('forced outbox rollback');
     });
     await expect(
-      commands().execute(f.application.id, f.provider.userId, 'provider', {
-        action: 'invite',
-        body: { ...(await body(f)), ...schedule() },
-      }),
+      commands().execute(
+        f.application.id,
+        await context.providerActor(f.provider.userId),
+        'provider',
+        {
+          action: 'invite',
+          body: { ...(await body(f)), ...schedule() },
+        },
+      ),
     ).rejects.toThrow('forced outbox rollback');
     expect(
       await context.prisma.viewingWorkflow.count({
@@ -381,7 +384,10 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
       return row;
     });
     await expect(
-      curation().reject(f.application.id, f.provider.userId),
+      curation().reject(
+        f.application.id,
+        await context.providerActor(f.provider.userId),
+      ),
     ).rejects.toThrow('forced lifecycle rollback');
     expect(
       (
@@ -422,10 +428,15 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
       action: 'invite',
       body: { ...(await body(f)), ...schedule() },
     });
+    const applicantWaits = Promise.all([
+      waitForDomainEvents(sockets[2], 2),
+      waitForDomainEvents(sockets[3], 2),
+    ]);
     await publish(invitation.event);
     await publish(invitation.event);
-    await quietPeriod();
-    for (const rows of received.slice(0, 4)) {
+    await applicantWaits;
+    for (const rows of received.slice(0, 2)) expect(rows).toEqual([]);
+    for (const rows of received.slice(2, 4)) {
       expect(rows).toHaveLength(2);
       expect(rows[0]).toEqual(rows[1]);
       expect(rows[0]).toMatchObject({
@@ -437,10 +448,18 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
     }
     expect(received[4]).toEqual([]);
     for (const rows of received) rows.length = 0;
-    await curation().reject(f.application.id, f.provider.userId);
+    await curation().reject(
+      f.application.id,
+      await context.providerActor(f.provider.userId),
+    );
+    const lifecycleWaits = Promise.all([
+      waitForDomainEvents(sockets[2], 1),
+      waitForDomainEvents(sockets[3], 1),
+    ]);
     await publish(await lifecycleEvent(f));
-    await quietPeriod();
-    for (const rows of received.slice(0, 4)) expect(rows).toHaveLength(1);
+    await lifecycleWaits;
+    for (const rows of received.slice(0, 2)) expect(rows).toEqual([]);
+    for (const rows of received.slice(2, 4)) expect(rows).toHaveLength(1);
     expect(received[4]).toEqual([]);
     for (const socket of sockets) socket.disconnect();
   });
@@ -459,20 +478,41 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
     });
     const attention = context.app.get(ApplicationAttentionQueryService);
     expect(
-      (await attention.detail(f.provider.userId, 'provider', f.application.id))
-        .actionableUnreadMessageCount,
+      (
+        await attention.detail(
+          await context.providerActor(f.provider.userId),
+          'provider',
+          f.application.id,
+        )
+      ).actionableUnreadMessageCount,
     ).toBe(1);
-    await curation().reject(f.application.id, f.provider.userId);
+    await curation().reject(
+      f.application.id,
+      await context.providerActor(f.provider.userId),
+    );
     expect(
-      (await attention.detail(f.provider.userId, 'provider', f.application.id))
-        .actionableUnreadMessageCount,
+      (
+        await attention.detail(
+          await context.providerActor(f.provider.userId),
+          'provider',
+          f.application.id,
+        )
+      ).actionableUnreadMessageCount,
     ).toBe(0);
     const rejected = await lifecycleEvent(f);
     await release(f);
-    await curation().restore(f.application.id, f.provider.userId);
+    await curation().restore(
+      f.application.id,
+      await context.providerActor(f.provider.userId),
+    );
     expect(
-      (await attention.detail(f.provider.userId, 'provider', f.application.id))
-        .actionableUnreadMessageCount,
+      (
+        await attention.detail(
+          await context.providerActor(f.provider.userId),
+          'provider',
+          f.application.id,
+        )
+      ).actionableUnreadMessageCount,
     ).toBe(1);
     expect(
       (
@@ -488,14 +528,15 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
         })
       ).applicantRepliesEnabled,
     ).toBe(true);
-    const socket = context.client(f.provider.cookie),
+    const socket = context.client(f.applicant.cookie),
       received: unknown[] = [];
     socket.on('domain-event', (e: unknown) => received.push(e));
     await connected(socket);
     const restored = await lifecycleEvent(f);
+    const deliveries = waitForDomainEvents(socket, 2);
     await publish(rejected);
     await publish(restored);
-    await quietPeriod();
+    await deliveries;
     expect(received).toHaveLength(2);
     expect(JSON.stringify(received)).not.toContain('PRIVATE');
     socket.disconnect();
@@ -515,7 +556,10 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
       s.on('domain-event', (e: unknown) => received[i].push(e)),
     );
     await Promise.all(sockets.map((s) => connected(s)));
-    await curation().reject(f.application.id, f.provider.userId);
+    await curation().reject(
+      f.application.id,
+      await context.providerActor(f.provider.userId),
+    );
     await release(f);
     for (let index = 0; index < 5; index++) {
       const user = await person();
@@ -528,7 +572,10 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
         },
       });
     }
-    await curation().restore(f.application.id, f.provider.userId);
+    await curation().restore(
+      f.application.id,
+      await context.providerActor(f.provider.userId),
+    );
     expect(
       (
         await context.prisma.application.findUniqueOrThrow({
@@ -536,18 +583,10 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
         })
       ).status,
     ).toBe('WAITING');
+    const applicantWait = waitForDomainEvents(sockets[1], 1);
     await publish(invitation.event);
-    await quietPeriod();
-    expect(received[0]).toEqual([
-      {
-        eventId: invitation.event.id,
-        type: 'listing.applications.changed',
-        schemaVersion: 1,
-        occurredAt: invitation.event.occurredAt.toISOString(),
-        listingId: f.listing.id,
-        payload: {},
-      },
-    ]);
+    await applicantWait;
+    expect(received[0]).toEqual([]);
     expect(received[1][0]).toMatchObject({
       applicationId: f.application.id,
       type: VIEWING,
@@ -577,12 +616,15 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
       return routes(event);
     });
     received[0].length = 0;
+    received[1].length = 0;
+    const secondApplicant = waitForDomainEvents(sockets[1], 1);
     await publish(invitation.event);
-    await quietPeriod();
-    expect(received[0][0]).toMatchObject({
-      type: 'listing.applications.changed',
+    await secondApplicant;
+    expect(received[0]).toEqual([]);
+    expect(received[1][0]).toMatchObject({
+      type: VIEWING,
+      applicationId: f.application.id,
     });
-    expect(received[0][0]).not.toHaveProperty('applicationId');
     for (const socket of sockets) socket.disconnect();
   });
   it('invalidates promotion, withdrawal, rental selection and historical applications on archive without needing viewings', async () => {
@@ -597,7 +639,10 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
     });
     await context.app
       .get(ApplicationLifecycleService)
-      .withdraw(f.application.id, f.applicant.userId);
+      .withdraw(
+        f.application.id,
+        await context.applicantAuthority(f.applicant.userId),
+      );
     expect(await lifecycleEvent(f)).toBeDefined();
     expect(
       (
@@ -613,9 +658,13 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
     ).toBe(1);
     await context.app
       .get(ListingsService)
-      .rentListing(f.listing.id, f.provider.userId, {
-        selectedApplicationId: candidate.id,
-      });
+      .rentListing(
+        f.listing.id,
+        await context.providerActor(f.provider.userId),
+        {
+          selectedApplicationId: candidate.id,
+        },
+      );
     expect(
       (
         await context.prisma.application.findUniqueOrThrow({
@@ -631,16 +680,20 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
     const archive = await fixture();
     await context.app
       .get(ListingsService)
-      .archive(archive.listing.id, archive.provider.userId);
+      .retire(
+        archive.listing.id,
+        await context.providerActor(archive.provider.userId),
+      );
     expect(await lifecycleEvent(archive)).toMatchObject({
       payload: { listingId: archive.listing.id },
     });
-    const socket = context.client(f.provider.cookie),
+    const socket = context.client(f.applicant.cookie),
       events: unknown[] = [];
     socket.on('domain-event', (e: unknown) => events.push(e));
     await connected(socket);
+    const lifecycle = waitForDomainEvents(socket, 1);
     await publish(await lifecycleEvent(f));
-    await quietPeriod();
+    await lifecycle;
     expect(events[0]).toMatchObject({
       type: LIFECYCLE,
       applicationId: f.application.id,
@@ -661,14 +714,14 @@ describe('Viewing/lifecycle transactional invalidation and Socket.IO', () => {
     oldSocket.on('domain-event', (e: unknown) => old.push(e));
     newSocket.on('domain-event', (e: unknown) => current.push(e));
     await Promise.all([connected(oldSocket), connected(newSocket)]);
-    await context.prisma.listing.update({
-      where: { id: f.listing.id },
-      data: { providerId: newOwner.userId },
-    });
+    const applicant = context.client(f.applicant.cookie);
+    await connected(applicant);
+    const applicantWait = waitForDomainEvents(applicant, 1);
     await publish(invitation.event);
-    await quietPeriod();
+    await applicantWait;
     expect(old).toEqual([]);
-    expect(current[0]).toMatchObject({ applicationId: f.application.id });
+    expect(current).toEqual([]);
+    applicant.disconnect();
     oldSocket.disconnect();
     newSocket.disconnect();
   });

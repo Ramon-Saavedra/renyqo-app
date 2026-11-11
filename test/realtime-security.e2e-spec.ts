@@ -136,7 +136,7 @@ describe('Realtime session security', () => {
       const error = await handshakeError(disabled.client(owner.cookie));
       expect(error.data?.code).toBeUndefined();
     } finally {
-      await disabled.close();
+      await disabled.close({ finalize: false });
     }
   });
 
@@ -157,7 +157,7 @@ describe('Realtime session security', () => {
       expect(rated.data?.code).toBeUndefined();
       socket.disconnect();
     } finally {
-      await limited.close();
+      await limited.close({ finalize: false });
     }
   });
 

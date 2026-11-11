@@ -1,9 +1,10 @@
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { DocumentApplicationParamsDto } from './dto/document-input.dto';
 import {
   OutstandingRequirementsQueryDto,
@@ -12,18 +13,18 @@ import {
 import { VerificationQueryService } from './verification-query.service';
 
 @Controller('provider/applications/:applicationId/verification-requirements')
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 export class ProviderVerificationRequirementsController {
   constructor(private readonly queries: VerificationQueryService) {}
   @Get()
   list(
     @Param() params: DocumentApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Query() query: ProviderRequirementsQueryDto,
   ) {
     return this.queries.requirements(
       params.applicationId,
-      user.id,
+      providerActorFromRequest(request),
       'provider',
       query,
     );
@@ -37,12 +38,12 @@ export class ApplicantVerificationRequirementsController {
   @Get()
   list(
     @Param() params: DocumentApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Query() query: OutstandingRequirementsQueryDto,
   ) {
     return this.queries.requirements(
       params.applicationId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
       query,
     );

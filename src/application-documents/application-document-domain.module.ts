@@ -1,3 +1,5 @@
+import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
 import { VerificationSubjectService } from './verification-subject.service';
 import { VerificationCommandReceiptService } from './verification-command-receipt.service';
 import { VerificationRequirementService } from './verification-requirement.service';
@@ -12,7 +14,12 @@ import { ApplicationDocumentStorageService } from './application-document-storag
 import { ApplicationDocumentFinalizationService } from './application-document-finalization.service';
 
 @Module({
-  imports: [ConfigModule, PrismaModule],
+  imports: [
+    ProviderAuthorizationModule,
+    ListingConsumerAccessModule,
+    ConfigModule,
+    PrismaModule,
+  ],
   providers: [
     VerificationSubjectService,
     VerificationCommandReceiptService,

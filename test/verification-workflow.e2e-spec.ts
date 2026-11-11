@@ -304,7 +304,7 @@ describe('Phase 3 verification workflow HTTP (isolated PostgreSQL)', () => {
       .expect(401);
     await h.applicant.agent
       .get(`${providerPath(id)}/verification-requirements`)
-      .expect(403);
+      .expect(404);
     await h.foreignProvider.agent
       .get(`${providerPath(id)}/verification-subjects`)
       .expect(404);
@@ -316,7 +316,7 @@ describe('Phase 3 verification workflow HTTP (isolated PostgreSQL)', () => {
       'post',
       `${providerPath(id)}/verification-commands`,
       requestCommand(),
-      403,
+      404,
       randomUUID(),
     );
     await h.provider.agent

@@ -63,6 +63,16 @@ prisma.config.js
 prisma.config.js.map
 prisma.config.d.ts
 
+# Local E2E/lint diagnostic captures (manual redirects)
+/e2e-full-output*.txt
+/e2e-full-latest.txt
+/e2e-full-gate.txt
+/e2e-targeted*.txt
+/*-fail.txt
+/lint-output.txt
+/unit-gate.txt
+/realtime-cluster-run.txt
+
 # Local agent and automation instructions
 AGENTS.md
 CLAUDE.md

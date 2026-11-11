@@ -1,3 +1,6 @@
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import {
   Body,
   Controller,
@@ -8,9 +11,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ReadModelPageQueryDto } from '../application-read-models/dto/read-model-input.dto';
 import { DocumentApplicationParamsDto } from './dto/document-input.dto';
 import {
@@ -21,7 +21,7 @@ import { VerificationSubjectService } from './verification-subject.service';
 import { VerificationQueryService } from './verification-query.service';
 
 @Controller('provider/applications/:applicationId/verification-subjects')
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 export class ProviderVerificationSubjectsController {
   constructor(
     private readonly subjects: VerificationSubjectService,
@@ -31,21 +31,25 @@ export class ProviderVerificationSubjectsController {
   @Get()
   list(
     @Param() params: DocumentApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Query() query: ReadModelPageQueryDto,
   ) {
-    return this.queries.subjects(params.applicationId, user.id, query);
+    return this.queries.subjects(
+      params.applicationId,
+      providerActorFromRequest(request),
+      query,
+    );
   }
 
   @Put('household-members/:subjectKey')
   async create(
     @Param() params: VerificationSubjectParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Body() dto: HouseholdSubjectDto,
   ) {
     const subject = await this.subjects.householdMember(
       params.applicationId,
-      user.id,
+      providerActorFromRequest(request),
       params.subjectKey,
       dto.displayLabel,
     );

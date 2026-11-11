@@ -1,3 +1,6 @@
+import type { Request } from 'express';
+import { Req } from '@nestjs/common';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import { Controller, Get, UseGuards } from '@nestjs/common';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
@@ -14,7 +17,13 @@ export class MeController {
   @Get('onboarding-state')
   async getOnboardingState(
     @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<OnboardingState> {
-    return this.meService.getOnboardingState(user);
+    return this.meService.getOnboardingState(
+      user,
+      request.header('x-workspace-id')
+        ? providerActorFromRequest(request)
+        : undefined,
+    );
   }
 }

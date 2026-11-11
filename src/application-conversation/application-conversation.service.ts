@@ -1,4 +1,9 @@
 import {
+  ApplicationListingAccess,
+  actorUserId as actorIdentity,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -12,7 +17,6 @@ import {
 } from '../generated/prisma/enums';
 import { ApplicationActivityService } from '../applications/application-activity.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ConversationOutboxProducer } from '../outbox/conversation-outbox.producer';
 import { ApplicationMessageService } from './application-message.service';
 import { conversationCapabilities } from './application-conversation.policy';
@@ -32,6 +36,7 @@ import {
 export class ApplicationConversationService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly listingBoundary: ApplicationListingAccess,
     private readonly messages: ApplicationMessageService,
     private readonly activity: ApplicationActivityService,
     private readonly access: ApplicationConversationAccessService,
@@ -40,10 +45,17 @@ export class ApplicationConversationService {
 
   summary(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     side: ConversationSide,
   ): Promise<ConversationSummaryResponseDto> {
-    return this.prisma.$transaction(
+    const userId = actorIdentity(actor);
+    return this.listingBoundary.read(
+      actor,
+      side === ConversationSide.PROVIDER ? 'provider' : 'applicant',
+      applicationId,
+      async (tx) => {
+        await this.access.authorize(tx, applicationId, userId, side);
+      },
       async (tx) => {
         const application = await this.access.authorize(
           tx,
@@ -53,17 +65,23 @@ export class ApplicationConversationService {
         );
         return this.toSummary(tx, application, side);
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
   detail(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     side: ConversationSide,
     query: ConversationQueryDto,
   ): Promise<ConversationDetailResponseDto> {
-    return this.prisma.$transaction(
+    const userId = actorIdentity(actor);
+    return this.listingBoundary.read(
+      actor,
+      side === ConversationSide.PROVIDER ? 'provider' : 'applicant',
+      applicationId,
+      async (tx) => {
+        await this.access.authorize(tx, applicationId, userId, side);
+      },
       async (tx) => {
         const application = await this.access.authorize(
           tx,
@@ -81,118 +99,135 @@ export class ApplicationConversationService {
           page.hasMore,
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
   send(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     side: ConversationSide,
     body: string,
   ): Promise<ApplicationMessageResponseDto> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const application = await this.access.lockAndAuthorize(
-        tx,
-        applicationId,
-        userId,
-        side,
-      );
-      const summary = await this.toSummary(tx, application, side);
-      if (!summary.canCurrentUserSend) {
-        throw new ConflictException(
-          'The conversation does not allow this side to send now',
+    const userId = actorIdentity(actor);
+    return this.listingBoundary.mutate(
+      actor,
+      side === ConversationSide.PROVIDER ? 'provider' : 'applicant',
+      applicationId,
+      async (tx) => {
+        await this.access.authorize(tx, applicationId, userId, side);
+      },
+      async (tx) => {
+        const application = await this.access.lockAndAuthorize(
+          tx,
+          applicationId,
+          userId,
+          side,
         );
-      }
-      const validatedBody = this.messages.validateBody(body);
-      let conversationId = application.conversation?.id;
-      if (!conversationId) {
-        const conversation = await tx.applicationConversation.create({
-          data: { applicationId },
-        });
-        conversationId = conversation.id;
+        const summary = await this.toSummary(tx, application, side);
+        if (!summary.canCurrentUserSend) {
+          throw new ConflictException(
+            'The conversation does not allow this side to send now',
+          );
+        }
+        const validatedBody = this.messages.validateBody(body);
+        let conversationId = application.conversation?.id;
+        if (!conversationId) {
+          const conversation = await tx.applicationConversation.create({
+            data: { applicationId },
+          });
+          conversationId = conversation.id;
+          await this.activity.appendWithinTransaction(tx, {
+            applicationId,
+            type: ApplicationActivityType.CONVERSATION_OPENED,
+            actorUserId: userId,
+            actorType: ApplicationActivityActorType.PROVIDER,
+            visibility: ApplicationActivityVisibility.BOTH,
+            occurredAt: conversation.openedAt,
+          });
+        }
+        const message = await this.messages.appendWithinTransaction(
+          tx,
+          conversationId,
+          side,
+          (summary.lastMessage?.sequence ?? 0) + 1,
+          validatedBody,
+        );
         await this.activity.appendWithinTransaction(tx, {
           applicationId,
-          type: ApplicationActivityType.CONVERSATION_OPENED,
+          type: ApplicationActivityType.MESSAGE_SENT,
           actorUserId: userId,
-          actorType: ApplicationActivityActorType.PROVIDER,
+          actorType:
+            side === ConversationSide.PROVIDER
+              ? ApplicationActivityActorType.PROVIDER
+              : ApplicationActivityActorType.APPLICANT,
           visibility: ApplicationActivityVisibility.BOTH,
-          occurredAt: conversation.openedAt,
+          occurredAt: message.createdAt,
         });
-      }
-      const message = await this.messages.appendWithinTransaction(
-        tx,
-        conversationId,
-        side,
-        (summary.lastMessage?.sequence ?? 0) + 1,
-        validatedBody,
-      );
-      await this.activity.appendWithinTransaction(tx, {
-        applicationId,
-        type: ApplicationActivityType.MESSAGE_SENT,
-        actorUserId: userId,
-        actorType:
-          side === ConversationSide.PROVIDER
-            ? ApplicationActivityActorType.PROVIDER
-            : ApplicationActivityActorType.APPLICANT,
-        visibility: ApplicationActivityVisibility.BOTH,
-        occurredAt: message.createdAt,
-      });
-      await this.outbox.messageCreated(tx, {
-        applicationId,
-        conversationId,
-        occurredAt: message.createdAt,
-        messageId: message.id,
-        messageSequence: message.sequence,
-      });
-      return this.messages.toDto(message);
-    });
+        await this.outbox.messageCreated(tx, {
+          applicationId,
+          conversationId,
+          occurredAt: message.createdAt,
+          messageId: message.id,
+          messageSequence: message.sequence,
+        });
+        return this.messages.toDto(message);
+      },
+    );
   }
 
   markRead(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     side: ConversationSide,
     throughSequence: number,
   ): Promise<MarkConversationReadResponseDto> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const application = await this.access.lockAndAuthorize(
-        tx,
-        applicationId,
-        userId,
-        side,
-      );
-      if (!application.conversation) {
-        return new MarkConversationReadResponseDto(0);
-      }
-      const snapshot = await this.messages.snapshot(
-        tx,
-        application.conversation.id,
-        side,
-      );
-      if (throughSequence > (snapshot.lastMessage?.sequence ?? 0)) {
-        throw new BadRequestException(
-          'throughSequence exceeds the last message',
-        );
-      }
-      const count = await this.messages.markReadWithinTransaction(
-        tx,
-        application.conversation.id,
-        side,
-        throughSequence,
-      );
-      if (count > 0) {
-        await this.outbox.readAdvanced(tx, {
+    const userId = actorIdentity(actor);
+    return this.listingBoundary.mutate(
+      actor,
+      side === ConversationSide.PROVIDER ? 'provider' : 'applicant',
+      applicationId,
+      async (tx) => {
+        await this.access.authorize(tx, applicationId, userId, side);
+      },
+      async (tx) => {
+        const application = await this.access.lockAndAuthorize(
+          tx,
           applicationId,
-          conversationId: application.conversation.id,
-          occurredAt: new Date(),
-          readerSide: side,
+          userId,
+          side,
+        );
+        if (!application.conversation) {
+          return new MarkConversationReadResponseDto(0);
+        }
+        const snapshot = await this.messages.snapshot(
+          tx,
+          application.conversation.id,
+          side,
+        );
+        if (throughSequence > (snapshot.lastMessage?.sequence ?? 0)) {
+          throw new BadRequestException(
+            'throughSequence exceeds the last message',
+          );
+        }
+        const count = await this.messages.markReadWithinTransaction(
+          tx,
+          application.conversation.id,
+          side,
           throughSequence,
-          markedCount: count,
-        });
-      }
-      return new MarkConversationReadResponseDto(count);
-    });
+        );
+        if (count > 0) {
+          await this.outbox.readAdvanced(tx, {
+            applicationId,
+            conversationId: application.conversation.id,
+            occurredAt: new Date(),
+            readerSide: side,
+            throughSequence,
+            markedCount: count,
+          });
+        }
+        return new MarkConversationReadResponseDto(count);
+      },
+    );
   }
 
   private async toSummary(

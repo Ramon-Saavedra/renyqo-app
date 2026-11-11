@@ -1,3 +1,10 @@
+import {
+  unitProviderOperations,
+  UNIT_WORKSPACE_ID,
+  UNIT_MEMBERSHIP_ID,
+} from '../../test/unit-workspace-authority';
+import { ProviderListingAccess } from '../provider-authorization/provider-listing-access';
+import { unitProvider } from '../../test/unit-workspace-authority';
 import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
 import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
 import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
@@ -42,6 +49,9 @@ type ListingsTransactionMock = {
   listing: {
     create: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
     findMany: jest.MockedFunction<(args?: unknown) => Promise<unknown[]>>;
+    findUniqueOrThrow: jest.MockedFunction<
+      (args?: unknown) => Promise<Listing>
+    >;
     findFirst: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
     findUnique: jest.MockedFunction<
       (args?: unknown) => Promise<Listing | null>
@@ -80,7 +90,12 @@ type PrismaMock = ListingsTransactionMock & {
 
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
-  providerId: PROVIDER_ID,
+  workspaceId: UNIT_WORKSPACE_ID,
+  createdByMembershipId: UNIT_MEMBERSHIP_ID,
+  responsibleMembershipId: UNIT_MEMBERSHIP_ID,
+  revision: 1,
+  assignmentSequence: 1,
+  retiredAt: null,
   status: ListingStatus.DRAFT,
   city: 'Berlin',
   zip: '10115',
@@ -134,6 +149,13 @@ describe('ListingsService', () => {
 
     prismaMock = {
       listing: {
+        findUniqueOrThrow: jest.fn<(args?: unknown) => Promise<Listing>>(
+          async (args) => {
+            const row = await prismaMock.listing.findFirst(args);
+            if (!row) throw new NotFoundException('Listing not found');
+            return row as Listing;
+          },
+        ),
         create: jest.fn<(args?: unknown) => Promise<Listing>>(),
         findMany: jest.fn<(args?: unknown) => Promise<unknown[]>>(),
         findFirst: jest.fn<(args?: unknown) => Promise<unknown>>(),
@@ -209,6 +231,10 @@ describe('ListingsService', () => {
         },
         ListingsService,
         {
+          provide: ProviderListingAccess,
+          useValue: unitProviderOperations(prismaMock),
+        },
+        {
           provide: ApplicationActivityService,
           useValue: activityService,
         },
@@ -217,6 +243,7 @@ describe('ListingsService', () => {
           useValue: {
             getNextDisplayOrder: jest.fn(() => Promise.resolve(1)),
             move: jest.fn(),
+            compactWithinTransaction: jest.fn(),
           },
         },
         { provide: PrismaService, useValue: prismaMock },
@@ -259,9 +286,9 @@ describe('ListingsService', () => {
     it('throws UnprocessableEntityException with missingFields when required fields are absent', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(makeRawListing());
 
-      await expect(service.publish(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
-        UnprocessableEntityException,
-      );
+      await expect(
+        service.publish(LISTING_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(UnprocessableEntityException);
       expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
     });
 
@@ -275,13 +302,17 @@ describe('ListingsService', () => {
       };
       mockStatusWrite(listing, published);
 
-      const result = await service.publish(LISTING_ID, PROVIDER_ID);
+      const result = await service.publish(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             id: LISTING_ID,
-            providerId: PROVIDER_ID,
+            workspaceId: UNIT_WORKSPACE_ID,
+            revision: 1,
             status: ListingStatus.DRAFT,
             publishedAt: null,
           },
@@ -302,7 +333,7 @@ describe('ListingsService', () => {
         status: ListingStatus.PUBLISHED,
       });
 
-      await service.publish(LISTING_ID, PROVIDER_ID);
+      await service.publish(LISTING_ID, unitProvider(PROVIDER_ID));
 
       expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -314,14 +345,14 @@ describe('ListingsService', () => {
     it.each([
       ListingStatus.PUBLISHED,
       ListingStatus.PAUSED,
-      ListingStatus.ARCHIVED,
+      ListingStatus.RETIRED,
       ListingStatus.RENTED,
     ])('rejects publish from %s', async (status) => {
       prismaMock.listing.findFirst.mockResolvedValue(completeDraft({ status }));
 
-      await expect(service.publish(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.publish(LISTING_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(ConflictException);
       expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
     });
 
@@ -329,13 +360,13 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst
         .mockResolvedValueOnce(completeDraft())
         .mockResolvedValueOnce(
-          completeDraft({ status: ListingStatus.ARCHIVED }),
+          completeDraft({ status: ListingStatus.RETIRED }),
         );
       prismaMock.listing.updateMany.mockResolvedValue({ count: 0 });
 
-      await expect(service.publish(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.publish(LISTING_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(ConflictException);
     });
   });
 
@@ -350,13 +381,17 @@ describe('ListingsService', () => {
           status: ListingStatus.DRAFT,
         });
 
-        const result = await service.moveToDraft(LISTING_ID, PROVIDER_ID);
+        const result = await service.moveToDraft(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        );
 
         expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
           expect.objectContaining({
             where: {
               id: LISTING_ID,
-              providerId: PROVIDER_ID,
+              workspaceId: UNIT_WORKSPACE_ID,
+              revision: 1,
               status,
             },
             data: { status: ListingStatus.DRAFT },
@@ -367,20 +402,19 @@ describe('ListingsService', () => {
       },
     );
 
-    it.each([
-      ListingStatus.DRAFT,
-      ListingStatus.ARCHIVED,
-      ListingStatus.RENTED,
-    ])('rejects draft from %s', async (status) => {
-      prismaMock.listing.findFirst.mockResolvedValue(
-        makeRawListing({ status }),
-      );
+    it.each([ListingStatus.DRAFT, ListingStatus.RETIRED, ListingStatus.RENTED])(
+      'rejects draft from %s',
+      async (status) => {
+        prismaMock.listing.findFirst.mockResolvedValue(
+          makeRawListing({ status }),
+        );
 
-      await expect(
-        service.moveToDraft(LISTING_ID, PROVIDER_ID),
-      ).rejects.toThrow(ConflictException);
-      expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
-    });
+        await expect(
+          service.moveToDraft(LISTING_ID, unitProvider(PROVIDER_ID)),
+        ).rejects.toThrow(ConflictException);
+        expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('pause', () => {
@@ -392,13 +426,14 @@ describe('ListingsService', () => {
       });
       mockStatusWrite(listing, { ...listing, status: ListingStatus.PAUSED });
 
-      const result = await service.pause(LISTING_ID, PROVIDER_ID);
+      const result = await service.pause(LISTING_ID, unitProvider(PROVIDER_ID));
 
       expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             id: LISTING_ID,
-            providerId: PROVIDER_ID,
+            workspaceId: UNIT_WORKSPACE_ID,
+            revision: 1,
             status: ListingStatus.PUBLISHED,
           },
           data: { status: ListingStatus.PAUSED },
@@ -411,16 +446,16 @@ describe('ListingsService', () => {
     it.each([
       ListingStatus.DRAFT,
       ListingStatus.PAUSED,
-      ListingStatus.ARCHIVED,
+      ListingStatus.RETIRED,
       ListingStatus.RENTED,
     ])('rejects pause from %s', async (status) => {
       prismaMock.listing.findFirst.mockResolvedValue(
         makeRawListing({ status }),
       );
 
-      await expect(service.pause(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.pause(LISTING_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(ConflictException);
       expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
     });
 
@@ -428,7 +463,7 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.pause(OTHER_LISTING_ID, PROVIDER_ID),
+        service.pause(OTHER_LISTING_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -442,9 +477,9 @@ describe('ListingsService', () => {
         );
       prismaMock.listing.updateMany.mockResolvedValue({ count: 0 });
 
-      await expect(service.pause(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.pause(LISTING_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(ConflictException);
     });
   });
 
@@ -460,13 +495,17 @@ describe('ListingsService', () => {
         status: ListingStatus.PUBLISHED,
       });
 
-      const result = await service.resume(LISTING_ID, PROVIDER_ID);
+      const result = await service.resume(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             id: LISTING_ID,
-            providerId: PROVIDER_ID,
+            workspaceId: UNIT_WORKSPACE_ID,
+            revision: 1,
             status: ListingStatus.PAUSED,
           },
           data: { status: ListingStatus.PUBLISHED },
@@ -479,59 +518,64 @@ describe('ListingsService', () => {
     it.each([
       ListingStatus.DRAFT,
       ListingStatus.PUBLISHED,
-      ListingStatus.ARCHIVED,
+      ListingStatus.RETIRED,
       ListingStatus.RENTED,
     ])('rejects resume from %s', async (status) => {
       prismaMock.listing.findFirst.mockResolvedValue(
         makeRawListing({ status }),
       );
 
-      await expect(service.resume(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.resume(LISTING_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(ConflictException);
       expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
     });
   });
 
-  describe('archive', () => {
+  describe('retire', () => {
     it.each([
       ListingStatus.DRAFT,
       ListingStatus.PUBLISHED,
       ListingStatus.PAUSED,
-    ])('archives %s without changing publishedAt', async (status) => {
+      ListingStatus.RENTED,
+    ])('retires %s without changing publishedAt', async (status) => {
       const publishedAt = new Date('2020-01-01T00:00:00.000Z');
       const listing = makeRawListing({ status, publishedAt });
       mockStatusWrite(listing, {
         ...listing,
-        status: ListingStatus.ARCHIVED,
+        status: ListingStatus.RETIRED,
       });
 
-      const result = await service.archive(LISTING_ID, PROVIDER_ID);
+      const result = await service.retire(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(prismaMock.listing.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             id: LISTING_ID,
-            providerId: PROVIDER_ID,
+            workspaceId: UNIT_WORKSPACE_ID,
+            revision: 1,
             status,
           },
-          data: { status: ListingStatus.ARCHIVED },
+          data: { status: ListingStatus.RETIRED },
         }),
       );
-      expect(result.status).toBe(ListingStatus.ARCHIVED);
+      expect(result.status).toBe(ListingStatus.RETIRED);
       expect(result.publishedAt).toEqual(publishedAt);
     });
 
-    it.each([ListingStatus.ARCHIVED, ListingStatus.RENTED])(
-      'rejects archive from %s',
+    it.each([ListingStatus.RETIRED])(
+      'rejects retirement from %s',
       async (status) => {
         prismaMock.listing.findFirst.mockResolvedValue(
           makeRawListing({ status }),
         );
 
-        await expect(service.archive(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
-          ConflictException,
-        );
+        await expect(
+          service.retire(LISTING_ID, unitProvider(PROVIDER_ID)),
+        ).rejects.toThrow(ConflictException);
         expect(prismaMock.listing.updateMany).not.toHaveBeenCalled();
       },
     );
@@ -540,7 +584,7 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.archive(OTHER_LISTING_ID, PROVIDER_ID),
+        service.retire(OTHER_LISTING_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -552,9 +596,9 @@ describe('ListingsService', () => {
         .mockResolvedValueOnce(null);
       prismaMock.listing.updateMany.mockResolvedValue({ count: 0 });
 
-      await expect(service.archive(LISTING_ID, PROVIDER_ID)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.retire(LISTING_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -580,7 +624,11 @@ describe('ListingsService', () => {
       prismaMock.application.update.mockResolvedValue({});
       prismaMock.listing.update.mockResolvedValue(rentedListing);
 
-      const result = await service.rentListing(LISTING_ID, PROVIDER_ID, dto);
+      const result = await service.rentListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+        dto,
+      );
 
       expect(result.status).toBe(ListingStatus.RENTED);
       expect(prismaMock.application.update).toHaveBeenCalledWith(
@@ -613,7 +661,7 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.rentListing(LISTING_ID, PROVIDER_ID, dto),
+        service.rentListing(LISTING_ID, unitProvider(PROVIDER_ID), dto),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -623,11 +671,11 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
 
       await expect(
-        service.rentListing(LISTING_ID, PROVIDER_ID, dto),
+        service.rentListing(LISTING_ID, unitProvider(PROVIDER_ID), dto),
       ).rejects.toThrow(ConflictException);
     });
 
-    it.each([ListingStatus.ARCHIVED, ListingStatus.RENTED])(
+    it.each([ListingStatus.RETIRED])(
       'throws ConflictException when listing is %s',
       async (status) => {
         prismaMock.$queryRaw.mockResolvedValue([]);
@@ -636,7 +684,7 @@ describe('ListingsService', () => {
         );
 
         await expect(
-          service.rentListing(LISTING_ID, PROVIDER_ID, dto),
+          service.rentListing(LISTING_ID, unitProvider(PROVIDER_ID), dto),
         ).rejects.toThrow(ConflictException);
         expect(prismaMock.listing.update).not.toHaveBeenCalled();
       },
@@ -664,7 +712,11 @@ describe('ListingsService', () => {
       prismaMock.application.update.mockResolvedValue({});
       prismaMock.listing.update.mockResolvedValue(rentedListing);
 
-      const result = await service.rentListing(LISTING_ID, PROVIDER_ID, dto);
+      const result = await service.rentListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+        dto,
+      );
 
       expect(result.publishedAt).toEqual(publishedAt);
       expect(prismaMock.listing.update).toHaveBeenCalledWith(
@@ -685,7 +737,7 @@ describe('ListingsService', () => {
       });
 
       await expect(
-        service.rentListing(LISTING_ID, PROVIDER_ID, dto),
+        service.rentListing(LISTING_ID, unitProvider(PROVIDER_ID), dto),
       ).rejects.toThrow(ConflictException);
     });
 
@@ -713,7 +765,11 @@ describe('ListingsService', () => {
         jest.fn<(args?: unknown) => Promise<unknown>>();
       prismaMock.listing.update.mockResolvedValue(rentedListing);
 
-      const result = await service.rentListing(LISTING_ID, PROVIDER_ID, dto);
+      const result = await service.rentListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+        dto,
+      );
 
       expect(result.status).toBe(ListingStatus.RENTED);
       expect(prismaMock.application.updateMany).toHaveBeenCalledWith(

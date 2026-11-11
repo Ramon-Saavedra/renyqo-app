@@ -72,6 +72,8 @@ export type AuthorityLockPlan =
       kind: 'STRUCTURAL';
       expectedOwnershipRevision: number;
       membershipIds: readonly string[];
+      // Server-resolved immutable membership User IDs, declared before any lock.
+      userIds?: readonly string[];
     }>;
 
 // A policy must throw on denial. There is intentionally no default allow policy

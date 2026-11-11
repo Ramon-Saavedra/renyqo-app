@@ -5,7 +5,10 @@ export type ListingWithImages = Listing & { images?: ListingImage[] };
 
 export class ListingResponseDto {
   readonly id!: Listing['id'];
-  readonly providerId!: Listing['providerId'];
+  readonly workspaceId!: Listing['workspaceId'];
+  readonly createdByMembershipId!: Listing['createdByMembershipId'];
+  readonly responsibleMembershipId!: Listing['responsibleMembershipId'];
+  readonly revision!: Listing['revision'];
   readonly status!: Listing['status'];
   readonly city!: Listing['city'];
   readonly zip!: Listing['zip'];

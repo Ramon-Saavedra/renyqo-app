@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { jest } from '@jest/globals';
 import request from 'supertest';
-import { connected, quietPeriod, realtimeTestApp } from './realtime-test-app';
+import { connected, realtimeTestApp } from './realtime-test-app';
+import { waitForDomainEvents } from './e2e-realtime-sync';
 import { NotificationService } from '../src/notifications/notification.service';
 import { NotificationProducer } from '../src/notifications/notification-producer.service';
 import { NotificationRetention } from '../src/notifications/notification-retention.service';
@@ -19,7 +20,6 @@ import { RealtimeOutboxPublisher } from '../src/realtime/realtime-outbox.publish
 import { OutboxDispatcherService } from '../src/outbox/outbox-dispatcher.service';
 import { OutboxWriter } from '../src/outbox/outbox-writer.service';
 import type { OutboxEvent } from '../src/generated/prisma/client';
-
 describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Socket.IO)', () => {
   let c: Awaited<ReturnType<typeof realtimeTestApp>>;
   let now = new Date('2027-01-01T10:00:00Z');
@@ -58,12 +58,8 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
   async function fixture() {
     const provider = await c.user('PROVIDER'),
       applicant = await person();
-    const listing = await c.prisma.listing.create({
-      data: {
-        providerId: provider.userId,
-        status: 'PUBLISHED',
-        displayOrder: 1,
-      },
+    const listing = await c.publishedListing(provider.userId, {
+      displayOrder: 1,
     });
     const app = await c.prisma.application.create({
       data: {
@@ -87,12 +83,19 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
         )?.revision ?? 0,
     };
   }
-  function execute(
+  async function execute(
     f: Fixture,
     side: 'provider' | 'applicant',
     cmd: ViewingWorkflowCommand,
   ) {
-    return commands().execute(f.app.id, f[side].userId, side, cmd);
+    return commands().execute(
+      f.app.id,
+      side === 'provider'
+        ? await c.providerActor(f.provider.userId)
+        : await c.applicantAuthority(f.applicant.userId),
+      side,
+      cmd,
+    );
   }
   const schedule = {
     startsAt: '2027-01-03T10:00:00Z',
@@ -190,7 +193,7 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
     await invite(f);
     await c.app
       .get(ProviderApplicationCurationService)
-      .reject(f.app.id, f.provider.userId);
+      .reject(f.app.id, await c.providerActor(f.provider.userId));
     const session = await c.sessionFor(f.applicant.userId);
     type Page = Awaited<ReturnType<NotificationService['list']>>;
     async function category(value: string) {
@@ -253,8 +256,9 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
     const event = await c.prisma.outboxEvent.findFirstOrThrow({
       where: { applicationId: f.app.id, type: 'application.viewing.changed' },
     });
+    const invalidation = waitForDomainEvents(s, 1);
     await publish(event);
-    await quietPeriod();
+    await invalidation;
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       type: 'application.viewing.changed',
@@ -282,9 +286,7 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
         endsAt: '2027-01-04T10:30:00Z',
       },
     });
-    expect((await list(f.provider.userId)).items.map((n) => n.type)).toEqual([
-      'VIEWING_CHANGE_REQUESTED',
-    ]);
+    expect((await list(f.provider.userId)).items).toEqual([]);
     const counter = await execute(f, 'provider', {
       action: 'counterproposal',
       proposalId: alt.proposalId!,
@@ -298,9 +300,15 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
       proposalId: counter.proposalId!,
       body: await body(f),
     });
+    expect((await list(f.provider.userId)).items).toEqual([]);
     expect(
-      (await list(f.provider.userId)).items.map((n) => n.type).sort(),
-    ).toEqual(['VIEWING_ACCEPTED', 'VIEWING_CHANGE_REQUESTED']);
+      (await list(f.applicant.userId)).items.map((n) => n.type).sort(),
+    ).toEqual(['VIEWING_PROPOSED', 'VIEWING_REPLACEMENT_PROPOSED']);
+    expect(
+      await c.prisma.applicationActivity.count({
+        where: { applicationId: f.app.id, type: 'VIEWING_ACCEPTED' },
+      }),
+    ).toBe(1);
   });
 
   it.each(['applicant', 'provider'] as const)(
@@ -326,9 +334,11 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
             message: 'PRIVATE PROVIDER NOTE',
           },
         });
-      const recipient =
-        f[side === 'applicant' ? 'provider' : 'applicant'].userId;
-      const rows = (await list(recipient)).items.filter(
+      if (side === 'applicant') {
+        expect((await list(f.provider.userId)).items).toEqual([]);
+        return;
+      }
+      const rows = (await list(f.applicant.userId)).items.filter(
         (n) => n.type === 'VIEWING_CANCELLED',
       );
       expect(rows).toHaveLength(1);
@@ -395,10 +405,19 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
         body: { ...(await body(f)), interest: 'STILL_INTERESTED' },
       });
       expect(
-        (await list(f.provider.userId)).items.some(
+        (await list(f.applicant.userId)).items.some(
           (n) => n.type === 'VIEWING_INTEREST_CONFIRMED',
         ),
-      ).toBe(true);
+      ).toBe(false);
+      expect(
+        await c.prisma.applicationActivity.count({
+          where: {
+            applicationId: f.app.id,
+            type: 'VIEWING_INTEREST_CONFIRMED',
+          },
+        }),
+      ).toBe(1);
+      expect((await list(f.provider.userId)).items).toEqual([]);
       await execute(f, 'provider', {
         action: 'consideration',
         appointmentId: a.appointmentId!,
@@ -429,13 +448,24 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
         confirmWithdrawal: true,
       },
     });
-    const rows = (await list(f.provider.userId)).items;
-    expect(rows.filter((n) => n.type === 'APPLICATION_WITHDRAWN')).toHaveLength(
-      1,
-    );
-    expect(rows.some((n) => n.type === 'VIEWING_INTEREST_DECLINED')).toBe(
-      false,
-    );
+    expect((await list(f.provider.userId)).items).toEqual([]);
+    expect(
+      (
+        await c.prisma.application.findUniqueOrThrow({
+          where: { id: f.app.id },
+        })
+      ).status,
+    ).toBe('WITHDRAWN');
+    expect(
+      await c.prisma.applicationActivity.count({
+        where: { applicationId: f.app.id, type: 'APPLICATION_WITHDRAWN' },
+      }),
+    ).toBe(1);
+    expect(
+      (await list(f.applicant.userId)).items.filter(
+        (n) => n.type === 'APPLICATION_WITHDRAWN',
+      ),
+    ).toHaveLength(0);
     expect(
       (await list(f.applicant.userId)).items.some(
         (n) => n.type === 'VIEWING_COMPLETED',
@@ -456,12 +486,12 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
       expiry().processTarget(target),
       expiry().processTarget(target),
     ]);
-    for (const u of [f.applicant, f.provider])
-      expect(
-        (await list(u.userId)).items.filter(
-          (n) => n.type === 'VIEWING_PROPOSAL_EXPIRED',
-        ),
-      ).toHaveLength(1);
+    expect(
+      (await list(f.applicant.userId)).items.filter(
+        (n) => n.type === 'VIEWING_PROPOSAL_EXPIRED',
+      ),
+    ).toHaveLength(1);
+    expect((await list(f.provider.userId)).items).toEqual([]);
     now = new Date('2027-01-01T10:00:00Z');
     const g = await fixture(),
       id = await complete(g);
@@ -476,18 +506,14 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
       1,
     );
     expect(rows.some((n) => n.type === 'VIEWING_INTEREST_EXPIRED')).toBe(false);
-    expect(
-      (await list(g.provider.userId)).items.filter(
-        (n) => n.type === 'APPLICATION_REJECTED',
-      ),
-    ).toHaveLength(1);
+    expect((await list(g.provider.userId)).items).toEqual([]);
   });
 
   it('WAITING hides provider history/count/read permission and restore/promotion preserves original read state', async () => {
     const f = await fixture();
     await confirm(f);
-    const item = (await list(f.provider.userId)).items[0];
-    await curation().reject(f.app.id, f.provider.userId);
+    const item = (await list(f.applicant.userId)).items[0];
+    await curation().reject(f.app.id, await c.providerActor(f.provider.userId));
     await release(f);
     for (let i = 0; i < 5; i++) {
       const u = await person();
@@ -500,7 +526,10 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
         },
       });
     }
-    await curation().restore(f.app.id, f.provider.userId);
+    await curation().restore(
+      f.app.id,
+      await c.providerActor(f.provider.userId),
+    );
     expect((await list(f.provider.userId)).items).toEqual([]);
     expect((await inbox().unread(f.provider.userId)).unreadCount).toBe(0);
     await expect(
@@ -515,9 +544,12 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
     const active = await c.prisma.application.findFirstOrThrow({
       where: { listingId: f.listing.id, status: 'ACTIVE' },
     });
-    await lifecycle().withdraw(active.id, active.applicantId);
+    await lifecycle().withdraw(
+      active.id,
+      await c.applicantAuthority(active.applicantId),
+    );
     expect(
-      (await list(f.provider.userId)).items.find((n) => n.id === item.id)
+      (await list(f.applicant.userId)).items.find((n) => n.id === item.id)
         ?.readAt,
     ).toBeNull();
   });
@@ -553,8 +585,12 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
       where: { userId: f.applicant.userId, type: 'notifications.changed' },
     });
     expect(events).toHaveLength(1);
+    const tabs = Promise.all([
+      waitForDomainEvents(own1, 1),
+      waitForDomainEvents(own2, 1),
+    ]);
     await publish(events[0]);
-    await quietPeriod();
+    await tabs;
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
     expect(hidden).toEqual([]);
@@ -629,7 +665,7 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
       .send({ throughCreatedAt: snapshot.asOf.toISOString() })
       .expect(200);
     expect((await inbox().unread(f.applicant.userId)).unreadCount).toBe(1);
-    expect((await inbox().unread(f.provider.userId)).unreadCount).toBe(1);
+    expect((await inbox().unread(f.provider.userId)).unreadCount).toBe(0);
     const first = await inbox().list(
       f.applicant.userId,
       Object.assign(new NotificationQueryDto(), { limit: 1 }),
@@ -655,7 +691,7 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
     await confirm(f);
     await c.app
       .get(ListingsService)
-      .rentListing(f.listing.id, f.provider.userId, {
+      .rentListing(f.listing.id, await c.providerActor(f.provider.userId), {
         selectedApplicationId: f.app.id,
       });
     expect(
@@ -663,18 +699,14 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
         (n) => n.type === 'APPLICATION_ACCEPTED',
       ),
     ).toBe(true);
-    const prior = (await list(f.provider.userId)).items[0];
+    const prior = (await list(f.applicant.userId)).items[0];
     expect(prior).toBeDefined();
-    const owner = await c.user('PROVIDER');
-    await c.prisma.listing.update({
-      where: { id: f.listing.id },
-      data: { providerId: owner.userId },
-    });
     expect((await list(f.provider.userId)).items).toEqual([]);
     await expect(
       inbox().markRead(f.provider.userId, prior.id),
     ).rejects.toMatchObject({ status: 404 });
-    expect((await list(owner.userId)).items).toEqual([]);
+    const stranger = await c.user('PROVIDER');
+    expect((await list(stranger.userId)).items).toEqual([]);
   });
 
   it('notification persistence failure rolls domain/history/outbox back; a retry creates one item', async () => {
@@ -710,7 +742,9 @@ describe('Durable bell notifications and authorization (PostgreSQL + HTTP + Sock
   it('listing archive notifies about a cancelled commitment, not empty technical workflow closure', async () => {
     const f = await fixture();
     const a = await confirm(f);
-    await c.app.get(ListingsService).archive(f.listing.id, f.provider.userId);
+    await c.app
+      .get(ListingsService)
+      .retire(f.listing.id, await c.providerActor(f.provider.userId));
     const rows = (await list(f.applicant.userId)).items.filter(
       (n) => n.type === 'VIEWING_WORKFLOW_CLOSED',
     );

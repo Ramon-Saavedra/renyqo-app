@@ -21,7 +21,12 @@ export async function createDocumentRequirementFixture(
     });
     await tx.$queryRaw`SELECT id FROM listings WHERE id=${reference.listingId}::uuid FOR UPDATE`;
     await tx.$queryRaw`SELECT id FROM applications WHERE id=${reference.id}::uuid FOR UPDATE`;
-    const actor = reference.listing.providerId;
+    const actor = (
+      await tx.workspaceMembership.findUniqueOrThrow({
+        where: { id: reference.listing.responsibleMembershipId },
+        select: { userId: true },
+      })
+    ).userId;
     const subjectKey = /^[0-9a-f-]{36}$/i.test(data.definitionKey)
       ? data.definitionKey.toLowerCase()
       : 'applicant';

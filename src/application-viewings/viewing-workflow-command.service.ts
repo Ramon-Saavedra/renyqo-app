@@ -28,7 +28,11 @@ import {
   type ApplicationActivityMetadata,
 } from '../applications/application-activity.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import {
+  ApplicationListingAccess,
+  actorUserId,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
 import {
   ApplicationViewingAccessService,
   type ViewingAudience,
@@ -125,6 +129,7 @@ export class ViewingWorkflowCommandService {
     private readonly decisions: ViewingWorkflowDecisionService,
     private readonly lifecycleClosure: ViewingLifecycleService,
     private readonly expiry: ViewingWorkflowExpiryService,
+    private readonly listingAccess: ApplicationListingAccess,
   ) {}
 
   private load(tx: Prisma.TransactionClient, applicationId: string) {
@@ -134,8 +139,17 @@ export class ViewingWorkflowCommandService {
     });
   }
 
-  async snapshot(applicationId: string, userId: string, side: ViewingAudience) {
-    return this.prisma.$transaction(
+  async snapshot(
+    applicationId: string,
+    actor: ApplicationActor,
+    side: ViewingAudience,
+  ) {
+    const userId = actorUserId(actor);
+    return this.listingAccess.read(
+      actor,
+      side,
+      applicationId,
+      async () => {},
       async (tx) => {
         const app = await this.access.authorize(
           tx,
@@ -177,7 +191,6 @@ export class ViewingWorkflowCommandService {
             : null,
         };
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
@@ -294,13 +307,17 @@ export class ViewingWorkflowCommandService {
 
   async execute(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     side: ViewingAudience,
     command: ViewingWorkflowCommand,
   ): Promise<Result> {
+    const userId = actorUserId(actor);
     const hash = this.hash(command, side);
-    const outcome = await runSerializableTransaction(
-      this.prisma,
+    const outcome = await this.listingAccess.mutate(
+      actor,
+      side,
+      applicationId,
+      async () => {},
       async (tx) => {
         const app = await this.access.lock(tx, applicationId, userId, side);
         const receipt = await tx.viewingCommandReceipt.findUnique({
@@ -388,8 +405,8 @@ export class ViewingWorkflowCommandService {
                     ? 'APPLICATION_REJECTED'
                     : app.listing.status === 'RENTED'
                       ? 'LISTING_RENTED'
-                      : app.listing.status === 'ARCHIVED'
-                        ? 'LISTING_ARCHIVED'
+                      : app.listing.status === 'RETIRED'
+                        ? 'LISTING_RETIRED'
                         : 'LISTING_UNPUBLISHED';
             await this.lifecycleClosure.closeWithinTransaction(
               tx,

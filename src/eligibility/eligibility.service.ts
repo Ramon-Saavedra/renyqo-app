@@ -1,10 +1,8 @@
-import {
-  Injectable,
-  NotFoundException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
-import type { ApplicantProfile, Listing } from '../generated/prisma/client';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import type { ApplicantProfile } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
 import {
   evaluateProfile,
   hardProfileMatchWhere,
@@ -19,22 +17,27 @@ export type {
 } from './profile-eligibility-evaluator';
 @Injectable()
 export class EligibilityService {
-  constructor(private readonly prisma: PrismaService) {}
-  async check(listingId: string, applicantId: string) {
-    const listing = await this.prisma.listing.findUnique({
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: ApplicantListingAccess,
+  ) {}
+  async check(listingId: string, authority: HumanAuthority) {
+    await this.access.assertPrincipal(authority);
+    const applicantId = authority.userId;
+    const listing = await this.prisma.publicListingProjection.findUnique({
       where: { id: listingId },
     });
     if (!listing) throw new NotFoundException('Listing not found');
-    if (listing.status !== 'PUBLISHED')
-      throw new UnprocessableEntityException(
-        'This listing is not accepting applications',
-      );
     const profile = await this.prisma.applicantProfile.findUnique({
       where: { applicantId },
     });
-    return this.evaluate(listing, profile);
+    await this.access.assertPrincipal(authority);
+    return this.evaluateCriteria(listing, profile);
   }
-  evaluate(listing: Listing, profile: ApplicantProfile | null) {
+  evaluate(
+    listing: ListingEligibilityCriteria,
+    profile: ApplicantProfile | null,
+  ) {
     return evaluateProfile(listing, profile);
   }
   evaluateCriteria(

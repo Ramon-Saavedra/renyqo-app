@@ -1,4 +1,9 @@
 import {
+  ProviderListingAccess,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
+import { unitProvider } from '../../test/unit-workspace-authority';
+import {
   BadRequestException,
   ConflictException,
   NotFoundException,
@@ -19,6 +24,39 @@ const IMAGE_ID = '00000000-0000-4000-8000-000000000003';
 const CLOUDINARY_FOLDER = 'renyqo';
 
 type OwnedListing = { id: string };
+
+function listingMediaAccess(prisma: PrismaMock): ProviderListingAccess {
+  return {
+    read: async (
+      _actor: ProviderActor,
+      _action: string,
+      _listingId: string | undefined,
+      policyOrProduce: unknown,
+      produce?: (tx: ListingImageTransactionMock) => Promise<unknown>,
+    ) => {
+      const listing = await prisma.listing.findFirst();
+      if (!listing) throw new NotFoundException();
+      const run = policyOrProduce as (
+        tx: ListingImageTransactionMock,
+      ) => Promise<unknown>;
+      if (produce) {
+        await run(prisma);
+        return produce(prisma);
+      }
+      return run(prisma);
+    },
+    mutate: async (
+      _actor: ProviderActor,
+      _action: string,
+      _listingId: string,
+      produce: (tx: ListingImageTransactionMock) => Promise<unknown>,
+    ) => {
+      const listing = await prisma.listing.findFirst();
+      if (!listing) throw new NotFoundException();
+      return produce(prisma);
+    },
+  } as unknown as ProviderListingAccess;
+}
 
 type ListingImageTransactionMock = {
   listing: {
@@ -118,6 +156,10 @@ describe('ListingImagesService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ListingImagesService,
+        {
+          provide: ProviderListingAccess,
+          useValue: listingMediaAccess(prismaMock),
+        },
         { provide: PrismaService, useValue: prismaMock },
         { provide: CloudinaryService, useValue: cloudinaryMock },
         {
@@ -135,7 +177,7 @@ describe('ListingImagesService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.upload(LISTING_ID, PROVIDER_ID, makeMulterFile()),
+        service.upload(LISTING_ID, unitProvider(PROVIDER_ID), makeMulterFile()),
       ).rejects.toThrow(NotFoundException);
 
       expect(cloudinaryMock.uploadBuffer).not.toHaveBeenCalled();
@@ -157,7 +199,7 @@ describe('ListingImagesService', () => {
 
       const result = await service.upload(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         makeMulterFile(),
       );
 
@@ -206,7 +248,7 @@ describe('ListingImagesService', () => {
 
       const result = await service.upload(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         makeMulterFile(),
       );
 
@@ -235,7 +277,7 @@ describe('ListingImagesService', () => {
       prismaMock.listingImage.create.mockRejectedValue(prismaError);
 
       await expect(
-        service.upload(LISTING_ID, PROVIDER_ID, makeMulterFile()),
+        service.upload(LISTING_ID, unitProvider(PROVIDER_ID), makeMulterFile()),
       ).rejects.toThrow(ConflictException);
 
       expect(cloudinaryMock.deleteByPublicId).toHaveBeenCalledWith(
@@ -249,7 +291,7 @@ describe('ListingImagesService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.findAllByListing(LISTING_ID, PROVIDER_ID),
+        service.findAllByListing(LISTING_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
 
       expect(prismaMock.listingImage.findMany).not.toHaveBeenCalled();
@@ -267,7 +309,10 @@ describe('ListingImagesService', () => {
       prismaMock.listing.findFirst.mockResolvedValue({ id: LISTING_ID });
       prismaMock.listingImage.findMany.mockResolvedValue([cover, second]);
 
-      const result = await service.findAllByListing(LISTING_ID, PROVIDER_ID);
+      const result = await service.findAllByListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(prismaMock.listingImage.findMany).toHaveBeenCalledWith({
         where: { listingId: LISTING_ID },
@@ -298,7 +343,7 @@ describe('ListingImagesService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.remove(LISTING_ID, IMAGE_ID, PROVIDER_ID),
+        service.remove(LISTING_ID, IMAGE_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
 
       expect(cloudinaryMock.deleteByPublicId).not.toHaveBeenCalled();
@@ -310,7 +355,7 @@ describe('ListingImagesService', () => {
       prismaMock.listingImage.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.remove(LISTING_ID, IMAGE_ID, PROVIDER_ID),
+        service.remove(LISTING_ID, IMAGE_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
 
       expect(cloudinaryMock.deleteByPublicId).not.toHaveBeenCalled();
@@ -328,7 +373,7 @@ describe('ListingImagesService', () => {
       );
 
       await expect(
-        service.remove(LISTING_ID, IMAGE_ID, PROVIDER_ID),
+        service.remove(LISTING_ID, IMAGE_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow('database unavailable');
 
       expect(cloudinaryMock.deleteByPublicId).not.toHaveBeenCalled();
@@ -349,11 +394,11 @@ describe('ListingImagesService', () => {
       );
 
       await expect(
-        service.remove(LISTING_ID, IMAGE_ID, PROVIDER_ID),
+        service.remove(LISTING_ID, IMAGE_ID, unitProvider(PROVIDER_ID)),
       ).resolves.toBeUndefined();
 
       expect(prismaMock.listingImage.deleteMany).toHaveBeenCalledWith({
-        where: { id: IMAGE_ID },
+        where: { id: IMAGE_ID, listingId: LISTING_ID },
       });
       expect(cloudinaryMock.deleteByPublicId).toHaveBeenCalledWith(publicId);
     });
@@ -384,11 +429,11 @@ describe('ListingImagesService', () => {
       prismaMock.listingImage.update.mockResolvedValue(second);
       prismaMock.listing.update.mockResolvedValue({ id: LISTING_ID });
 
-      await service.remove(LISTING_ID, IMAGE_ID, PROVIDER_ID);
+      await service.remove(LISTING_ID, IMAGE_ID, unitProvider(PROVIDER_ID));
 
       expect(cloudinaryMock.deleteByPublicId).toHaveBeenCalledWith(publicId);
       expect(prismaMock.listingImage.deleteMany).toHaveBeenCalledWith({
-        where: { id: IMAGE_ID },
+        where: { id: IMAGE_ID, listingId: LISTING_ID },
       });
       expect(
         prismaMock.listingImage.deleteMany.mock.invocationCallOrder[0],
@@ -396,19 +441,19 @@ describe('ListingImagesService', () => {
         cloudinaryMock.deleteByPublicId.mock.invocationCallOrder[0],
       );
       expect(prismaMock.listingImage.update).toHaveBeenNthCalledWith(1, {
-        where: { id: SECOND_IMAGE_ID },
+        where: { id: SECOND_IMAGE_ID, listingId: LISTING_ID },
         data: { position: -1 },
       });
       expect(prismaMock.listingImage.update).toHaveBeenNthCalledWith(2, {
-        where: { id: THIRD_IMAGE_ID },
+        where: { id: THIRD_IMAGE_ID, listingId: LISTING_ID },
         data: { position: -2 },
       });
       expect(prismaMock.listingImage.update).toHaveBeenNthCalledWith(3, {
-        where: { id: SECOND_IMAGE_ID },
+        where: { id: SECOND_IMAGE_ID, listingId: LISTING_ID },
         data: { position: 0, isCover: true },
       });
       expect(prismaMock.listingImage.update).toHaveBeenNthCalledWith(4, {
-        where: { id: THIRD_IMAGE_ID },
+        where: { id: THIRD_IMAGE_ID, listingId: LISTING_ID },
         data: { position: 1, isCover: false },
       });
       expect(prismaMock.listing.update).toHaveBeenCalledWith({
@@ -428,7 +473,7 @@ describe('ListingImagesService', () => {
       prismaMock.listingImage.findMany.mockResolvedValue([]);
       prismaMock.listing.update.mockResolvedValue({ id: LISTING_ID });
 
-      await service.remove(LISTING_ID, IMAGE_ID, PROVIDER_ID);
+      await service.remove(LISTING_ID, IMAGE_ID, unitProvider(PROVIDER_ID));
 
       expect(prismaMock.listingImage.update).not.toHaveBeenCalled();
       expect(prismaMock.listing.update).toHaveBeenCalledWith({
@@ -456,7 +501,7 @@ describe('ListingImagesService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.reorder(LISTING_ID, PROVIDER_ID, {
+        service.reorder(LISTING_ID, unitProvider(PROVIDER_ID), {
           imageIds: [IMAGE_ID, SECOND_IMAGE_ID],
         }),
       ).rejects.toThrow(NotFoundException);
@@ -469,7 +514,7 @@ describe('ListingImagesService', () => {
       prismaMock.listingImage.findMany.mockResolvedValue(makeImagePair());
 
       await expect(
-        service.reorder(LISTING_ID, PROVIDER_ID, {
+        service.reorder(LISTING_ID, unitProvider(PROVIDER_ID), {
           imageIds: [IMAGE_ID, IMAGE_ID],
         }),
       ).rejects.toThrow(BadRequestException);
@@ -483,7 +528,9 @@ describe('ListingImagesService', () => {
       prismaMock.listingImage.findMany.mockResolvedValue(makeImagePair());
 
       await expect(
-        service.reorder(LISTING_ID, PROVIDER_ID, { imageIds: [IMAGE_ID] }),
+        service.reorder(LISTING_ID, unitProvider(PROVIDER_ID), {
+          imageIds: [IMAGE_ID],
+        }),
       ).rejects.toThrow(BadRequestException);
 
       expect(prismaMock.listingImage.update).not.toHaveBeenCalled();
@@ -494,7 +541,7 @@ describe('ListingImagesService', () => {
       prismaMock.listingImage.findMany.mockResolvedValue(makeImagePair());
 
       await expect(
-        service.reorder(LISTING_ID, PROVIDER_ID, {
+        service.reorder(LISTING_ID, unitProvider(PROVIDER_ID), {
           imageIds: [IMAGE_ID, FOREIGN_IMAGE_ID],
         }),
       ).rejects.toThrow(BadRequestException);
@@ -521,24 +568,28 @@ describe('ListingImagesService', () => {
       prismaMock.listingImage.update.mockResolvedValue(cover);
       prismaMock.listing.update.mockResolvedValue({ id: LISTING_ID });
 
-      const result = await service.reorder(LISTING_ID, PROVIDER_ID, {
-        imageIds: [SECOND_IMAGE_ID, IMAGE_ID],
-      });
+      const result = await service.reorder(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+        {
+          imageIds: [SECOND_IMAGE_ID, IMAGE_ID],
+        },
+      );
 
       expect(prismaMock.listingImage.update).toHaveBeenNthCalledWith(1, {
-        where: { id: SECOND_IMAGE_ID },
+        where: { id: SECOND_IMAGE_ID, listingId: LISTING_ID },
         data: { position: -1 },
       });
       expect(prismaMock.listingImage.update).toHaveBeenNthCalledWith(2, {
-        where: { id: IMAGE_ID },
+        where: { id: IMAGE_ID, listingId: LISTING_ID },
         data: { position: -2 },
       });
       expect(prismaMock.listingImage.update).toHaveBeenNthCalledWith(3, {
-        where: { id: SECOND_IMAGE_ID },
+        where: { id: SECOND_IMAGE_ID, listingId: LISTING_ID },
         data: { position: 0, isCover: true },
       });
       expect(prismaMock.listingImage.update).toHaveBeenNthCalledWith(4, {
-        where: { id: IMAGE_ID },
+        where: { id: IMAGE_ID, listingId: LISTING_ID },
         data: { position: 1, isCover: false },
       });
       expect(prismaMock.listing.update).toHaveBeenCalledWith({

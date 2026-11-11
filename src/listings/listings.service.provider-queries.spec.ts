@@ -1,3 +1,10 @@
+import {
+  unitProviderOperations,
+  UNIT_WORKSPACE_ID,
+  UNIT_MEMBERSHIP_ID,
+} from '../../test/unit-workspace-authority';
+import { ProviderListingAccess } from '../provider-authorization/provider-listing-access';
+import { unitProvider } from '../../test/unit-workspace-authority';
 import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
 import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
 import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
@@ -36,6 +43,9 @@ type ListingsTransactionMock = {
   listing: {
     create: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
     findMany: jest.MockedFunction<(args?: unknown) => Promise<unknown[]>>;
+    findUniqueOrThrow: jest.MockedFunction<
+      (args?: unknown) => Promise<Listing>
+    >;
     findFirst: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
     findUnique: jest.MockedFunction<
       (args?: unknown) => Promise<Listing | null>
@@ -71,7 +81,12 @@ type PrismaMock = ListingsTransactionMock & {
 
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
-  providerId: PROVIDER_ID,
+  workspaceId: UNIT_WORKSPACE_ID,
+  createdByMembershipId: UNIT_MEMBERSHIP_ID,
+  responsibleMembershipId: UNIT_MEMBERSHIP_ID,
+  revision: 1,
+  assignmentSequence: 1,
+  retiredAt: null,
   status: ListingStatus.DRAFT,
   city: 'Berlin',
   zip: '10115',
@@ -129,6 +144,13 @@ describe('ListingsService', () => {
 
     prismaMock = {
       listing: {
+        findUniqueOrThrow: jest.fn<(args?: unknown) => Promise<Listing>>(
+          async (args) => {
+            const row = await prismaMock.listing.findFirst(args);
+            if (!row) throw new NotFoundException('Listing not found');
+            return row as Listing;
+          },
+        ),
         create: jest.fn<(args?: unknown) => Promise<Listing>>(),
         findMany: jest.fn<(args?: unknown) => Promise<unknown[]>>(),
         findFirst: jest.fn<(args?: unknown) => Promise<unknown>>(),
@@ -196,6 +218,10 @@ describe('ListingsService', () => {
         },
         ListingsService,
         {
+          provide: ProviderListingAccess,
+          useValue: unitProviderOperations(prismaMock),
+        },
+        {
           provide: ApplicationActivityService,
           useValue: { appendWithinTransaction: jest.fn() },
         },
@@ -204,6 +230,7 @@ describe('ListingsService', () => {
           useValue: {
             getNextDisplayOrder: jest.fn(() => Promise.resolve(1)),
             move: jest.fn(),
+            compactWithinTransaction: jest.fn(),
           },
         },
         { provide: PrismaService, useValue: prismaMock },
@@ -234,11 +261,11 @@ describe('ListingsService', () => {
       ];
       prismaMock.listing.findMany.mockResolvedValue(listings);
 
-      const result = await service.findAllByProvider(PROVIDER_ID);
+      const result = await service.findAllByProvider(unitProvider(PROVIDER_ID));
 
       expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { providerId: PROVIDER_ID },
+          where: { workspaceId: UNIT_WORKSPACE_ID, status: { not: 'RETIRED' } },
           orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
           include: {
             _count: {
@@ -282,7 +309,10 @@ describe('ListingsService', () => {
       const listing = makeRawListing();
       prismaMock.listing.findFirst.mockResolvedValue(listing);
 
-      const result = await service.findOneByProvider(LISTING_ID, PROVIDER_ID);
+      const result = await service.findOneByProvider(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result).toEqual(listing);
     });
@@ -291,7 +321,7 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.findOneByProvider(OTHER_LISTING_ID, PROVIDER_ID),
+        service.findOneByProvider(OTHER_LISTING_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -311,11 +341,11 @@ describe('ListingsService', () => {
 
       const result = await service.findOneDetailByProvider(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
 
       expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
-        where: { id: LISTING_ID, providerId: PROVIDER_ID },
+        where: { id: LISTING_ID, workspaceId: UNIT_WORKSPACE_ID },
         include: { images: { orderBy: { position: 'asc' } } },
       });
       expect(result).toEqual(listing);
@@ -325,7 +355,10 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.findOneDetailByProvider(OTHER_LISTING_ID, PROVIDER_ID),
+        service.findOneDetailByProvider(
+          OTHER_LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -420,10 +453,10 @@ describe('ListingsService', () => {
     it('returns the number of listings for a provider', async () => {
       prismaMock.listing.count.mockResolvedValue(3);
 
-      const result = await service.countByProvider(PROVIDER_ID);
+      const result = await service.countByProvider(unitProvider(PROVIDER_ID));
 
       expect(prismaMock.listing.count).toHaveBeenCalledWith({
-        where: { providerId: PROVIDER_ID },
+        where: { workspaceId: UNIT_WORKSPACE_ID, status: { not: 'RETIRED' } },
       });
       expect(result).toBe(3);
     });

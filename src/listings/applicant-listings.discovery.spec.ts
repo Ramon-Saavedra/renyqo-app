@@ -1,3 +1,5 @@
+import { unitSession } from '../../test/unit-workspace-authority';
+import { ApplicantListingAccess } from './applicant-listing-access';
 import { EligibilityResponseDto } from '../eligibility/dto/eligibility-response.dto';
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -13,7 +15,6 @@ import type {
 import {
   ApplicationRejectionReason,
   ApplicationStatus,
-  ListingStatus,
   ObjectType,
   PetsPolicy,
   Role,
@@ -22,7 +23,7 @@ import {
 import { ApplicantListingAttentionEnricher } from '../application-attention/applicant-listing-attention.enricher';
 import { ApplicantListingSummaryService } from '../applicant-listing-summaries/applicant-listing-summary.service';
 import { SavedListingsService } from '../saved-listings/saved-listings.service';
-import { PublishedListingsService } from '../published-listings/published-listings.service';
+
 import { ApplicationsService } from '../applications/applications.service';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -64,7 +65,7 @@ const makeApplicantProfile = (
 });
 
 type ListingsTransactionMock = {
-  listing: {
+  publicListingProjection: {
     create: jest.MockedFunction<(args?: unknown) => Promise<Listing>>;
     findMany: jest.MockedFunction<(args?: unknown) => Promise<unknown[]>>;
     findFirst: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
@@ -123,7 +124,9 @@ type DiscoveryListing = {
   suitableForPeopleCount: number | null;
   petsPolicy: string | null;
   smokingPolicy: string | null;
-  images: { secureUrl: string; position: number; isCover: boolean }[];
+  photos: string[];
+  country: string;
+  publicStreet: string | null;
 };
 
 const makeDiscoveryListing = (
@@ -151,9 +154,9 @@ const makeDiscoveryListing = (
   suitableForPeopleCount: null,
   petsPolicy: null,
   smokingPolicy: null,
-  images: [
-    { secureUrl: 'https://example.com/cover.jpg', position: 0, isCover: true },
-  ],
+  photos: ['https://example.com/cover.jpg'],
+  country: 'DE',
+  publicStreet: null,
   ...overrides,
 });
 
@@ -178,19 +181,13 @@ describe('ApplicantListingsService', () => {
       'findSavedListingIdsForListings' | 'isListingSaved'
     >
   >;
-  let publishedListingsMock: jest.Mocked<
-    Pick<
-      PublishedListingsService,
-      'getPublicAccessWhere' | 'getPublicAccessWhereFragments'
-    >
-  >;
 
   beforeEach(async () => {
     const transactionRunner: PrismaTransactionRunner = (fn) =>
       Promise.resolve(fn(prismaMock));
 
     prismaMock = {
-      listing: {
+      publicListingProjection: {
         create: jest.fn<(args?: unknown) => Promise<Listing>>(),
         findMany: jest.fn<(args?: unknown) => Promise<unknown[]>>(),
         findFirst: jest.fn<(args?: unknown) => Promise<unknown>>(),
@@ -273,28 +270,17 @@ describe('ApplicantListingsService', () => {
         .mockResolvedValue(false),
     };
 
-    publishedListingsMock = {
-      getPublicAccessWhere: jest
-        .fn<
-          () => import('../generated/prisma/client').Prisma.ListingWhereInput
-        >()
-        .mockReturnValue({
-          status: ListingStatus.PUBLISHED,
-          publishedAt: { not: null },
-        }),
-      getPublicAccessWhereFragments: jest
-        .fn<
-          () => readonly import('../generated/prisma/client').Prisma.ListingWhereInput[]
-        >()
-        .mockReturnValue([
-          { status: ListingStatus.PUBLISHED },
-          { publishedAt: { not: null } },
-        ]),
-    };
-
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ApplicantListingsService,
+        {
+          provide: ApplicantListingAccess,
+          useValue: {
+            assertPrincipal: jest
+              .fn<() => Promise<void>>()
+              .mockResolvedValue(undefined),
+          },
+        },
         {
           provide: ListingOrderingService,
           useValue: {
@@ -333,10 +319,6 @@ describe('ApplicantListingsService', () => {
           provide: SavedListingsService,
           useValue: savedListingsMock,
         },
-        {
-          provide: PublishedListingsService,
-          useValue: publishedListingsMock,
-        },
         ApplicantListingSummaryService,
         {
           provide: ApplicantListingAttentionEnricher,
@@ -358,19 +340,14 @@ describe('ApplicantListingsService', () => {
   describe('findPublishedForApplicant', () => {
     const discoveryListing = makeDiscoveryListing();
 
-    it('returns only PUBLISHED listings with publishedAt', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([]);
+    it('reads only the allowlisted public projection', async () => {
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       const result = await service.findPublishedForApplicant({}, null);
 
-      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.publicListingProjection.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            AND: expect.arrayContaining([
-              { status: ListingStatus.PUBLISHED },
-              { publishedAt: { not: null } },
-            ]),
-          },
+          where: {},
         }),
       );
       expect(result).toHaveProperty('items');
@@ -380,7 +357,9 @@ describe('ApplicantListingsService', () => {
     });
 
     it('returns summaries with cover image', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
       const result = await service.findPublishedForApplicant({}, null);
 
@@ -394,9 +373,9 @@ describe('ApplicantListingsService', () => {
 
     it('handles null coverImage when no images exist', async () => {
       const noImage = makeDiscoveryListing({
-        images: [],
+        photos: [],
       });
-      prismaMock.listing.findMany.mockResolvedValue([noImage]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([noImage]);
 
       const result = await service.findPublishedForApplicant({}, null);
 
@@ -404,46 +383,34 @@ describe('ApplicantListingsService', () => {
     });
 
     it('applies city filter', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       await service.findPublishedForApplicant({ city: 'Berlin' }, null);
 
-      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.publicListingProjection.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            AND: expect.arrayContaining([
-              { status: ListingStatus.PUBLISHED },
-              { publishedAt: { not: null } },
-              { city: { equals: 'Berlin', mode: 'insensitive' } },
-            ]),
-          },
+          where: { city: { equals: 'Berlin', mode: 'insensitive' } },
         }),
       );
     });
 
     it('applies rent range filter', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       await service.findPublishedForApplicant(
         { minRent: 500, maxRent: 2000 },
         null,
       );
 
-      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.publicListingProjection.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            AND: expect.arrayContaining([
-              { status: ListingStatus.PUBLISHED },
-              { publishedAt: { not: null } },
-              { coldRent: { gte: 500, lte: 2000 } },
-            ]),
-          },
+          where: { coldRent: { gte: 500, lte: 2000 } },
         }),
       );
     });
 
     it('applies rooms range filter', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       await service.findPublishedForApplicant(
         {
@@ -453,21 +420,15 @@ describe('ApplicantListingsService', () => {
         null,
       );
 
-      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.publicListingProjection.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            AND: expect.arrayContaining([
-              { status: ListingStatus.PUBLISHED },
-              { publishedAt: { not: null } },
-              { rooms: { gte: 1, lte: 4 } },
-            ]),
-          },
+          where: { rooms: { gte: 1, lte: 4 } },
         }),
       );
     });
 
     it('applies living area range filter', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       await service.findPublishedForApplicant(
         {
@@ -477,21 +438,17 @@ describe('ApplicantListingsService', () => {
         null,
       );
 
-      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.publicListingProjection.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            AND: expect.arrayContaining([
-              { status: ListingStatus.PUBLISHED },
-              { publishedAt: { not: null } },
-              { livingArea: { gte: 20, lte: 100 } },
-            ]),
-          },
+          where: { livingArea: { gte: 20, lte: 100 } },
         }),
       );
     });
 
     it('returns null nextCursor when there are no more pages', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
       const result = await service.findPublishedForApplicant(
         { limit: 50 },
@@ -508,7 +465,7 @@ describe('ApplicantListingsService', () => {
           publishedAt: new Date(2026, 6, 1 + i),
         }),
       );
-      prismaMock.listing.findMany.mockResolvedValue(pageItems);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue(pageItems);
 
       const result = await service.findPublishedForApplicant(
         { limit: 5 },
@@ -533,7 +490,7 @@ describe('ApplicantListingsService', () => {
     });
 
     it('returns empty page for no results', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       const result = await service.findPublishedForApplicant({}, null);
 
@@ -542,7 +499,9 @@ describe('ApplicantListingsService', () => {
     });
 
     it('excludes private fields from summaries', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
       const result = await service.findPublishedForApplicant({}, null);
 
@@ -580,9 +539,16 @@ describe('ApplicantListingsService', () => {
           'INSUFFICIENT_INFORMATION',
         ),
       );
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
-      const result = await service.findPublishedForApplicant({}, applicantUser);
+      const result = await service.findPublishedForApplicant(
+        {},
+        applicantUser,
+        undefined,
+        unitSession(applicantUser.id),
+      );
 
       expect(result.items[0].profileMatch).toBe(
         ProfileMatch.PROFILE_INCOMPLETE,
@@ -615,9 +581,16 @@ describe('ApplicantListingsService', () => {
         warnings: [],
         evaluatedAt: new Date(),
       });
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
-      const result = await service.findPublishedForApplicant({}, applicantUser);
+      const result = await service.findPublishedForApplicant(
+        {},
+        applicantUser,
+        undefined,
+        unitSession(applicantUser.id),
+      );
 
       expect(result.items[0].profileMatch).toBe(ProfileMatch.MATCH);
     });
@@ -648,15 +621,24 @@ describe('ApplicantListingsService', () => {
         warnings: [],
         evaluatedAt: new Date(),
       });
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
-      const result = await service.findPublishedForApplicant({}, applicantUser);
+      const result = await service.findPublishedForApplicant(
+        {},
+        applicantUser,
+        undefined,
+        unitSession(applicantUser.id),
+      );
 
       expect(result.items[0].profileMatch).toBe(ProfileMatch.NO_MATCH);
     });
 
     it('null user returns UNKNOWN', async () => {
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
       const result = await service.findPublishedForApplicant({}, null);
 
@@ -678,9 +660,16 @@ describe('ApplicantListingsService', () => {
         createdAt: new Date('2024-01-01'),
         updatedAt: new Date('2024-01-01'),
       };
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
-      const result = await service.findPublishedForApplicant({}, providerUser);
+      const result = await service.findPublishedForApplicant(
+        {},
+        providerUser,
+        undefined,
+        unitSession(providerUser.id),
+      );
 
       expect(result.items[0].profileMatch).toBe(ProfileMatch.UNKNOWN);
       expect(result.items[0].hasApplied).toBe(false);
@@ -708,10 +697,17 @@ describe('ApplicantListingsService', () => {
         createdAt: new Date('2024-01-01'),
         updatedAt: new Date('2024-01-01'),
       };
-      prismaMock.listing.count.mockResolvedValue(1);
-      prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+      prismaMock.publicListingProjection.count.mockResolvedValue(1);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([
+        discoveryListing,
+      ]);
 
-      const result = await service.findPublishedForApplicant({}, suspendedUser);
+      const result = await service.findPublishedForApplicant(
+        {},
+        suspendedUser,
+        undefined,
+        unitSession(suspendedUser.id),
+      );
 
       expect(result.items[0].profileMatch).toBe(ProfileMatch.UNKNOWN);
       expect(result.items[0].hasApplied).toBe(false);
@@ -727,7 +723,7 @@ describe('ApplicantListingsService', () => {
 
     it('sets cache-control headers on the response', async () => {
       const res = { setHeader: jest.fn() };
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       await service.findPublishedForApplicant({}, null, res);
 
@@ -757,66 +753,58 @@ describe('ApplicantListingsService', () => {
     });
 
     it('applies free-text query search across title, city, zip and district', async () => {
-      prismaMock.listing.count.mockResolvedValue(0);
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.count.mockResolvedValue(0);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       await service.findPublishedForApplicant({ query: 'Berlin' }, null);
 
-      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.publicListingProjection.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            AND: expect.arrayContaining([
-              { status: ListingStatus.PUBLISHED },
-              { publishedAt: { not: null } },
+            OR: [
               {
-                OR: [
-                  {
-                    title: {
-                      contains: '%Berlin%',
-                      mode: 'insensitive',
-                    },
-                  },
-                  {
-                    city: {
-                      contains: '%Berlin%',
-                      mode: 'insensitive',
-                    },
-                  },
-                  {
-                    zip: {
-                      contains: '%Berlin%',
-                      mode: 'insensitive',
-                    },
-                  },
-                  {
-                    district: {
-                      contains: '%Berlin%',
-                      mode: 'insensitive',
-                    },
-                  },
-                ],
+                title: {
+                  contains: '%Berlin%',
+                  mode: 'insensitive',
+                },
               },
-            ]),
+              {
+                city: {
+                  contains: '%Berlin%',
+                  mode: 'insensitive',
+                },
+              },
+              {
+                zip: {
+                  contains: '%Berlin%',
+                  mode: 'insensitive',
+                },
+              },
+              {
+                district: {
+                  contains: '%Berlin%',
+                  mode: 'insensitive',
+                },
+              },
+            ],
           },
         }),
       );
     });
 
     it('applies availableBy filter with Berlin midnight', async () => {
-      prismaMock.listing.count.mockResolvedValue(0);
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.count.mockResolvedValue(0);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       await service.findPublishedForApplicant(
         { availableBy: '2026-08-01' },
         null,
       );
 
-      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.publicListingProjection.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             AND: expect.arrayContaining([
-              { status: ListingStatus.PUBLISHED },
-              { publishedAt: { not: null } },
               { availableFrom: { not: null } },
               {
                 availableFrom: {
@@ -830,23 +818,17 @@ describe('ApplicantListingsService', () => {
     });
 
     it('applies petsPolicy filter', async () => {
-      prismaMock.listing.count.mockResolvedValue(0);
-      prismaMock.listing.findMany.mockResolvedValue([]);
+      prismaMock.publicListingProjection.count.mockResolvedValue(0);
+      prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
       await service.findPublishedForApplicant(
         { petsPolicy: PetsPolicy.ALLOWED },
         null,
       );
 
-      expect(prismaMock.listing.findMany).toHaveBeenCalledWith(
+      expect(prismaMock.publicListingProjection.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            AND: expect.arrayContaining([
-              { status: ListingStatus.PUBLISHED },
-              { publishedAt: { not: null } },
-              { petsPolicy: PetsPolicy.ALLOWED },
-            ]),
-          },
+          where: { petsPolicy: PetsPolicy.ALLOWED },
         }),
       );
     });
@@ -868,7 +850,9 @@ describe('ApplicantListingsService', () => {
       };
 
       it('returns empty application state when the applicant has no application', async () => {
-        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([
+          discoveryListing,
+        ]);
         applicationsMock.findBlockingApplicationsForListings.mockResolvedValue(
           new Map(),
         );
@@ -876,6 +860,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedForApplicant(
           {},
           applicantUser,
+          undefined,
+          unitSession(applicantUser.id),
         );
 
         expect(
@@ -891,7 +877,9 @@ describe('ApplicantListingsService', () => {
         ApplicationStatus.WAITING,
         ApplicationStatus.ACCEPTED,
       ])('maps %s with null publicReason', async (status) => {
-        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([
+          discoveryListing,
+        ]);
         applicationsMock.findBlockingApplicationsForListings.mockResolvedValue(
           new Map([
             [
@@ -908,6 +896,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedForApplicant(
           {},
           applicantUser,
+          undefined,
+          unitSession(applicantUser.id),
         );
 
         expect(result.items[0].hasApplied).toBe(true);
@@ -916,7 +906,9 @@ describe('ApplicantListingsService', () => {
       });
 
       it('maps REJECTED with NOT_SELECTED publicReason', async () => {
-        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([
+          discoveryListing,
+        ]);
         applicationsMock.findBlockingApplicationsForListings.mockResolvedValue(
           new Map([
             [
@@ -933,6 +925,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedForApplicant(
           {},
           applicantUser,
+          undefined,
+          unitSession(applicantUser.id),
         );
 
         expect(result.items[0].hasApplied).toBe(true);
@@ -945,7 +939,9 @@ describe('ApplicantListingsService', () => {
       });
 
       it('maps REJECTED with other publicReason values', async () => {
-        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([
+          discoveryListing,
+        ]);
         applicationsMock.findBlockingApplicationsForListings.mockResolvedValue(
           new Map([
             [
@@ -962,6 +958,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedForApplicant(
           {},
           applicantUser,
+          undefined,
+          unitSession(applicantUser.id),
         );
 
         expect(result.items[0].publicReason).toBe(
@@ -970,11 +968,13 @@ describe('ApplicantListingsService', () => {
       });
 
       it('does not query applications when the page is empty', async () => {
-        prismaMock.listing.findMany.mockResolvedValue([]);
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
         const result = await service.findPublishedForApplicant(
           {},
           applicantUser,
+          undefined,
+          unitSession(applicantUser.id),
         );
 
         expect(
@@ -985,7 +985,7 @@ describe('ApplicantListingsService', () => {
 
       it('sets application state per listing from the batch lookup result', async () => {
         const secondListing = makeDiscoveryListing({ id: LISTING_ID_2 });
-        prismaMock.listing.findMany.mockResolvedValue([
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([
           discoveryListing,
           secondListing,
         ]);
@@ -1005,6 +1005,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedForApplicant(
           {},
           applicantUser,
+          undefined,
+          unitSession(applicantUser.id),
         );
 
         expect(
@@ -1019,7 +1021,9 @@ describe('ApplicantListingsService', () => {
       });
 
       it('returns empty application state for anonymous callers without querying applications', async () => {
-        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([
+          discoveryListing,
+        ]);
 
         const result = await service.findPublishedForApplicant({}, null);
 
@@ -1049,7 +1053,9 @@ describe('ApplicantListingsService', () => {
       };
 
       it('returns isSaved false for anonymous callers without querying saved listings', async () => {
-        prismaMock.listing.findMany.mockResolvedValue([discoveryListing]);
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([
+          discoveryListing,
+        ]);
 
         const result = await service.findPublishedForApplicant({}, null);
 
@@ -1061,7 +1067,7 @@ describe('ApplicantListingsService', () => {
 
       it('sets isSaved per listing from the batch lookup result', async () => {
         const secondListing = makeDiscoveryListing({ id: LISTING_ID_2 });
-        prismaMock.listing.findMany.mockResolvedValue([
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([
           discoveryListing,
           secondListing,
         ]);
@@ -1072,6 +1078,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedForApplicant(
           {},
           applicantUser,
+          undefined,
+          unitSession(applicantUser.id),
         );
 
         expect(
@@ -1082,9 +1090,14 @@ describe('ApplicantListingsService', () => {
       });
 
       it('does not query saved listings when the page is empty', async () => {
-        prismaMock.listing.findMany.mockResolvedValue([]);
+        prismaMock.publicListingProjection.findMany.mockResolvedValue([]);
 
-        await service.findPublishedForApplicant({}, applicantUser);
+        await service.findPublishedForApplicant(
+          {},
+          applicantUser,
+          undefined,
+          unitSession(applicantUser.id),
+        );
 
         expect(
           savedListingsMock.findSavedListingIdsForListings,
