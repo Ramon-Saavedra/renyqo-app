@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Pool, type PoolClient } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -30,12 +31,15 @@ export class ListingWorkspaceFixture extends TenantFixture {
 
   async activateApplication() {
     await this.activate();
-    await this.pool.query(
-      readFileSync(
-        'prisma/migrations/20261108150000_listing_workspace_assignment/migration.sql',
-        'utf8',
-      ),
-    );
+    const migrations = 'prisma/migrations';
+    for (const name of [
+      '20261108150000_listing_workspace_assignment',
+      '20261112150000_public_listing_discovery_indexes',
+    ]) {
+      await this.pool.query(
+        readFileSync(join(migrations, name, 'migration.sql'), 'utf8'),
+      );
+    }
     const admin = new URL(process.env['E2E_DATABASE_URL']!);
     admin.searchParams.set('schema', this.schema);
     const runtime = new URL(admin);

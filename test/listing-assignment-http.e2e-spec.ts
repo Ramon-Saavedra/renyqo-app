@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as waitUntilExpiry } from 'node:timers/promises';
 import { Test } from '@nestjs/testing';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import request, { type Response } from 'supertest';
@@ -153,10 +154,10 @@ describe('Listing assignment public HTTP contracts with restricted application l
   function requests() {
     return `/api/v1/provider/listings/${listingId}/transfer-requests`;
   }
-  async function createTransfer() {
+  async function createTransfer(validForMs = 300000) {
     const command = {
       ...input(),
-      expiresAt: new Date(Date.now() + 300000).toISOString(),
+      expiresAt: new Date(Date.now() + validForMs).toISOString(),
     };
     const response = await source
       .post(requests())
@@ -281,6 +282,61 @@ describe('Listing assignment public HTTP contracts with restricted application l
       .set('x-workspace-id', workspaceId)
       .send(input())
       .expect(403);
+  });
+  it('returns 409 after real transfer expiry without changing responsibility or evidence', async () => {
+    const created = await createTransfer(1000);
+    // Wait for the actual persisted deadline; neither clocks nor SQL guards are mocked.
+    await waitUntilExpiry(
+      Math.max(0, Date.parse(created.command.expiresAt) - Date.now() + 1),
+    );
+    const response = await owner
+      .post(`/api/v1/provider/listing-transfer-requests/${created.id}/approve`)
+      .set('x-workspace-id', workspaceId)
+      .expect(409);
+    expect((response.body as { message: string }).message).toBe(
+      'Transfer request is stale or ineligible',
+    );
+    expect(
+      await f.prisma.listing.findUniqueOrThrow({ where: { id: listingId } }),
+    ).toMatchObject({ responsibleMembershipId: sourceId, revision: 1 });
+    expect(
+      await f.prisma.listingTransferRequest.findUniqueOrThrow({
+        where: { id: created.id },
+      }),
+    ).toMatchObject({ status: 'REQUESTED', decidedAt: null });
+    expect(
+      await f.prisma.listingAssignmentTransition.count({
+        where: { listingId },
+      }),
+    ).toBe(1);
+  });
+  it('translates the real nested SQL stale-membership guard failure into 409', async () => {
+    const created = await createTransfer();
+    await f.runtimeSql(workspaceId, async (c) => {
+      await c.query('SELECT lock_workspace_ownership_revision($1,1)', [
+        workspaceId,
+      ]);
+      for (const status of ['SUSPENDED', 'ACTIVE'])
+        await c.query(
+          `UPDATE workspace_memberships SET status=$2::"WorkspaceMembershipStatus" WHERE id=$1`,
+          [targetId, status],
+        );
+    });
+    const response = await owner
+      .post(`/api/v1/provider/listing-transfer-requests/${created.id}/approve`)
+      .set('x-workspace-id', workspaceId)
+      .expect(409);
+    expect((response.body as { message: string }).message).toBe(
+      'Transfer request is stale or ineligible',
+    );
+    expect(
+      await f.prisma.listingTransferRequest.findUniqueOrThrow({
+        where: { id: created.id },
+      }),
+    ).toMatchObject({ status: 'REQUESTED', decidedAt: null });
+    expect(
+      await f.prisma.listing.findUniqueOrThrow({ where: { id: listingId } }),
+    ).toMatchObject({ responsibleMembershipId: sourceId, revision: 1 });
   });
   it('preserves decision role checks, hidden foreign requests and required selectors', async () => {
     const created = await createTransfer();

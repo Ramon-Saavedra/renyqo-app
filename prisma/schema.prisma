@@ -1316,6 +1316,10 @@ model PublicListingProjection {
   petsPolicy PetsPolicy? @map("pets_policy")
   smokingPolicy SmokingPolicy? @map("smoking_policy")
   listing Listing @relation(fields:[id],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  @@index([publishedAt, id])
+  @@index([coldRent, id])
+  @@index([livingArea, id])
+  @@index([availableFrom])
   @@map("public_listing_projections")
 }
 

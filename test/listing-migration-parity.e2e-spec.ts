@@ -139,4 +139,43 @@ describe('Canonical listing migration clean/upgrade parity', () => {
   it('matches table shapes, enums, constraints, indexes, triggers, RLS, functions and privileges', async () => {
     expect(await catalog(upgrade)).toEqual(await catalog(clean));
   });
+
+  it.each(['clean', 'upgrade'] as const)(
+    'installs valid public discovery indexes through the %s path',
+    async (path) => {
+      const fixture = path === 'clean' ? clean : upgrade;
+      const result = await fixture.pool.query<{
+        name: string;
+        columns: string[];
+        indisvalid: boolean;
+        indisready: boolean;
+        method: string;
+      }>(
+        `SELECT i.relname AS name, am.amname AS method, x.indisvalid, x.indisready,
+          ARRAY(SELECT a.attname::text FROM unnest(x.indkey) WITH ORDINALITY k(attnum, position)
+            JOIN pg_attribute a ON a.attrelid=x.indrelid AND a.attnum=k.attnum
+            ORDER BY k.position) AS columns
+         FROM pg_index x JOIN pg_class t ON t.oid=x.indrelid
+         JOIN pg_namespace n ON n.oid=t.relnamespace
+         JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_am am ON am.oid=i.relam
+         WHERE n.nspname=$1 AND t.relname='public_listing_projections' AND NOT x.indisprimary
+         ORDER BY i.relname`,
+        [fixture.schema],
+      );
+      expect(result.rows).toEqual(
+        [
+          ['available_from', ['available_from']],
+          ['cold_rent_id', ['cold_rent', 'id']],
+          ['living_area_id', ['living_area', 'id']],
+          ['published_at_id', ['published_at', 'id']],
+        ].map(([suffix, columns]) => ({
+          name: `public_listing_projections_${suffix as string}_idx`,
+          columns,
+          indisvalid: true,
+          indisready: true,
+          method: 'btree',
+        })),
+      );
+    },
+  );
 });

@@ -17,6 +17,7 @@ import {
 } from './domain/assignment.policy';
 import type { AssignmentCommand } from './domain/assignment.types';
 import { captureAssignmentCommand } from './domain/assignment-command';
+import { translateListingTransferFailure } from './domain/listing-transfer-conflict';
 
 @Injectable()
 export class AgentTransferRequests {
@@ -169,61 +170,70 @@ export class AgentTransferRequests {
       preview.targetMembershipId,
       [preview.sourceMembershipId],
     );
-    return this.writes.run(
-      actor.authority,
-      requirement,
-      {
-        kind: 'STRUCTURAL',
-        expectedOwnershipRevision: plan.ownershipRevision,
-        membershipIds: [
-          ...new Set([
-            ...plan.members.map((m) => m.id),
-            preview.sourceMembershipId,
-          ]),
-        ],
-        userIds: plan.members.map((m) => m.userId),
-      },
-      (ctx) => {
-        if (response === 'CANCELLED') {
-          if (ctx.membershipId !== preview.sourceMembershipId)
-            throw new ForbiddenException('Source AGENT required');
-        } else assertAssignmentOwner(ctx);
-        return Promise.resolve();
-      },
-      async (tx, ctx) => {
-        const listing = await this.assignments.lockListing(
-          tx,
-          ctx.workspaceId,
-          preview.listingId,
-        );
-        await tx.$queryRaw`SELECT id FROM listing_transfer_requests WHERE id=${requestId}::uuid AND workspace_id=${ctx.workspaceId}::uuid FOR UPDATE`;
-        const request = await tx.listingTransferRequest.findUniqueOrThrow({
-          where: { id: requestId, workspaceId: ctx.workspaceId },
-        });
-        if (request.status !== 'REQUESTED')
-          throw new ConflictException('Transfer request already decided');
-        if (response === 'APPROVED')
-          assertAssignmentListing(
-            ctx,
-            listing,
-            request.expectedListingRevision,
+    return this.writes
+      .run(
+        actor.authority,
+        requirement,
+        {
+          kind: 'STRUCTURAL',
+          expectedOwnershipRevision: plan.ownershipRevision,
+          membershipIds: [
+            ...new Set([
+              ...plan.members.map((m) => m.id),
+              preview.sourceMembershipId,
+            ]),
+          ],
+          userIds: plan.members.map((m) => m.userId),
+        },
+        (ctx) => {
+          if (response === 'CANCELLED') {
+            if (ctx.membershipId !== preview.sourceMembershipId)
+              throw new ForbiddenException('Source AGENT required');
+          } else assertAssignmentOwner(ctx);
+          return Promise.resolve();
+        },
+        async (tx, ctx) => {
+          const listing = await this.assignments.lockListing(
+            tx,
+            ctx.workspaceId,
+            preview.listingId,
           );
-        const result = await tx.listingTransferRequest.update({
-          where: { id: requestId, workspaceId: ctx.workspaceId },
-          data: { status: response, decidedByMembershipId: ctx.membershipId },
-        });
-        if (response === 'APPROVED')
-          await this.assignments.assign(tx, listing, {
-            targetMembershipId: request.targetMembershipId,
-            reason: 'APPROVED_TRANSFER',
-            initiator: request.sourceMembershipId,
-            approver: ctx.membershipId,
-            requestId: request.id,
-            commandId: request.commandId,
-            correlationId: request.correlationId ?? undefined,
+          await tx.$queryRaw`SELECT id FROM listing_transfer_requests WHERE id=${requestId}::uuid AND workspace_id=${ctx.workspaceId}::uuid FOR UPDATE`;
+          const request = await tx.listingTransferRequest.findUniqueOrThrow({
+            where: { id: requestId, workspaceId: ctx.workspaceId },
           });
-        return result;
-      },
-    );
+          if (request.status !== 'REQUESTED')
+            throw new ConflictException('Transfer request already decided');
+          if (
+            response === 'APPROVED' &&
+            request.expiresAt.getTime() <= Date.now()
+          )
+            throw new ConflictException(
+              'Transfer request is stale or ineligible',
+            );
+          if (response === 'APPROVED')
+            assertAssignmentListing(
+              ctx,
+              listing,
+              request.expectedListingRevision,
+            );
+          const result = await tx.listingTransferRequest.update({
+            where: { id: requestId, workspaceId: ctx.workspaceId },
+            data: { status: response, decidedByMembershipId: ctx.membershipId },
+          });
+          if (response === 'APPROVED')
+            await this.assignments.assign(tx, listing, {
+              targetMembershipId: request.targetMembershipId,
+              reason: 'APPROVED_TRANSFER',
+              initiator: request.sourceMembershipId,
+              approver: ctx.membershipId,
+              requestId: request.id,
+              commandId: request.commandId,
+              correlationId: request.correlationId ?? undefined,
+            });
+          return result;
+        },
+      )
+      .catch(translateListingTransferFailure);
   }
 }
