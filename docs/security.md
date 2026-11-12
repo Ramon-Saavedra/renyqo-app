@@ -24,9 +24,9 @@ State-changing requests (`POST`, `PUT`, `PATCH`, and `DELETE`) must send the ses
 
 ## Authorization and ownership
 
-Provider endpoints require an authenticated provider session and enforce listing ownership.
+Provider operational endpoints require a current authenticated active User/session, explicit `x-workspace-id` selection and an ACTIVE membership in an ACTIVE workspace. The header is only a selector. OWNER accesses workspace listings; AGENT requires current Listing responsibility. `GET /api/v1/provider/workspaces` exposes only the session user's ACTIVE membership/workspace selectors through a narrow read-only helper; it grants no reusable authority. Base Listing access remains tenant-scoped under FORCE RLS, and public discovery uses an allowlisted public projection.
 
-`PATCH /api/v1/provider/applications/:id/reject` and `PATCH /api/v1/provider/applications/:id/restore` require an authenticated provider session that owns the listing. Owning providers get `404` for foreign or missing applications. `WAITING` applications are not visible to the provider and return `404` on reject.
+`PATCH /api/v1/provider/applications/:id/reject` and `PATCH /api/v1/provider/applications/:id/restore` require current workspace/listing participation. Authorized workspace participants get `404` for foreign or missing applications. `WAITING` applications are not visible to the provider and return `404` on reject.
 
 `DELETE /api/v1/applicant/applications/:id` can be used only by the owning applicant. Ownership is enforced before an `ACTIVE` slot is released.
 

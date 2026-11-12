@@ -50,11 +50,11 @@ The additive migration makes `conversation_id` nullable, adds a nullable unique 
 
 ## Authorization and privacy
 
-Recipients are not persisted. Initial routing and a final lookup immediately before emission use current ownership, role and the existing application visibility policy. Existing session validation still runs for every eligible socket. All eligible connected tabs receive the appropriate event. Deleted aggregates or mismatched listing scope are dropped. Current providers receive full application hints for visible active/historical applications; WAITING and never-active hidden applications produce only the listing hint. Delayed events are redacted according to current access, even if access changed during session validation.
+Phase 4.5.5 disables provider notification/realtime recipients until team fan-out is implemented. Neither Listing creator nor responsible member is a provider-recipient fallback. Independently authorized applicant routing and its final current User/session/application checks remain enabled; all eligible applicant tabs receive the appropriate event. Listing workspace ownership is immutable, and responsibility does not grant authority independently of current membership. Events with missing/mismatched resource relationships are dropped.
 
 Rejecting/restoring never marks messages read, deletes unread state or changes stored reply settings. Existing HTTP policy determines effective chat/reply availability and unread relevance; lifecycle invalidation causes those reads to run again. Restored unread messages can therefore reappear.
 
-No supported listing ownership-transfer command exists today. An out-of-band owner change routes only to the current owner; a future ownership-transfer/deletion feature must explicitly invalidate the former owner's listing collection without exposing application IDs. A database authorization check and socket emission cannot be globally atomic; HTTP authorization remains mandatory on every read/command and reconnect/focus refetch repairs missed hints.
+Cross-workspace Listing transfer is not supported. Workspace OWNER changes and explicit Listing reassignment do not enable provider delivery or silently reparent historical evidence. A database authorization check and socket emission cannot be globally atomic; HTTP authorization remains mandatory on every read/command and reconnect/focus refetch repairs missed hints.
 
 ## Frontend integration and recovery
 

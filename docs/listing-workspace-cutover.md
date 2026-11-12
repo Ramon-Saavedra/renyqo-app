@@ -32,6 +32,12 @@ ListingImage does not receive RLS in this release. Provider operations authorize
 
 Provider notification/realtime recipients are disabled until team fan-out. Creator/responsible membership is never a recipient fallback. Independently authorized applicant delivery remains enabled.
 
+## Workspace discovery
+
+`GET /api/v1/provider/workspaces` validates the current authenticated User/session, then returns only `{ workspaceId, membershipId, role, kind }` for its ACTIVE memberships in ACTIVE workspaces, ordered by workspace ID. The `20261111180000_workspace_discovery` migration adds a read-only, NOLOGIN/NOBYPASSRLS helper with self-membership policies and fixed trusted search path; only function execution is granted to runtime, never helper-role membership. Its temporary identity is restored before return. Ordinary tenant/bootstrap policies, workspace switching rules and operational authority revalidation are unchanged. The candidate header grants nothing and is not used for discovery.
+
+Provider onboarding without a selection returns `select_workspace`; it does not infer a PERSONAL or first ORGANIZATION workspace. The client discovers selectors and explicitly supplies `x-workspace-id` for selected portfolio counts and operations.
+
 ## Locking and retries
 
 Assignment writes acquire sorted required User rows FOR SHARE → session grant → workspace root → sorted memberships → Listing → request/evidence → descendants. Participant discovery happens before the transaction; execution revalidates under locks. Missing/stale participant plans abort rather than acquire a new User lock late. Workspace root serialization also coordinates ordering, membership removal, retirement and ownership changes. Serializable retries preserve the expected Listing/membership/ownership revision checks.

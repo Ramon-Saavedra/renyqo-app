@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { ListingWorkspaceFixture } from './listing-workspace.fixture';
 
 jest.setTimeout(60000);
@@ -30,6 +30,7 @@ describe('Listing Prisma/PostgreSQL shape agreement', () => {
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
+    mkdirSync('.tmp', { recursive: true });
     writeFileSync('.tmp/listing-schema-drift.sql', diff);
     const statements = diff
       .split(';')

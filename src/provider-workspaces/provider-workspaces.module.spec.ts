@@ -1,18 +1,19 @@
 import { Test } from '@nestjs/testing';
 import { MODULE_METADATA } from '@nestjs/common/constants';
+import { ProviderWorkspacesController } from './provider-workspaces.controller';
 import { ProviderWorkspacesModule } from './provider-workspaces.module';
 import { WorkspaceEstablishment } from './workspace-establishment';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 
-describe('Dormant ProviderWorkspacesModule boundary', () => {
-  it('has no controllers, exported mutation providers or infrastructure side effects', async () => {
+describe('ProviderWorkspacesModule boundary', () => {
+  it('exposes only discovery and no exported mutation providers or infrastructure side effects', async () => {
     expect(
       Reflect.getMetadata(
         MODULE_METADATA.CONTROLLERS,
         ProviderWorkspacesModule,
       ),
-    ).toBeUndefined();
+    ).toEqual([ProviderWorkspacesController]);
     expect(
       Reflect.getMetadata(MODULE_METADATA.EXPORTS, ProviderWorkspacesModule),
     ).toBeUndefined();

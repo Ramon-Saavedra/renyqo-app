@@ -44,7 +44,9 @@ describe('Operational application login cutover', () => {
       expect(row).toEqual({ login: f.applicationLogin, schema: f.schema });
       expect(await service.publicListingProjection.count()).toBe(0);
     } finally {
-      await service.$disconnect();
+      // The real service owns an external pg pool; use its complete lifecycle
+      // shutdown so later suite cleanup cannot terminate a leaked idle client.
+      await service.onModuleDestroy();
       if (previousUrl === undefined) delete process.env['DATABASE_URL'];
       else process.env['DATABASE_URL'] = previousUrl;
       if (previousNode === undefined) delete process.env['NODE_ENV'];

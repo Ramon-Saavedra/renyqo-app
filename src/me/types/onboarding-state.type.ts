@@ -10,4 +10,6 @@ export type ApplicantOnboardingState = {
 };
 
 export type OnboardingState =
-  ProviderOnboardingState | ApplicantOnboardingState;
+  | ProviderOnboardingState
+  | { role: 'provider'; nextStep: 'select_workspace' }
+  | ApplicantOnboardingState;

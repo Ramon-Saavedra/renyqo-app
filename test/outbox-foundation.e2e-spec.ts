@@ -231,10 +231,14 @@ describe('Outbox foundation E2E', () => {
     const types = (
       await prisma.outboxEvent.findMany({ where: { applicationId } })
     ).map((row) => row.type);
-    expect(types).toEqual([
-      ConversationOutboxEventType.MESSAGE_CREATED,
-      ConversationOutboxEventType.READ_ADVANCED,
-    ]);
+    // This query has no ORDER BY: assert the exact events and multiplicity,
+    // independently of PostgreSQL's physical row order.
+    expect([...types].sort()).toEqual(
+      [
+        ConversationOutboxEventType.MESSAGE_CREATED,
+        ConversationOutboxEventType.READ_ADVANCED,
+      ].sort(),
+    );
   });
 
   it('records read.advanced with reader side and cutoff', async () => {

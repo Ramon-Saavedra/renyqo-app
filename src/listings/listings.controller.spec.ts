@@ -183,7 +183,9 @@ describe('ListingsController', () => {
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
       });
-      expect(result).toEqual(listing);
+      expect(result).toEqual(
+        new ListingResponseDto(listing, { exposeExactAddress: true }),
+      );
     });
   });
 
@@ -234,7 +236,9 @@ describe('ListingsController', () => {
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
       });
-      expect(result).toEqual(listing);
+      expect(result).toEqual(
+        new ListingResponseDto(listing, { exposeExactAddress: true }),
+      );
     });
 
     it('returns the listing images with real ids and metadata', async () => {
@@ -313,7 +317,9 @@ describe('ListingsController', () => {
       expect(listingsService.toListingResponse).toHaveBeenCalledWith(listing, {
         exposeExactAddress: true,
       });
-      expect(result).toEqual(listing);
+      expect(result).toEqual(
+        new ListingResponseDto(listing, { exposeExactAddress: true }),
+      );
     });
   });
 
