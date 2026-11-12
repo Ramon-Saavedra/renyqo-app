@@ -190,24 +190,18 @@ export class ProviderListingAccess {
       action,
       applicationId,
       async (tx, context) => {
-        const ref = await tx.application.findUnique({
-          where: { id: applicationId },
-          select: { listingId: true },
-        });
-        if (!ref) throw new NotFoundException('Application not found');
+        const ref = await this.applicationReference(tx, context, applicationId);
         listingId = ref.listingId;
-        await this.assertListing(tx, context, ref.listingId);
         await policy(tx, ref.listingId, context);
         return produce(tx, ref.listingId, context);
       },
       async (tx, context) => {
-        const ref = await tx.application.findUnique({
-          where: { id: applicationId },
-          select: { listingId: true },
-        });
-        if (!ref || ref.listingId !== listingId)
-          throw new NotFoundException('Application not found');
-        await this.assertListing(tx, context, ref.listingId);
+        const ref = await this.applicationReference(
+          tx,
+          context,
+          applicationId,
+          listingId,
+        );
         await policy(tx, ref.listingId, context);
       },
     );
@@ -235,14 +229,9 @@ export class ProviderListingAccess {
       this.requirement(actor, action, applicationId),
       { kind: 'BUSINESS' },
       async (context, tx) => {
-        await tx.$queryRaw`SELECT id FROM listings WHERE id=${listingId}::uuid AND workspace_id=${context.workspaceId}::uuid FOR UPDATE`;
-        await this.assertListing(tx, context, listingId);
-        const ref = await tx.application.findUnique({
-          where: { id: applicationId },
-          select: { listingId: true },
-        });
-        if (!ref || ref.listingId !== listingId)
-          throw new NotFoundException('Application not found');
+        await tx.$queryRaw`SELECT id FROM listings WHERE id=${listingId}::uuid AND workspace_id=${context.workspaceId}::uuid
+          AND (${context.role}='OWNER' OR (responsible_membership_id=${context.membershipId}::uuid AND status<>'retired')) FOR UPDATE`;
+        await this.applicationReference(tx, context, applicationId, listingId);
       },
       (tx, context) => mutate(tx, listingId, context),
     );
@@ -259,6 +248,24 @@ export class ProviderListingAccess {
       resourceIds: id ? [id] : [],
       purpose: 'OPERATIONAL',
     };
+  }
+
+  private async applicationReference(
+    tx: Prisma.TransactionClient,
+    context: AuthorizationContext,
+    applicationId: string,
+    listingId?: string,
+  ) {
+    const ref = await tx.application.findFirst({
+      where: {
+        id: applicationId,
+        ...(listingId ? { listingId } : {}),
+        listing: providerListingWhere(context),
+      },
+      select: { listingId: true },
+    });
+    if (!ref) throw new NotFoundException('Application not found');
+    return ref;
   }
 
   private async assertListing(

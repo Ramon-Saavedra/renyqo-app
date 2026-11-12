@@ -23,7 +23,7 @@ describe('Bounded Listing consumer reads with fresh revocation checks', () => {
     reassign: OwnerReassignment;
   beforeAll(async () => {
     await f.start();
-    for (let i = 0; i < 6; i++) workspaces.push(await f.organization());
+    for (let i = 0; i < 7; i++) workspaces.push(await f.organization());
     await f.activateApplication();
     const db = f.applicationRuntime as PrismaService;
     const writes = new ProtectedWorkspaceTransactions(
@@ -138,6 +138,46 @@ describe('Bounded Listing consumer reads with fresh revocation checks', () => {
     });
     release.resolve();
     expect(await result).toEqual(['Fixture Listing', 'Fixture Listing']);
+  });
+  it('uses the same application-not-found denial after responsibility changes during application result production', async () => {
+    const application = await f.prisma.application.create({
+      data: {
+        listingId: id,
+        applicantId: await f.user(),
+        status: 'ACTIVE',
+        activeAt: new Date(),
+      },
+    });
+    const actor = {
+      authority: await f.session(w.agents[0].userId),
+      workspaceId: w.id,
+    };
+    const ready = deferred(),
+      release = deferred();
+    const result = provider.readApplication(
+      actor,
+      'application.read',
+      application.id,
+      async () => {},
+      async () => {
+        ready.resolve();
+        await release.promise;
+        return 'protected';
+      },
+    );
+    await ready.promise;
+    try {
+      await reassign.run(await f.session(w.ownerUser), {
+        workspaceId: w.id,
+        listingId: id,
+        targetMembershipId: w.agents[1].id,
+        expectedListingRevision: 1,
+        commandId: randomUUID(),
+      });
+    } finally {
+      release.resolve();
+    }
+    await expect(result).rejects.toThrow('Application not found');
   });
   it('denies foreign, nonexistent and Listing-only applicant selectors identically', async () => {
     const userId = await f.user(),

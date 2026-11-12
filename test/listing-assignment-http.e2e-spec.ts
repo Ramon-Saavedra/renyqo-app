@@ -310,6 +310,25 @@ describe('Listing assignment public HTTP contracts with restricted application l
       }),
     ).toBe(1);
   });
+  it('returns 409 for past transfer creation and rolls back all request writes', async () => {
+    const response = await source
+      .post(requests())
+      .set('x-workspace-id', workspaceId)
+      .send({
+        ...input(),
+        expiresAt: new Date(Date.now() - 60000).toISOString(),
+      })
+      .expect(409);
+    expect((response.body as { message: string }).message).toBe(
+      'Transfer request is stale or ineligible',
+    );
+    expect(
+      await f.prisma.listingTransferRequest.count({ where: { listingId } }),
+    ).toBe(0);
+    expect(
+      await f.prisma.listing.findUniqueOrThrow({ where: { id: listingId } }),
+    ).toMatchObject({ responsibleMembershipId: sourceId, revision: 1 });
+  });
   it('translates the real nested SQL stale-membership guard failure into 409', async () => {
     const created = await createTransfer();
     await f.runtimeSql(workspaceId, async (c) => {

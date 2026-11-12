@@ -50,7 +50,7 @@ export class AgentTransferRequests {
       command.listingId,
       command.targetMembershipId,
     );
-    return this.writes.run(
+    const result = this.writes.run(
       actor.authority,
       requirement,
       {
@@ -134,6 +134,7 @@ export class AgentTransferRequests {
         });
       },
     );
+    return result.catch(translateListingTransferFailure);
   }
 
   async respond(

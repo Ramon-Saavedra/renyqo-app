@@ -100,6 +100,96 @@ describe('API/session/worker smoke through restricted application login', () => 
     );
     await recovery.run();
   });
+  it.each(['read', 'mutation'] as const)(
+    'hides foreign, missing and WAITING applications behind the same provider HTTP %s contract',
+    async (operation) => {
+      const agent = request.agent(
+        app.getHttpServer() as Parameters<typeof request>[0],
+      );
+      const registered = await agent
+        .post('/api/v1/auth/register')
+        .send({
+          name: 'Application scope provider',
+          email: `${randomUUID()}@runtime.test`,
+          password: 'StrongPass123',
+          role: 'provider',
+          providerType: 'private',
+          acceptedTerms: true,
+          acceptedPrivacy: true,
+        })
+        .expect(201);
+      const userId = (registered.body as { id: string }).id;
+      const workspace = await f.workspaceFor(userId);
+      const ownListing = await f.listing(workspace.id, workspace.owner);
+      const foreignListing = await f.listing(
+        workspaces[0].id,
+        workspaces[0].owner,
+      );
+      await f.applicationSql(workspace.id, async (c) => {
+        await c.query('SELECT lock_workspace_ownership_revision($1,1)', [
+          workspace.id,
+        ]);
+        await c.query(
+          `UPDATE listings SET status='published',published_at=clock_timestamp() WHERE id=$1`,
+          [ownListing],
+        );
+      });
+      const createApplication = async (listingId: string, waiting = false) =>
+        f.prisma.application.create({
+          data: {
+            listingId,
+            applicantId: await f.user(),
+            status: waiting ? 'WAITING' : 'ACTIVE',
+            activeAt: waiting ? null : new Date(),
+          },
+        });
+      const own = await createApplication(ownListing);
+      const foreign = await createApplication(foreignListing);
+      const waiting = await createApplication(ownListing, true);
+      const call = (id: string, selectedWorkspace = workspace.id) => {
+        const path = `/api/v1/provider/applications/${id}/conversation`;
+        return operation === 'read'
+          ? agent
+              .get(`${path}/summary`)
+              .set('x-workspace-id', selectedWorkspace)
+          : agent
+              .patch(`${path}/applicant-replies`)
+              .set('x-workspace-id', selectedWorkspace)
+              .send({ applicantRepliesEnabled: true });
+      };
+      await call(own.id).expect(200);
+      const bodies: unknown[] = [];
+      for (const id of [randomUUID(), foreign.id, waiting.id]) {
+        const response = await call(id).expect(404);
+        bodies.push(response.body as unknown);
+      }
+      await f.runtimeSql(workspaces[0].id, async (c) => {
+        await c.query('SELECT lock_workspace_ownership_revision($1,1)', [
+          workspaces[0].id,
+        ]);
+        await c.query(
+          `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,display_color)
+            VALUES($1,$2,$3,'AGENT','#7C3AED')`,
+          [randomUUID(), workspaces[0].id, userId],
+        );
+      });
+      // The same application is now in the selected workspace but outside AGENT scope.
+      const inaccessible = await call(foreign.id, workspaces[0].id).expect(404);
+      bodies.push(inaccessible.body as unknown);
+      expect(bodies).toEqual(
+        Array.from({ length: 4 }, () => ({
+          statusCode: 404,
+          error: 'Not Found',
+          message: 'Application not found',
+        })),
+      );
+      expect(
+        await f.prisma.applicationConversation.count({
+          where: { applicationId: { in: [foreign.id, waiting.id] } },
+        }),
+      ).toBe(0);
+    },
+  );
   it('profile edits atomically revalidate both workspaces and preserve waiting queue order', async () => {
     const agent = request.agent(
       app.getHttpServer() as Parameters<typeof request>[0],
