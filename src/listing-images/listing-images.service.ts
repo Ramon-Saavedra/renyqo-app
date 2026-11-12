@@ -1,4 +1,8 @@
 import {
+  ProviderListingAccess,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -9,7 +13,6 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import type { EnvironmentVariables } from '../config/env.validation';
 import type { ListingImage, Prisma } from '../generated/prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
 import { CloudinaryService } from './cloudinary.service';
 import { ListingImageItemDto } from './dto/listing-image-item.dto';
 import { ListingImageResponseDto } from './dto/listing-image-response.dto';
@@ -22,17 +25,19 @@ export class ListingImagesService {
   private readonly logger = new Logger(ListingImagesService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly access: ProviderListingAccess,
     private readonly cloudinaryService: CloudinaryService,
     private readonly config: ConfigService<EnvironmentVariables, true>,
   ) {}
 
   async upload(
     listingId: string,
-    providerId: string,
+    actor: ProviderActor,
     file: Express.Multer.File,
   ): Promise<ListingImageResponseDto> {
-    await this.assertListingOwnership(listingId, providerId);
+    await this.access.read(actor, 'listing.media.read', listingId, () =>
+      Promise.resolve(),
+    );
 
     const folder = `${this.config.get('CLOUDINARY_FOLDER')}/listings/${listingId}`;
     const uploaded = await this.cloudinaryService.uploadBuffer(
@@ -41,32 +46,37 @@ export class ListingImagesService {
     );
 
     try {
-      const image = await this.prisma.$transaction(async (tx) => {
-        const latestImage = await tx.listingImage.findFirst({
-          where: { listingId },
-          orderBy: { position: 'desc' },
-          select: { position: true },
-        });
+      const image = await this.access.mutate(
+        actor,
+        'listing.media.write',
+        listingId,
+        async (tx) => {
+          const latestImage = await tx.listingImage.findFirst({
+            where: { listingId },
+            orderBy: { position: 'desc' },
+            select: { position: true },
+          });
 
-        const position = latestImage ? latestImage.position + 1 : 0;
+          const position = latestImage ? latestImage.position + 1 : 0;
 
-        const image = await tx.listingImage.create({
-          data: {
-            listingId,
-            publicId: uploaded.public_id,
-            secureUrl: uploaded.secure_url,
-            position,
-            isCover: position === 0,
-          },
-        });
+          const image = await tx.listingImage.create({
+            data: {
+              listingId,
+              publicId: uploaded.public_id,
+              secureUrl: uploaded.secure_url,
+              position,
+              isCover: position === 0,
+            },
+          });
 
-        await tx.listing.update({
-          where: { id: listingId },
-          data: { photos: { push: uploaded.secure_url } },
-        });
+          await tx.listing.update({
+            where: { id: listingId },
+            data: { photos: { push: uploaded.secure_url } },
+          });
 
-        return image;
-      });
+          return image;
+        },
+      );
 
       return ListingImageResponseDto.fromListingImage(image);
     } catch (err) {
@@ -84,14 +94,22 @@ export class ListingImagesService {
 
   async findAllByListing(
     listingId: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<ListingImageItemDto[]> {
-    await this.assertListingOwnership(listingId, providerId);
+    await this.access.read(actor, 'listing.media.read', listingId, () =>
+      Promise.resolve(),
+    );
 
-    const images = await this.prisma.listingImage.findMany({
-      where: { listingId },
-      orderBy: { position: 'asc' },
-    });
+    const images = await this.access.read(
+      actor,
+      'listing.media.read',
+      listingId,
+      (tx) =>
+        tx.listingImage.findMany({
+          where: { listingId },
+          orderBy: { position: 'asc' },
+        }),
+    );
 
     return images.map((image) => ListingImageItemDto.fromListingImage(image));
   }
@@ -99,56 +117,67 @@ export class ListingImagesService {
   async remove(
     listingId: string,
     imageId: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<void> {
-    await this.assertListingOwnership(listingId, providerId);
+    await this.access.read(actor, 'listing.media.read', listingId, () =>
+      Promise.resolve(),
+    );
 
-    const image = await this.prisma.listingImage.findFirst({
-      where: { id: imageId, listingId },
-      select: { id: true, publicId: true },
-    });
+    const publicId = await this.access.mutate(
+      actor,
+      'listing.media.remove',
+      listingId,
+      async (tx) => {
+        const image = await tx.listingImage.findFirst({
+          where: { id: imageId, listingId },
+          select: { id: true, publicId: true },
+        });
+        if (!image) throw new NotFoundException('Listing image not found');
+        await tx.listingImage.deleteMany({
+          where: { id: image.id, listingId },
+        });
+        const remaining = await tx.listingImage.findMany({
+          where: { listingId },
+          orderBy: { position: 'asc' },
+          select: { id: true, secureUrl: true },
+        });
+        await this.applyImageOrder(tx, listingId, remaining);
+        return image.publicId;
+      },
+    );
 
-    if (!image) {
-      throw new NotFoundException('Listing image not found');
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.listingImage.deleteMany({ where: { id: image.id } });
-
-      const remaining = await tx.listingImage.findMany({
-        where: { listingId },
-        orderBy: { position: 'asc' },
-        select: { id: true, secureUrl: true },
-      });
-
-      await this.applyImageOrder(tx, listingId, remaining);
-    });
-
-    await this.deleteAssetAfterRemoval(image.publicId);
+    await this.deleteAssetAfterRemoval(publicId);
   }
 
   async reorder(
     listingId: string,
-    providerId: string,
+    actor: ProviderActor,
     dto: ReorderListingImagesDto,
   ): Promise<ListingImageItemDto[]> {
-    await this.assertListingOwnership(listingId, providerId);
+    await this.access.read(actor, 'listing.media.read', listingId, () =>
+      Promise.resolve(),
+    );
 
-    const reordered = await this.prisma.$transaction(async (tx) => {
-      const images = await tx.listingImage.findMany({
-        where: { listingId },
-        orderBy: { position: 'asc' },
-        select: { id: true, secureUrl: true },
-      });
+    const reordered = await this.access.mutate(
+      actor,
+      'listing.media.write',
+      listingId,
+      async (tx) => {
+        const images = await tx.listingImage.findMany({
+          where: { listingId },
+          orderBy: { position: 'asc' },
+          select: { id: true, secureUrl: true },
+        });
 
-      const orderedImages = this.resolveRequestedOrder(images, dto.imageIds);
-      await this.applyImageOrder(tx, listingId, orderedImages);
+        const orderedImages = this.resolveRequestedOrder(images, dto.imageIds);
+        await this.applyImageOrder(tx, listingId, orderedImages);
 
-      return tx.listingImage.findMany({
-        where: { listingId },
-        orderBy: { position: 'asc' },
-      });
-    });
+        return tx.listingImage.findMany({
+          where: { listingId },
+          orderBy: { position: 'asc' },
+        });
+      },
+    );
 
     return reordered.map((image) =>
       ListingImageItemDto.fromListingImage(image),
@@ -189,14 +218,14 @@ export class ListingImagesService {
   ): Promise<void> {
     for (const [index, image] of orderedImages.entries()) {
       await tx.listingImage.update({
-        where: { id: image.id },
+        where: { id: image.id, listingId },
         data: { position: -(index + 1) },
       });
     }
 
     for (const [index, image] of orderedImages.entries()) {
       await tx.listingImage.update({
-        where: { id: image.id },
+        where: { id: image.id, listingId },
         data: { position: index, isCover: index === 0 },
       });
     }
@@ -205,20 +234,6 @@ export class ListingImagesService {
       where: { id: listingId },
       data: { photos: orderedImages.map((image) => image.secureUrl) },
     });
-  }
-
-  private async assertListingOwnership(
-    listingId: string,
-    providerId: string,
-  ): Promise<void> {
-    const listing = await this.prisma.listing.findFirst({
-      where: { id: listingId, providerId },
-      select: { id: true },
-    });
-
-    if (!listing) {
-      throw new NotFoundException('Listing not found');
-    }
   }
 
   private async deleteUploadedAssetAfterFailure(

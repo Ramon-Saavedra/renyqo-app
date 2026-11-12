@@ -7,9 +7,12 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
+import { expectSessionAuthSetCookie } from './e2e-session-cookie-expectations';
+import {
+  blockedApplicantRouteStatus,
+  wrongAudienceStatus,
+} from './e2e-wrong-audience';
 import request, { type Response } from 'supertest';
 import { jest } from '@jest/globals';
 import { ViewingClock } from '../src/application-viewings/application-viewing.policy';
@@ -20,13 +23,13 @@ import { runSerializableTransaction } from '../src/prisma/run-serializable-trans
 import {
   ApplicationStatus,
   ApplicationActivityType,
-  ListingStatus,
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import { createPublishedListingForProvider } from './e2e-workspace-listing';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function body(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -50,7 +53,6 @@ describe('Viewing workflow commands E2E', () => {
   let now = new Date('2027-01-01T10:00:00Z');
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -77,15 +79,12 @@ describe('Viewing workflow commands E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
-    const cookies: unknown = response.headers['set-cookie'];
-    expect(cookies).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/; Secure(?:;|$)/),
-        expect.stringMatching(/; HttpOnly(?:;|$)/),
-        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
-      ]),
-    );
-    return { agent, id: getString(body(response), 'id') };
+    expectSessionAuthSetCookie(response.headers['set-cookie']);
+    const id = getString(body(response), 'id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
+    return { agent, id };
   }
 
   beforeAll(async () => {
@@ -153,24 +152,7 @@ describe('Viewing workflow commands E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     await app.init();
     const target: unknown = app.getHttpServer();
@@ -182,15 +164,14 @@ describe('Viewing workflow commands E2E', () => {
     now = new Date('2027-01-01T10:00:00Z');
     provider = await register('provider');
     applicant = await register('applicant');
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         title: 'Conversation listing',
-        publishedAt: new Date(),
       },
-    });
+    );
     listingId = listing.id;
     const application = await prisma.application.create({
       data: {
@@ -223,12 +204,7 @@ describe('Viewing workflow commands E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
 
@@ -913,11 +889,11 @@ describe('Viewing workflow commands E2E', () => {
     await applicant.agent
       .post(endpoint('provider', '/invitations'))
       .send(command(0, schedule()))
-      .expect(403);
+      .expect(wrongAudienceStatus);
     await provider.agent
       .post(endpoint('applicant', '/reconcile'))
       .send(command(0))
-      .expect(403);
+      .expect(blockedApplicantRouteStatus);
     const outsider = await register('provider');
     await outsider.agent.get(endpoint('provider')).expect(404);
     await outsider.agent

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { ProviderActor } from '../provider-authorization/provider-listing-access';
 import { ApplicationAttentionQueryService } from './application-attention-query.service';
 import { compactAttentionSummary } from './attention-projection';
 import { ApplicationAttentionSummaryDto } from './dto/attention-response.dto';
@@ -8,7 +9,7 @@ export class ProviderActiveApplicationAttentionEnricher {
   constructor(private readonly attention: ApplicationAttentionQueryService) {}
 
   async forApplications(
-    providerId: string,
+    providerId: ProviderActor,
     applicationIds: readonly string[],
   ): Promise<ReadonlyMap<string, ApplicationAttentionSummaryDto>> {
     const ids = [...new Set(applicationIds)];

@@ -1,10 +1,12 @@
 # Application Viewings
 
+Provider operational routes require explicit `x-workspace-id` selection and current ACTIVE workspace/membership authority. OWNER may access workspace listings; AGENT requires current Listing responsibility. Discover selectors with `GET /api/v1/provider/workspaces`; neither a session alone nor a global provider User ID establishes Listing ownership. Applicant access remains bound to the authenticated applicant/resource relationship.
+
 This document describes the legacy endpoint/ledger contract. CURRENT workflows use [negotiated commands](viewing-workflow-commands.md), [read models](viewing-workflow-read-models.md) and [rollout rules](viewing-workflow-rollout.md). Legacy writers are blocked after CURRENT cutover. Durable notifications are implemented separately; external calendar integration remains deferred.
 
 ## Access and lifecycle
 
-Provider access requires listing ownership, a non-WAITING application, and current or previous ACTIVE visibility. WAITING and never-active hidden applications return the same 404 as inaccessible applications, including history and summaries. Applicants access only their own application. Every viewing lookup is scoped by both applicationId and viewingId.
+Provider access requires current workspace/listing participation, a non-WAITING application, and current or previous ACTIVE visibility. WAITING and never-active hidden applications return the same 404 as inaccessible applications, including history and summaries. Applicants access only their own application. Every viewing lookup is scoped by both applicationId and viewingId.
 
 Legacy calendar writes require ACTIVE and a PUBLISHED or PAUSED listing. CURRENT workflows also support attendance/correction for an already-started visit after lifecycle termination. Restore never revives old proposals, appointments or unresolved interest: restored ACTIVE needs a new provider invitation; restored WAITING remains hidden from the provider. A new application ID starts independent history.
 
@@ -28,7 +30,7 @@ Instants use PostgreSQL timestamptz(3); API timestamps are UTC ISO strings, with
 
 ## Outcomes and controlled correction
 
-An owning provider may record COMPLETED or NO_SHOW only for an ACCEPTED round at or after endsAt. Opposite outcomes conflict; identical retries add no event.
+An authorized workspace participant may record COMPLETED or NO_SHOW only for an ACCEPTED round at or after endsAt. Opposite outcomes conflict; identical retries add no event.
 
 Outcome decisions are append-only ApplicationViewingOutcome rows. Revision 1 is the original decision. The provider may append revision 2 once, for the latest round, strictly within 24 hours of the original decision, before any interest response. A different outcome and a required 1–500-character plain-text correction reason are mandatory. The effective viewing status changes transactionally while the original decision, timestamp and activity remain visible. Identical correction retries are idempotent; further corrections conflict. Starting another round closes correction eligibility for the previous round.
 

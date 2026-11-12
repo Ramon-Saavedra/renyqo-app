@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
-import type { Prisma } from '../generated/prisma/client';
 import { ListingStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -8,29 +7,14 @@ import { PrismaService } from '../prisma/prisma.service';
 export class PublishedListingsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  getPublicAccessWhere(): Prisma.ListingWhereInput {
-    return {
-      status: ListingStatus.PUBLISHED,
-      publishedAt: { not: null },
-    };
-  }
-
-  getPublicAccessWhereFragments(): readonly Prisma.ListingWhereInput[] {
-    return [
-      { status: ListingStatus.PUBLISHED },
-      { publishedAt: { not: null } },
-    ];
-  }
-
   async findPublishedListingOrThrow(
     listingId: string,
   ): Promise<{ id: string; status: ListingStatus; publishedAt: Date }> {
-    const listing = await this.prisma.listing.findFirst({
+    const listing = await this.prisma.publicListingProjection.findFirst({
       where: {
         id: listingId,
-        ...this.getPublicAccessWhere(),
       },
-      select: { id: true, status: true, publishedAt: true },
+      select: { id: true, publishedAt: true },
     });
 
     if (!listing?.publishedAt) {
@@ -39,7 +23,7 @@ export class PublishedListingsService {
 
     return {
       id: listing.id,
-      status: listing.status,
+      status: ListingStatus.PUBLISHED,
       publishedAt: listing.publishedAt,
     };
   }

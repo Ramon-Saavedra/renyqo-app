@@ -7,14 +7,20 @@ import {
 } from './provider-listing-overview-response.dto';
 
 const LISTING_ID = '00000000-0000-4000-8000-000000000010';
-const PROVIDER_ID = '00000000-0000-4000-8000-000000000011';
+const WORKSPACE_ID = '00000000-0000-4000-8000-000000000011';
+const MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000012';
 
 function makeListing(
   overrides: Partial<ListingWithActiveApplicationsCount> = {},
 ): ListingWithActiveApplicationsCount {
   return {
     id: LISTING_ID,
-    providerId: PROVIDER_ID,
+    workspaceId: WORKSPACE_ID,
+    createdByMembershipId: MEMBERSHIP_ID,
+    responsibleMembershipId: MEMBERSHIP_ID,
+    revision: 1,
+    assignmentSequence: 1,
+    retiredAt: null,
     status: ListingStatus.PUBLISHED,
     city: 'Berlin',
     zip: '10115',

@@ -2,8 +2,6 @@ import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
 import { clearE2EData } from './e2e-cleanup';
 import { ApplicationLifecycleService } from '../src/applications/application-lifecycle.service';
 import { ProviderApplicationCurationService } from '../src/applications/provider-application-curation.service';
-import { ApplicationTransactionService } from '../src/applications/application-transaction.service';
-
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -12,24 +10,30 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
+import { expectSessionAuthSetCookie } from './e2e-session-cookie-expectations';
 import request, { type Response } from 'supertest';
 import { jest } from '@jest/globals';
 import { ViewingClock } from '../src/application-viewings/application-viewing.policy';
 import { AppModule } from '../src/app.module';
 import { ApplicationActivityService } from '../src/applications/application-activity.service';
 import { PrismaService } from '../src/prisma/prisma.service';
-import {
-  ApplicationStatus,
-  ListingStatus,
-} from '../src/generated/prisma/enums';
+import { ApplicationStatus } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import { createPublishedListingForProvider } from './e2e-workspace-listing';
+import {
+  holdListingRowLockExternal,
+  waitForListingLockContention,
+} from './e2e-listing-lock-barrier';
+import {
+  applicantAuthorityFor,
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function body(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -53,7 +57,6 @@ describe('ACTIVE consideration priority E2E', () => {
   let now = new Date('2027-01-01T10:00:00Z');
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -61,6 +64,7 @@ describe('ACTIVE consideration priority E2E', () => {
   let applicant: { agent: Agent; id: string };
   let applicationId: string;
   let listingId: string;
+  let providerActor: ProviderActor;
 
   async function register(role: 'applicant' | 'provider') {
     const agent = request.agent(server).ca(certificate);
@@ -76,15 +80,12 @@ describe('ACTIVE consideration priority E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
-    const cookies: unknown = response.headers['set-cookie'];
-    expect(cookies).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/; Secure(?:;|$)/),
-        expect.stringMatching(/; HttpOnly(?:;|$)/),
-        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
-      ]),
-    );
-    return { agent, id: getString(body(response), 'id') };
+    expectSessionAuthSetCookie(response.headers['set-cookie']);
+    const id = getString(body(response), 'id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
+    return { agent, id };
   }
 
   beforeAll(async () => {
@@ -152,24 +153,7 @@ describe('ACTIVE consideration priority E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     await app.init();
     const target: unknown = app.getHttpServer();
@@ -182,15 +166,15 @@ describe('ACTIVE consideration priority E2E', () => {
     provider = await register('provider');
     applicant = await register('applicant');
     await createEligibleApplicantProfile(applicant.agent);
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    providerActor = await providerActorFor(prisma, provider.id);
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         title: 'Conversation listing',
-        publishedAt: new Date(),
       },
-    });
+    );
     listingId = listing.id;
     const application = await prisma.application.create({
       data: {
@@ -223,12 +207,7 @@ describe('ACTIVE consideration priority E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
 
@@ -579,9 +558,9 @@ describe('ACTIVE consideration priority E2E', () => {
     done();
     await absence(id, { outcome: 'COMPLETED' });
     const curation = app.get(ProviderApplicationCurationService);
-    await curation.reject(applicationId, provider.id);
+    await curation.reject(applicationId, providerActor);
     await releaseCooldown();
-    await curation.restore(applicationId, provider.id);
+    await curation.restore(applicationId, providerActor);
     for (let round = 0; round < 2; round++) {
       const w = await snapshot();
       expect(w.confirmedAppointment).toBeNull();
@@ -788,7 +767,7 @@ describe('ACTIVE consideration priority E2E', () => {
     expect(
       await app
         .get(ApplicationLifecycleService)
-        .promoteWaitingApplications(listingId),
+        .promoteWaitingApplications(listingId, providerActor),
     ).toBe(1);
     expect(await order()).toEqual([
       applicationId,
@@ -939,9 +918,9 @@ describe('ACTIVE consideration priority E2E', () => {
     done();
     await absence(id);
     const curation = app.get(ProviderApplicationCurationService);
-    await curation.reject(applicationId, provider.id);
+    await curation.reject(applicationId, providerActor);
     await releaseCooldown();
-    await curation.restore(applicationId, provider.id);
+    await curation.restore(applicationId, providerActor);
     const restored = await position();
     await absence(
       id,
@@ -993,7 +972,9 @@ describe('ACTIVE consideration priority E2E', () => {
     done();
     const [result, admitted] = await Promise.all([
       absence(id),
-      app.get(ApplicationLifecycleService).apply(listingId, entrant.id),
+      app
+        .get(ApplicationLifecycleService)
+        .apply(listingId, await applicantAuthorityFor(prisma, entrant.id)),
     ]);
     expect(result.workflowRevision).toBe(3);
     expect(admitted.status).toBe('ACTIVE');
@@ -1053,40 +1034,26 @@ describe('ACTIVE consideration priority E2E', () => {
       );
       const lifecycle = app.get(ApplicationLifecycleService),
         curation = app.get(ProviderApplicationCurationService);
-      const locks = app.get(ApplicationTransactionService),
-        realLock = locks.lockListing.bind(locks);
-      let locked!: () => void, competing!: () => void, release!: () => void;
-      const firstLocked = new Promise<void>((resolve) => {
-        locked = resolve;
-      });
-      const secondAttempted = new Promise<void>((resolve) => {
-        competing = resolve;
-      });
-      const proceed = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      let calls = 0;
-      jest.spyOn(locks, 'lockListing').mockImplementation(async (tx, id) => {
-        if (id !== listingId) return realLock(tx, id);
-        const call = ++calls;
-        if (call === 2) competing();
-        await realLock(tx, id);
-        if (call === 1) {
-          locked();
-          await proceed;
-        }
-      });
-      const promote = () => lifecycle.promoteWaitingApplications(listingId);
-      const restore = () => curation.restore(applicationId, provider.id);
-      const winner = first === 'promotion' ? promote() : restore();
-      await firstLocked;
-      const contender = first === 'promotion' ? restore() : promote();
+      const pool = prisma.getSharedPool();
+      const gate = await holdListingRowLockExternal(prisma, pool, listingId);
+      const promote = () =>
+        lifecycle.promoteWaitingApplications(listingId, providerActor);
+      const restore = () => curation.restore(applicationId, providerActor);
+      const winner = () => (first === 'promotion' ? promote() : restore());
+      const contender = () => (first === 'promotion' ? restore() : promote());
+      let winnerPromise: Promise<unknown> | undefined;
+      let contenderPromise: Promise<unknown> | undefined;
       try {
-        await secondAttempted;
+        winnerPromise = winner();
+        await waitForListingLockContention(prisma);
+        contenderPromise = contender();
+        await gate.waitForDatabaseWaiter();
+        gate.release();
+        await Promise.all([winnerPromise, contenderPromise]);
       } finally {
-        release();
+        gate.release();
+        await Promise.allSettled([winnerPromise, contenderPromise]);
       }
-      await Promise.all([winner, contender]);
       // Existing eligible WAITING wins even when restoration owns the lock first.
       const restored = await prisma.application.findUniqueOrThrow({
         where: { id: applicationId },
@@ -1155,6 +1122,7 @@ describe('ACTIVE consideration priority E2E', () => {
         }),
       ).toBe(1);
     },
+    120000,
   );
 
   it('restore WAITING does not allocate until promotion and never uses queueOrder as consideration priority', async () => {
@@ -1163,9 +1131,9 @@ describe('ACTIVE consideration priority E2E', () => {
     const waiting = await add('WAITING');
     const old = await position();
     const curation = app.get(ProviderApplicationCurationService);
-    await curation.reject(applicationId, provider.id);
+    await curation.reject(applicationId, providerActor);
     await releaseCooldown();
-    await curation.restore(applicationId, provider.id);
+    await curation.restore(applicationId, providerActor);
     expect(
       (
         await prisma.application.findUniqueOrThrow({
@@ -1176,7 +1144,10 @@ describe('ACTIVE consideration priority E2E', () => {
     expect(await position()).toEqual(old);
     await app
       .get(ApplicationLifecycleService)
-      .withdraw(others[0].application.id, others[0].user.id);
+      .withdraw(
+        others[0].application.id,
+        await applicantAuthorityFor(prisma, others[0].user.id),
+      );
     expect((await order()).at(-1)).toBe(applicationId);
     expect((await position()).position).toBeGreaterThan(old.position);
     expect(await order()).toContain(waiting.application.id);
@@ -1261,7 +1232,7 @@ describe('ACTIVE consideration priority E2E', () => {
     done();
     await absence(id);
     const curation = app.get(ProviderApplicationCurationService);
-    await curation.reject(applicationId, provider.id);
+    await curation.reject(applicationId, providerActor);
     await releaseCooldown();
     const [response] = await Promise.all([
       provider.agent
@@ -1272,7 +1243,7 @@ describe('ACTIVE consideration priority E2E', () => {
             correctionReason: 'Attendance confirmed',
           }),
         ),
-      curation.restore(applicationId, provider.id),
+      curation.restore(applicationId, providerActor),
     ]);
     expect([200, 409]).toContain(response.status);
     const restored = await position();

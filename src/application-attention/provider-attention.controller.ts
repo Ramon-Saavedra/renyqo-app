@@ -1,8 +1,10 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
+
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
+
 import { ApplicationAttentionQueryService } from './application-attention-query.service';
 import {
   AttentionApplicationParamsDto,
@@ -10,7 +12,7 @@ import {
   AttentionQueryDto,
 } from './dto/attention-input.dto';
 
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 @Controller('provider')
 export class ProviderAttentionController {
   constructor(private readonly queries: ApplicationAttentionQueryService) {}
@@ -18,22 +20,35 @@ export class ProviderAttentionController {
   @Get('applications/:applicationId/attention')
   detail(
     @Param() params: AttentionApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.queries.detail(user.id, 'provider', params.applicationId);
+    return this.queries.detail(
+      providerActorFromRequest(request),
+      'provider',
+      params.applicationId,
+    );
   }
 
   @Get('attention')
-  aggregate(@Query() query: AttentionQueryDto, @CurrentUser() user: SafeUser) {
-    return this.queries.aggregate(user.id, 'provider', query);
+  aggregate(@Query() query: AttentionQueryDto, @Req() request: Request) {
+    return this.queries.aggregate(
+      providerActorFromRequest(request),
+      'provider',
+      query,
+    );
   }
 
   @Get('listings/:listingId/attention')
   listing(
     @Param() params: AttentionListingParamsDto,
     @Query() query: AttentionQueryDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.queries.aggregate(user.id, 'provider', query, params.listingId);
+    return this.queries.aggregate(
+      providerActorFromRequest(request),
+      'provider',
+      query,
+      params.listingId,
+    );
   }
 }

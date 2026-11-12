@@ -1,5 +1,8 @@
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import {
   Body,
+  Req,
   Controller,
   Delete,
   Get,
@@ -15,9 +18,6 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ListingImageItemDto } from './dto/listing-image-item.dto';
 import { ListingImageItemParamsDto } from './dto/listing-image-item-params.dto';
 import { ListingImageParamsDto } from './dto/listing-image-params.dto';
@@ -31,7 +31,7 @@ import {
 } from './listing-image-upload.constants';
 import { ListingImagesService } from './listing-images.service';
 
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 @UseFilters(ListingImageUploadExceptionFilter)
 @Controller('provider/listings')
 export class ListingImagesController {
@@ -44,19 +44,23 @@ export class ListingImagesController {
   uploadImage(
     @Param() params: ListingImageParamsDto,
     @UploadedFile(REQUIRED_LISTING_IMAGE_FILE_PIPE) file: Express.Multer.File,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingImageResponseDto> {
-    return this.listingImagesService.upload(params.listingId, user.id, file);
+    return this.listingImagesService.upload(
+      params.listingId,
+      providerActorFromRequest(request),
+      file,
+    );
   }
 
   @Get(':listingId/images')
   findAll(
     @Param() params: ListingImageParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingImageItemDto[]> {
     return this.listingImagesService.findAllByListing(
       params.listingId,
-      user.id,
+      providerActorFromRequest(request),
     );
   }
 
@@ -64,21 +68,25 @@ export class ListingImagesController {
   reorder(
     @Param() params: ListingImageParamsDto,
     @Body() dto: ReorderListingImagesDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ListingImageItemDto[]> {
-    return this.listingImagesService.reorder(params.listingId, user.id, dto);
+    return this.listingImagesService.reorder(
+      params.listingId,
+      providerActorFromRequest(request),
+      dto,
+    );
   }
 
   @Delete(':listingId/images/:imageId')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
     @Param() params: ListingImageItemParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<void> {
     return this.listingImagesService.remove(
       params.listingId,
       params.imageId,
-      user.id,
+      providerActorFromRequest(request),
     );
   }
 }

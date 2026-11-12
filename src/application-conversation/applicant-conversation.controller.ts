@@ -1,3 +1,6 @@
+import type { Request } from 'express';
+import { Req } from '@nestjs/common';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import {
   Body,
   Controller,
@@ -9,10 +12,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
 import { ConversationSide } from '../generated/prisma/enums';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationConversationService } from './application-conversation.service';
 import { ApplicationConversationParamsDto } from './dto/application-conversation-params.dto';
 import { ConversationQueryDto } from './dto/conversation-query.dto';
@@ -33,11 +34,11 @@ export class ApplicantConversationController {
   @Get('summary')
   summary(
     @Param() params: ApplicationConversationParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ConversationSummaryResponseDto> {
     return this.conversations.summary(
       params.applicationId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       ConversationSide.APPLICANT,
     );
   }
@@ -46,11 +47,11 @@ export class ApplicantConversationController {
   detail(
     @Param() params: ApplicationConversationParamsDto,
     @Query() query: ConversationQueryDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ConversationDetailResponseDto> {
     return this.conversations.detail(
       params.applicationId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       ConversationSide.APPLICANT,
       query,
     );
@@ -60,11 +61,11 @@ export class ApplicantConversationController {
   send(
     @Param() params: ApplicationConversationParamsDto,
     @Body() dto: SendMessageDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ApplicationMessageResponseDto> {
     return this.conversations.send(
       params.applicationId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       ConversationSide.APPLICANT,
       dto.body,
     );
@@ -74,11 +75,11 @@ export class ApplicantConversationController {
   markRead(
     @Param() params: ApplicationConversationParamsDto,
     @Body() dto: MarkConversationReadDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<MarkConversationReadResponseDto> {
     return this.conversations.markRead(
       params.applicationId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       ConversationSide.APPLICANT,
       dto.throughSequence,
     );

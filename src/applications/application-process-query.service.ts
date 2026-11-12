@@ -1,5 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  ProviderListingAccess,
+  providerListingWhere,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
+import {
   activeConsiderationOrder,
   considerationSummary,
   ApplicationConsiderationReadService,
@@ -63,6 +70,8 @@ export class ApplicationProcessQueryService {
     private readonly admissionService: ApplicationAdmissionService,
     private readonly recentExits: ProviderRecentExitsQueryService,
     private readonly consideration: ApplicationConsiderationReadService,
+    private readonly listings: ProviderListingAccess,
+    private readonly applicantListings: ApplicantListingAccess,
   ) {}
 
   async findAdmissionForListings(
@@ -94,31 +103,52 @@ export class ApplicationProcessQueryService {
   }
 
   async findAllByApplicantWithListing(
-    applicantId: string,
+    authority: HumanAuthority,
   ): Promise<ApplicantApplicationRecord[]> {
-    return this.prisma.application.findMany({
-      where: { applicantId },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        listing: {
-          select: {
-            id: true,
-            title: true,
-            city: true,
-            coldRent: true,
-            images: {
-              select: { secureUrl: true, isCover: true, position: true },
-              orderBy: [
-                { isCover: 'desc' },
-                { position: 'asc' },
-                { id: 'asc' },
-              ],
-              take: 1,
-            },
-          },
-        },
-      },
+    await this.applicantListings.assertPrincipal(authority);
+    const refs = await this.prisma.application.findMany({
+      where: { applicantId: authority.userId },
+      select: { id: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
+    const rows: ApplicantApplicationRecord[] = [];
+    for (const ref of refs)
+      rows.push(
+        await this.applicantListings.readApplication(
+          authority,
+          ref.id,
+          async () => {},
+          (tx) =>
+            tx.application.findUniqueOrThrow({
+              where: { id: ref.id, applicantId: authority.userId },
+              include: {
+                listing: {
+                  select: {
+                    id: true,
+                    title: true,
+                    city: true,
+                    coldRent: true,
+                    images: {
+                      select: {
+                        secureUrl: true,
+                        isCover: true,
+                        position: true,
+                      },
+                      orderBy: [
+                        { isCover: 'desc' },
+                        { position: 'asc' },
+                        { id: 'asc' },
+                      ],
+                      take: 1,
+                    },
+                  },
+                },
+              },
+            }),
+        ),
+      );
+    await this.applicantListings.assertPrincipal(authority);
+    return rows;
   }
 
   async findBlockingApplicationsForListings(
@@ -164,47 +194,64 @@ export class ApplicationProcessQueryService {
     return applicationsByListingId.get(listingId);
   }
 
-  async findAllByProvider(providerId: string): Promise<Application[]> {
-    return this.prisma.application.findMany({
-      where: providerApplicationVisibility(providerId),
-      orderBy: { createdAt: 'desc' },
-    });
+  async findAllByProvider(actor: ProviderActor): Promise<Application[]> {
+    return this.listings.read(
+      actor,
+      'applications.read',
+      undefined,
+      (tx, context) =>
+        tx.application.findMany({
+          where: providerApplicationVisibility(context),
+          orderBy: { createdAt: 'desc' },
+        }),
+    );
   }
 
   async findAllByListing(
     listingId: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<Application[]> {
-    await this.assertOwnedListing(listingId, providerId);
-
-    return this.prisma.application.findMany({
-      where: {
-        listingId,
-        ...providerApplicationVisibility(providerId),
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    return this.listings.read(
+      actor,
+      'applications.read',
+      listingId,
+      (tx, context) =>
+        tx.application.findMany({
+          where: {
+            listingId,
+            ...providerApplicationVisibility(context),
+          },
+          orderBy: { createdAt: 'asc' },
+        }),
+    );
   }
 
   async findWaitingCountByListing(
     listingId: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<number> {
-    await this.assertOwnedListing(listingId, providerId);
-
-    return this.prisma.application.count({
-      where: { listingId, status: ApplicationStatus.WAITING },
-    });
+    return this.listings.read(
+      actor,
+      'applications.waiting-count',
+      listingId,
+      (tx) =>
+        tx.application.count({
+          where: { listingId, status: ApplicationStatus.WAITING },
+        }),
+    );
   }
 
   async findActiveByListing(
     listingId: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<ProviderActiveApplicationRecord[]> {
-    return this.prisma.$transaction(
-      async (tx) => {
+    return this.listings.read(
+      actor,
+      'applications.active',
+      listingId,
+      async (tx, context) => {
         const listing = await tx.listing.findFirst({
-          where: { id: listingId, providerId },
+          where: { id: listingId, ...providerListingWhere(context) },
           select: { id: true, petsPolicy: true, smokingPolicy: true },
         });
 
@@ -266,23 +313,25 @@ export class ApplicationProcessQueryService {
           ),
         }));
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
   async findExitedByListing(
     listingId: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<{ items: ProviderExitedApplicationRecord[]; totalCount: number }> {
-    return this.prisma.$transaction(
-      async (tx) => {
+    return this.listings.read(
+      actor,
+      'applications.exited',
+      listingId,
+      async (tx, context) => {
         const asOf = new Date();
         const listing = await tx.listing.findFirst({
-          where: { id: listingId, providerId },
+          where: { id: listingId, ...providerListingWhere(context) },
           select: { id: true },
         });
         if (!listing) throw new NotFoundException('Listing not found');
-        const selections = await this.recentExits.select(tx, providerId, [
+        const selections = await this.recentExits.select(tx, context, [
           listingId,
         ]);
         const selection = selections.get(listingId);
@@ -290,28 +339,13 @@ export class ApplicationProcessQueryService {
         return {
           items: await this.recentExits.cards(
             tx,
-            providerId,
+            context,
             selection.items,
             asOf,
           ),
           totalCount: selection.totalCount,
         };
       },
-      { isolationLevel: 'RepeatableRead' },
     );
-  }
-
-  private async assertOwnedListing(
-    listingId: string,
-    providerId: string,
-  ): Promise<void> {
-    const listing = await this.prisma.listing.findFirst({
-      where: { id: listingId, providerId },
-      select: { id: true },
-    });
-
-    if (!listing) {
-      throw new NotFoundException('Listing not found');
-    }
   }
 }

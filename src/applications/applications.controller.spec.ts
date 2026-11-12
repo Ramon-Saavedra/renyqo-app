@@ -1,3 +1,4 @@
+import { unitRequest, unitSession } from '../../test/unit-workspace-authority';
 import { ParseUUIDPipe } from '@nestjs/common';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -118,11 +119,14 @@ describe('ApplicationsController', () => {
       const application = makeApplication();
       applicationsService.apply.mockResolvedValue(application);
 
-      const result = await controller.apply(LISTING_ID, makeApplicantUser());
+      const result = await controller.apply(
+        LISTING_ID,
+        unitRequest(makeApplicantUser()),
+      );
 
       expect(applicationsService.apply).toHaveBeenCalledWith(
         LISTING_ID,
-        APPLICANT_ID,
+        unitSession(APPLICANT_ID),
       );
       expect(result).toEqual(new ApplicationResponseDto(application));
     });

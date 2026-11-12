@@ -13,7 +13,6 @@ import type {
 import {
   ApplicationRejectionReason,
   ApplicationStatus,
-  ListingStatus,
   ObjectType,
   PetsPolicy,
   Role,
@@ -23,7 +22,7 @@ import {
 import { ApplicantListingAttentionEnricher } from '../application-attention/applicant-listing-attention.enricher';
 import { ApplicantListingSummaryService } from '../applicant-listing-summaries/applicant-listing-summary.service';
 import { SavedListingsService } from '../saved-listings/saved-listings.service';
-import { PublishedListingsService } from '../published-listings/published-listings.service';
+import { ApplicantListingAccess } from './applicant-listing-access';
 import { ApplicationsService } from '../applications/applications.service';
 import { CloudinaryService } from '../listing-images/cloudinary.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,6 +31,7 @@ import { ProfileMatch } from './dto/applicant-listing-profile-match.enum';
 import { PublicProviderType } from '../auth/dto/register.dto';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantListingsService } from './applicant-listings.service';
+import { unitSession } from '../../test/unit-workspace-authority';
 import { ApplicantListingDiscoveryQuery } from './applicant-listing-discovery-query';
 import { ListingOrderingService } from './listing-ordering.service';
 import { ListingInputRules } from './listing-input-rules';
@@ -74,6 +74,9 @@ type PrismaTransactionRunner = (
 
 type PrismaMock = ListingsTransactionMock & {
   $transaction: jest.MockedFunction<PrismaTransactionRunner>;
+  publicListingProjection: {
+    findUnique: jest.MockedFunction<(args?: unknown) => Promise<unknown>>;
+  };
   applicantProfile: {
     findUnique: jest.MockedFunction<
       (args?: unknown) => Promise<ApplicantProfile | null>
@@ -187,13 +190,6 @@ describe('ApplicantListingsService', () => {
       'findSavedListingIdsForListings' | 'isListingSaved'
     >
   >;
-  let publishedListingsMock: jest.Mocked<
-    Pick<
-      PublishedListingsService,
-      'getPublicAccessWhere' | 'getPublicAccessWhereFragments'
-    >
-  >;
-
   beforeEach(async () => {
     const transactionRunner: PrismaTransactionRunner = (fn) =>
       Promise.resolve(fn(prismaMock));
@@ -220,6 +216,22 @@ describe('ApplicantListingsService', () => {
         findMany: jest.fn<(args?: unknown) => Promise<unknown[]>>(),
         updateMany: jest.fn<(args?: unknown) => Promise<unknown>>(),
         update: jest.fn<(args?: unknown) => Promise<unknown>>(),
+      },
+      publicListingProjection: {
+        findUnique: jest.fn(async () => {
+          const row = (await prismaMock.listing.findFirst()) as
+            | (DiscoveryDetail & {
+                images?: { secureUrl: string }[];
+              })
+            | null;
+          if (!row) return null;
+          return {
+            ...row,
+            country: 'DE',
+            publicStreet: row.showExactAddress ? row.street : null,
+            photos: (row.images ?? []).map((image) => image.secureUrl),
+          };
+        }),
       },
       $queryRaw: jest.fn<(query: unknown) => Promise<unknown>>(),
       $transaction: jest.fn<PrismaTransactionRunner>(transactionRunner),
@@ -282,25 +294,6 @@ describe('ApplicantListingsService', () => {
         .mockResolvedValue(false),
     };
 
-    publishedListingsMock = {
-      getPublicAccessWhere: jest
-        .fn<
-          () => import('../generated/prisma/client').Prisma.ListingWhereInput
-        >()
-        .mockReturnValue({
-          status: ListingStatus.PUBLISHED,
-          publishedAt: { not: null },
-        }),
-      getPublicAccessWhereFragments: jest
-        .fn<
-          () => readonly import('../generated/prisma/client').Prisma.ListingWhereInput[]
-        >()
-        .mockReturnValue([
-          { status: ListingStatus.PUBLISHED },
-          { publishedAt: { not: null } },
-        ]),
-    };
-
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ApplicantListingsService,
@@ -343,8 +336,8 @@ describe('ApplicantListingsService', () => {
           useValue: savedListingsMock,
         },
         {
-          provide: PublishedListingsService,
-          useValue: publishedListingsMock,
+          provide: ApplicantListingAccess,
+          useValue: { assertPrincipal: () => Promise.resolve() },
         },
         ApplicantListingSummaryService,
         {
@@ -366,6 +359,9 @@ describe('ApplicantListingsService', () => {
   });
   describe('findPublishedDetailForApplicant', () => {
     const discoveryDetail = makeDiscoveryDetail();
+    const APPLICANT_AUTHORITY = unitSession(
+      '00000000-0000-4000-8000-000000000099',
+    );
 
     it('returns a published listing detail', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(discoveryDetail);
@@ -533,6 +529,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
           applicantUser,
+          undefined,
+          APPLICANT_AUTHORITY,
         );
 
         expect(result.profileMatch).toBe(ProfileMatch.PROFILE_INCOMPLETE);
@@ -552,6 +550,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
           applicantUser,
+          undefined,
+          APPLICANT_AUTHORITY,
         );
 
         expect(result.profileMatch).toBe(ProfileMatch.MATCH);
@@ -571,6 +571,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
           applicantUser,
+          undefined,
+          APPLICANT_AUTHORITY,
         );
 
         expect(result.profileMatch).toBe(ProfileMatch.NO_MATCH);
@@ -620,6 +622,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
           applicantUser,
+          undefined,
+          APPLICANT_AUTHORITY,
         );
 
         expect(
@@ -645,6 +649,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
           applicantUser,
+          undefined,
+          APPLICANT_AUTHORITY,
         );
 
         expect(result.hasApplied).toBe(true);
@@ -663,6 +669,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
           applicantUser,
+          undefined,
+          APPLICANT_AUTHORITY,
         );
 
         expect(result.hasApplied).toBe(true);
@@ -683,6 +691,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
           applicantUser,
+          undefined,
+          APPLICANT_AUTHORITY,
         );
 
         expect(result.publicReason).toBe(
@@ -714,6 +724,8 @@ describe('ApplicantListingsService', () => {
         const result = await service.findPublishedDetailForApplicant(
           LISTING_ID,
           applicantUser,
+          undefined,
+          APPLICANT_AUTHORITY,
         );
 
         expect(savedListingsMock.isListingSaved).toHaveBeenCalledWith(

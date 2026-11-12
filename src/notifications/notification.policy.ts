@@ -37,7 +37,7 @@ export function notifiableActivity(input: AppendApplicationActivityInput) {
   if (input.type === 'VIEWING_WORKFLOW_CLOSED')
     return (
       !!(input.metadata?.proposalId || input.metadata?.appointmentId) &&
-      ['LISTING_ARCHIVED', 'LISTING_UNPUBLISHED'].includes(
+      ['LISTING_RETIRED', 'LISTING_UNPUBLISHED'].includes(
         input.metadata?.viewingClosureReason ?? '',
       )
     );
@@ -56,22 +56,8 @@ export function visibleNotifications(
   return {
     recipientId: userId,
     expiresAt: { gt: now },
-    recipient: { status: 'ACTIVE' },
-    OR: [
-      {
-        recipientSide: 'APPLICANT',
-        recipient: { role: 'APPLICANT' },
-        application: { applicantId: userId },
-      },
-      {
-        recipientSide: 'PROVIDER',
-        recipient: { role: 'PROVIDER' },
-        application: {
-          listing: { providerId: userId },
-          status: { not: 'WAITING' },
-          OR: [{ status: 'ACTIVE' }, { activeAt: { not: null } }],
-        },
-      },
-    ],
+    recipient: { status: 'ACTIVE', role: 'APPLICANT' },
+    recipientSide: 'APPLICANT',
+    application: { applicantId: userId },
   };
 }

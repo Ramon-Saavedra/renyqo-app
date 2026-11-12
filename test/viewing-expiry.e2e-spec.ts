@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { jest } from '@jest/globals';
 import { realtimeTestApp, connected } from './realtime-test-app';
+import { waitForDomainEvents } from './e2e-realtime-sync';
 import {
   ViewingWorkflowCommandService,
   type ViewingWorkflowCommand,
@@ -54,12 +55,8 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
   async function fixture() {
     const provider = await context.user('PROVIDER'),
       applicant = await person();
-    const listing = await context.prisma.listing.create({
-      data: {
-        providerId: provider.userId,
-        displayOrder: 1,
-        status: 'PUBLISHED',
-      },
+    const listing = await context.publishedListing(provider.userId, {
+      displayOrder: 1,
     });
     const app = await context.prisma.application.create({
       data: {
@@ -83,12 +80,19 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
         )?.revision ?? 0,
     };
   }
-  function execute(
+  async function execute(
     f: Fixture,
     side: 'provider' | 'applicant',
     cmd: ViewingWorkflowCommand,
   ) {
-    return commands().execute(f.app.id, f[side].userId, side, cmd);
+    return commands().execute(
+      f.app.id,
+      side === 'provider'
+        ? await context.providerActor(f.provider.userId)
+        : await context.applicantAuthority(f.applicant.userId),
+      side,
+      cmd,
+    );
   }
   async function invite(f: Fixture, short = false) {
     return execute(f, 'provider', {
@@ -331,7 +335,7 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
       now = deadline;
       const projection = await commands().snapshot(
         f.app.id,
-        f.applicant.userId,
+        await context.applicantAuthority(f.applicant.userId),
         'applicant',
       );
       expect(projection.applicantInterest?.state).toBe('EXPIRED');
@@ -449,7 +453,7 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
       );
       const snapshot = await commands().snapshot(
         f.app.id,
-        f.applicant.userId,
+        await context.applicantAuthority(f.applicant.userId),
         'applicant',
       );
       expect(
@@ -459,7 +463,7 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
       now = stored.responseDeadlineAt!;
       const expired = await commands().snapshot(
         f.app.id,
-        f.applicant.userId,
+        await context.applicantAuthority(f.applicant.userId),
         'applicant',
       );
       expect(expired.pendingProposal?.effectiveResolution).toBe('EXPIRED');
@@ -579,7 +583,7 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
     now = deadline;
     const projection = await commands().snapshot(
       f.app.id,
-      f.applicant.userId,
+      await context.applicantAuthority(f.applicant.userId),
       'applicant',
     );
     expect(projection.applicantInterest?.state).toBe('EXPIRED');
@@ -624,6 +628,7 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
       'application.lifecycle.changed',
       'application.viewing.changed',
     ]);
+    const applicantWait = waitForDomainEvents(applicant, 2);
     for (const event of events)
       await context.app.get(RealtimeOutboxPublisher).publish({
         eventId: event.id,
@@ -634,8 +639,8 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
         occurredAt: event.occurredAt,
         payload: event.payload,
       });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(providerEvents).toHaveLength(2);
+    await applicantWait;
+    expect(providerEvents).toHaveLength(0);
     expect(applicantEvents).toHaveLength(2);
     expect(JSON.stringify(providerEvents)).not.toMatch(
       /POST_VIEWING_RESPONSE_EXPIRED|status|interestState|message/,
@@ -707,14 +712,24 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
       now = await interestDeadline(id);
       const transition =
         action === 'reject'
-          ? curation().reject(f.app.id, f.provider.userId)
+          ? curation().reject(
+              f.app.id,
+              await context.providerActor(f.provider.userId),
+            )
           : action === 'withdraw'
-            ? lifecycle().withdraw(f.app.id, f.applicant.userId)
+            ? lifecycle().withdraw(
+                f.app.id,
+                await context.applicantAuthority(f.applicant.userId),
+              )
             : context.app
                 .get(ListingsService)
-                .rentListing(f.listing.id, f.provider.userId, {
-                  selectedApplicationId: f.app.id,
-                });
+                .rentListing(
+                  f.listing.id,
+                  await context.providerActor(f.provider.userId),
+                  {
+                    selectedApplicationId: f.app.id,
+                  },
+                );
       await Promise.allSettled([
         expiry().processTarget(target(f, id, 'interest')),
         transition,
@@ -789,7 +804,10 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
   it('lifecycle closure wins before expiry and cannot produce later timeout history', async () => {
     const f = await fixture(),
       id = await complete(f);
-    await lifecycle().withdraw(f.app.id, f.applicant.userId);
+    await lifecycle().withdraw(
+      f.app.id,
+      await context.applicantAuthority(f.applicant.userId),
+    );
     now = await interestDeadline(id);
     expect(await expiry().processTarget(target(f, id, 'interest'))).toBe(false);
     expect(await history(f, 'VIEWING_INTEREST_EXPIRED')).toHaveLength(0);
@@ -797,7 +815,10 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
     const g = await fixture();
     now = new Date('2027-01-01T10:00:00Z');
     const p = await invite(g);
-    await lifecycle().withdraw(g.app.id, g.applicant.userId);
+    await lifecycle().withdraw(
+      g.app.id,
+      await context.applicantAuthority(g.applicant.userId),
+    );
     now = new Date('2027-01-01T22:00:00Z');
     expect(await expiry().processTarget(target(g, p.proposalId!))).toBe(false);
     expect(await history(g, 'VIEWING_PROPOSAL_EXPIRED')).toHaveLength(0);
@@ -811,7 +832,7 @@ describe('Durable viewing expiry, time boundaries and races (PostgreSQL)', () =>
       now = new Date(now.getTime() + 24 * 3600000 + offset);
       const snapshot = await commands().snapshot(
         f.app.id,
-        f.provider.userId,
+        await context.providerActor(f.provider.userId),
         'provider',
       );
       expect(

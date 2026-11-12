@@ -1,3 +1,6 @@
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import {
   Body,
   Controller,
@@ -9,9 +12,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationDocumentRequestService } from './application-document-request.service';
 import { ApplicationDocumentService } from './application-document.service';
 import {
@@ -24,7 +24,7 @@ import {
 } from './dto/document-input.dto';
 
 @Controller('provider/applications/:applicationId')
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 export class ProviderDocumentsController {
   constructor(
     private readonly requests: ApplicationDocumentRequestService,
@@ -32,58 +32,57 @@ export class ProviderDocumentsController {
   ) {}
 
   @Get('document-requests')
-  list(
-    @Param() params: DocumentApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
-  ) {
-    return this.requests.list(params.applicationId, user.id, 'provider');
+  list(@Param() params: DocumentApplicationParamsDto, @Req() request: Request) {
+    return this.requests.list(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+    );
   }
 
   @Post('document-requests')
   create(
     @Param() params: DocumentApplicationParamsDto,
     @Body() dto: CreateDocumentRequestsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.requests.create(params.applicationId, user.id, dto.requests);
+    return this.requests.create(
+      params.applicationId,
+      providerActorFromRequest(request),
+      dto.requests,
+    );
   }
 
   @Post('document-requests/:requestId/replacements')
   replace(
     @Param() params: DocumentRequestParamsDto,
     @Body() _dto: UploadDocumentBodyDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.requests.replace(
       params.applicationId,
       params.requestId,
-      user.id,
+      providerActorFromRequest(request),
     );
   }
 
   @Patch('document-requests/:requestId/cancel')
-  cancel(
-    @Param() params: DocumentRequestParamsDto,
-    @CurrentUser() user: SafeUser,
-  ) {
+  cancel(@Param() params: DocumentRequestParamsDto, @Req() request: Request) {
     return this.requests.cancel(
       params.applicationId,
       params.requestId,
-      user.id,
+      providerActorFromRequest(request),
     );
   }
 
   @Get('documents/:documentId/content')
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Content-Type-Options', 'nosniff')
-  download(
-    @Param() params: DocumentFileParamsDto,
-    @CurrentUser() user: SafeUser,
-  ) {
+  download(@Param() params: DocumentFileParamsDto, @Req() request: Request) {
     return this.documents.download(
       params.applicationId,
       params.documentId,
-      user.id,
+      providerActorFromRequest(request),
       'provider',
     );
   }
@@ -92,12 +91,12 @@ export class ProviderDocumentsController {
   review(
     @Param() params: DocumentFileParamsDto,
     @Body() _dto: ReviewDocumentDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.documents.review(
       params.applicationId,
       params.documentId,
-      user.id,
+      providerActorFromRequest(request),
     );
   }
 }

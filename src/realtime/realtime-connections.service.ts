@@ -100,7 +100,7 @@ export class RealtimeConnectionsService implements OnModuleDestroy {
       this.timer = undefined;
       this.checking = this.revalidate().finally(() => {
         this.checking = undefined;
-        this.schedule();
+        if (!this.stopped) this.schedule();
       });
     }, this.config.recheckMs);
     this.timer.unref();

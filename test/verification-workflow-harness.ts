@@ -21,7 +21,10 @@ import { ApplicationDocumentStorageService } from '../src/application-documents/
 import { ApplicationDocumentFinalizationService } from '../src/application-documents/application-document-finalization.service';
 import { configureCsrfProtection } from '../src/security/csrf/csrf-protection';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import { prismaServiceWithSharedPool } from './e2e-prisma-override';
 import { eligibleProfileFields } from './eligible-applicant-fixture';
+import { createPublishedListingForProvider } from './e2e-workspace-listing';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
 
 export function responseObject(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -51,11 +54,23 @@ export class VerificationWorkflowHarness {
   private pool!: Pool;
   private created = false;
   private displayOrder = 0;
+  private envSnapshot: NodeJS.ProcessEnv | undefined;
 
   async start() {
     const url = process.env['E2E_DATABASE_URL'];
     if (!url) throw new Error('Dedicated E2E database required');
     assertSafeE2EDatabaseUrl(url);
+    this.envSnapshot = {
+      DATABASE_URL: process.env['DATABASE_URL'],
+      SESSION_SECRET: process.env['SESSION_SECRET'],
+      FRONTEND_URL: process.env['FRONTEND_URL'],
+      OUTBOX_DISPATCH_ENABLED: process.env['OUTBOX_DISPATCH_ENABLED'],
+      REALTIME_ENABLED: process.env['REALTIME_ENABLED'],
+      VIEWING_EXPIRY_ENABLED: process.env['VIEWING_EXPIRY_ENABLED'],
+      DOCUMENTS_S3_BUCKET: process.env['DOCUMENTS_S3_BUCKET'],
+      DOCUMENTS_AWS_ACCOUNT_ID: process.env['DOCUMENTS_AWS_ACCOUNT_ID'],
+      DOCUMENTS_GUARDDUTY_PLAN_ARN: process.env['DOCUMENTS_GUARDDUTY_PLAN_ARN'],
+    };
     Object.assign(process.env, {
       DATABASE_URL: url,
       NODE_ENV: 'test',
@@ -98,7 +113,9 @@ export class VerificationWorkflowHarness {
     scoped.searchParams.set('options', `-c search_path=${this.schema}`);
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
-      .useValue(this.prisma)
+      .useValue(
+        prismaServiceWithSharedPool(this.prisma, this.pool, this.schema),
+      )
       .overrideProvider(ConfigService)
       .useValue(
         new ConfigService({ ...process.env, DATABASE_URL: scoped.href }),
@@ -150,6 +167,13 @@ export class VerificationWorkflowHarness {
       }
       await this.admin.end();
     }
+    if (this.envSnapshot) {
+      for (const [key, value] of Object.entries(this.envSnapshot)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      this.envSnapshot = undefined;
+    }
     jest.restoreAllMocks();
   }
 
@@ -175,6 +199,9 @@ export class VerificationWorkflowHarness {
       201,
     );
     actor.id = String(responseObject(response)['id']);
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(this.prisma, actor.id, actor.agent);
+    }
     if (role === 'applicant')
       await this.send(
         actor,
@@ -210,15 +237,14 @@ export class VerificationWorkflowHarness {
   }
 
   async fixture(actor = this.applicant) {
-    const listing = await this.prisma.listing.create({
-      data: {
-        providerId: this.provider.id,
-        displayOrder: ++this.displayOrder,
-        status: 'PUBLISHED',
-        publishedAt: new Date(),
+    const listing = await createPublishedListingForProvider(
+      this.prisma,
+      this.provider.id,
+      {
         title: 'Phase 3 fixture',
+        displayOrder: ++this.displayOrder,
       },
-    });
+    );
     const application = await this.prisma.application.create({
       data: {
         listingId: listing.id,

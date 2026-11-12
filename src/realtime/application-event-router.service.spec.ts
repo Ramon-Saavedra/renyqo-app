@@ -6,7 +6,6 @@ import { ApplicationStatus, Role } from '../generated/prisma/enums';
 
 describe('Application event authorization', () => {
   const listingId = randomUUID(),
-    providerId = randomUUID(),
     applicantId = randomUUID();
   const event: ApplicationRealtimeEvent = {
     type: 'application.lifecycle.changed',
@@ -18,9 +17,8 @@ describe('Application event authorization', () => {
   };
   const base = {
     applicantId,
-    applicant: { role: Role.APPLICANT },
+    applicant: { role: Role.APPLICANT, status: 'ACTIVE' },
     listingId,
-    listing: { providerId, provider: { role: Role.PROVIDER } },
     status: ApplicationStatus.ACTIVE,
     activeAt: new Date(),
   };
@@ -38,12 +36,11 @@ describe('Application event authorization', () => {
       } as unknown as PrismaService);
       expect(await router.routes(event)).toEqual([
         { userId: applicantId, event },
-        { userId: providerId, event },
       ]);
     },
   );
   it.each([ApplicationStatus.WAITING, ApplicationStatus.REJECTED])(
-    'redacts hidden %s applications to a listing hint',
+    'keeps applicant delivery and disables provider hints for hidden %s applications',
     async (status) => {
       const findUnique = jest
         .fn()
@@ -53,18 +50,7 @@ describe('Application event authorization', () => {
       } as unknown as PrismaService);
       const routes = await router.routes(event);
       expect(routes[0]).toEqual({ userId: applicantId, event });
-      expect(routes[1]).toEqual({
-        userId: providerId,
-        event: {
-          type: 'listing.applications.changed',
-          eventId: event.eventId,
-          schemaVersion: 1,
-          occurredAt: event.occurredAt,
-          listingId,
-          payload: {},
-        },
-      });
-      expect(routes[1].event).not.toHaveProperty('applicationId');
+      expect(routes).toHaveLength(1);
     },
   );
   it('drops deleted applications, mismatched listings and changed roles', async () => {
@@ -73,12 +59,16 @@ describe('Application event authorization', () => {
       application: { findUnique },
     } as unknown as PrismaService);
     expect(await router.routes(event)).toEqual([]);
+    findUnique.mockResolvedValue({
+      ...base,
+      applicant: { role: Role.APPLICANT, status: 'DISABLED' },
+    });
+    expect(await router.routes(event)).toEqual([]);
     findUnique.mockResolvedValue({ ...base, listingId: randomUUID() });
     expect(await router.routes(event)).toEqual([]);
     findUnique.mockResolvedValue({
       ...base,
-      applicant: { role: Role.PROVIDER },
-      listing: { providerId, provider: { role: Role.APPLICANT } },
+      applicant: { role: Role.PROVIDER, status: 'ACTIVE' },
     });
     expect(await router.routes(event)).toEqual([]);
   });

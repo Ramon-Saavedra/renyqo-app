@@ -3,7 +3,7 @@
 This additive foundation extends [4.5.1](provider-workspaces.md).
 `ProviderMembershipsModule` has no controllers or exports. Its caller-owned
 transaction components are private persistence operations, not operational APIs.
-Authentication, legacy listing/provider ownership and global User roles are unchanged.
+This foundation kept authentication, legacy listing/provider ownership and global User roles unchanged. Phase 4.5.5 subsequently replaced Listing provider-user ownership with immutable workspace ownership and explicit workspace selection; see [Listing cutover](listing-workspace-cutover.md).
 
 ## Canonical membership
 

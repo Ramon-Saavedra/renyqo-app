@@ -1,16 +1,11 @@
 import { clearE2EData } from './e2e-cleanup';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
-import type { EnvironmentVariables } from '../src/config/env.validation';
 import {
   ApplicationStatus,
-  ListingStatus,
   PetsPolicy,
   SmokingPolicy,
 } from '../src/generated/prisma/enums';
@@ -21,9 +16,10 @@ import {
   assertSafeE2EDatabaseUrl,
   getE2EDatabaseName,
 } from './e2e-database-safety';
+import { createPublishedListingForProvider } from './e2e-workspace-listing';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
 
 type RequestTarget = Parameters<typeof request>[0];
-type PgSessionStore = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 type RegisterPayload = {
   name: string;
@@ -71,7 +67,6 @@ const userPassword = 'StrongPass123';
 
 let app: INestApplication | undefined;
 let prisma: PrismaService | undefined;
-let sessionStore: PgSessionStore | undefined;
 let emailSequence = 0;
 
 function useE2eEnvironment(): void {
@@ -257,7 +252,9 @@ async function registerProvider() {
     .post('/api/v1/auth/register')
     .send(providerPayload())
     .expect(201);
-  return { agent, provider: safeUserBody(response) };
+  const provider = safeUserBody(response);
+  await bindProviderWorkspaceHeader(getPrisma(), provider.id, agent);
+  return { agent, provider };
 }
 
 async function registerApplicantWithProfile(options: {
@@ -294,27 +291,17 @@ async function registerApplicantWithProfile(options: {
   return { agent, applicant };
 }
 
-async function publishListing(providerId: string) {
-  const maxOrder = await getPrisma().listing.aggregate({
-    where: { providerId },
-    _max: { displayOrder: true },
-  });
-
-  return getPrisma().listing.create({
-    data: {
-      providerId,
-      displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
-      status: ListingStatus.PUBLISHED,
-      publishedAt: new Date(),
-      city: 'Berlin',
-      street: 'Test Street 1',
-      title: 'Provider Active Applications Listing',
-      coldRent: 800,
-      livingArea: 50,
-      rooms: 2,
-      bedrooms: 1,
-      availableFrom: new Date(),
-    },
+async function publishListing(providerUserId: string) {
+  return createPublishedListingForProvider(getPrisma(), providerUserId, {
+    publishedAt: new Date(),
+    city: 'Berlin',
+    street: 'Test Street 1',
+    title: 'Provider Active Applications Listing',
+    coldRent: 800,
+    livingArea: 50,
+    rooms: 2,
+    bedrooms: 1,
+    availableFrom: new Date(),
   });
 }
 
@@ -377,27 +364,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       }),
     );
 
-    const config = app.get(ConfigService<EnvironmentVariables, true>);
-    const PgSessionStore = connectPgSimple(session);
-
-    sessionStore = new PgSessionStore({
-      conString: config.getOrThrow<string>('DATABASE_URL'),
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-
-    app.use(
-      session({
-        store: sessionStore,
-        secret: config.getOrThrow<string>('SESSION_SECRET'),
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { httpOnly: true, secure: false, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
 
     prisma = app.get<PrismaService>(PrismaService);
     await app.init();
@@ -407,11 +374,6 @@ describe('Provider ACTIVE applications summary E2E', () => {
     if (app) {
       await app.close();
       app = undefined;
-    }
-
-    if (sessionStore) {
-      await Promise.resolve(sessionStore.close());
-      sessionStore = undefined;
     }
   });
 
@@ -436,11 +398,11 @@ describe('Provider ACTIVE applications summary E2E', () => {
 
   it('returns arrangement warnings for ACTIVE applicants that need clarification', async () => {
     const { agent, provider } = await registerProvider();
-    const listing = await getPrisma().listing.create({
-      data: {
-        providerId: provider.id,
+    const listing = await createPublishedListingForProvider(
+      getPrisma(),
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         publishedAt: new Date(),
         city: 'Berlin',
         street: 'Test Street 1',
@@ -453,7 +415,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
         petsPolicy: PetsPolicy.BY_ARRANGEMENT,
         smokingPolicy: SmokingPolicy.BY_ARRANGEMENT,
       },
-    });
+    );
 
     const petsOnly = await registerApplicantWithProfile({
       name: 'Pets Only',
@@ -931,7 +893,7 @@ describe('Provider ACTIVE applications summary E2E', () => {
       .expect(401);
     await applicant.agent
       .get(`/api/v1/provider/listings/${listing.id}/active-applications`)
-      .expect(403);
+      .expect(404);
   });
 
   it('rejects access to ACTIVE applicants for a listing owned by another provider', async () => {

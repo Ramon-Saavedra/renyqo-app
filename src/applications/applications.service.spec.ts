@@ -1,3 +1,14 @@
+import { unitSession, unitProvider } from '../../test/unit-workspace-authority';
+import {
+  unitProviderOperations,
+  unitApplicantOperations,
+  UNIT_WORKSPACE_ID,
+  UNIT_MEMBERSHIP_ID,
+} from '../../test/unit-workspace-authority';
+import { unitContext } from '../../test/unit-workspace-authority';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
+import { ProviderListingAccess } from '../provider-authorization/provider-listing-access';
+import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
 import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
 import { ViewingLifecycleService } from './viewing-lifecycle.service';
@@ -53,7 +64,12 @@ const APPLICATION_ID = '00000000-0000-4000-8000-000000000004';
 
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
-  providerId: PROVIDER_ID,
+  workspaceId: UNIT_WORKSPACE_ID,
+  createdByMembershipId: UNIT_MEMBERSHIP_ID,
+  responsibleMembershipId: UNIT_MEMBERSHIP_ID,
+  revision: 1,
+  assignmentSequence: 1,
+  retiredAt: null,
   status: ListingStatus.PUBLISHED,
   city: 'Berlin',
   zip: '10115',
@@ -107,6 +123,7 @@ const makeRawApplication = (
 
 describe('ApplicationsService', () => {
   let service: ApplicationsService;
+  let workspaceAccess: ProviderListingAccess;
   const recentExits = {
     select: jest.fn<ProviderRecentExitsQueryService['select']>(),
     cards: jest.fn<ProviderRecentExitsQueryService['cards']>(),
@@ -180,7 +197,18 @@ describe('ApplicationsService', () => {
     prismaMock.$transaction.mockImplementation(async (callback) =>
       callback(prismaMock),
     );
-    prismaMock.$queryRaw.mockResolvedValue([]);
+    prismaMock.$queryRaw.mockImplementation((query, ...values: unknown[]) =>
+      Promise.resolve(
+        Array.isArray(query) && query.join('').includes(' AS allowed')
+          ? [
+              {
+                allowed:
+                  values[0] === UNIT_WORKSPACE_ID && values[1] === PROVIDER_ID,
+              },
+            ]
+          : [],
+      ),
+    );
     prismaMock.application.findFirst.mockResolvedValue(null);
     prismaMock.application.findMany.mockResolvedValue([]);
     activityService = {
@@ -189,6 +217,28 @@ describe('ApplicationsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: ProviderListingAccess,
+          useValue: unitProviderOperations(
+            prismaMock,
+            <R>(produce: (tx: typeof prismaMock) => Promise<R>) =>
+              runSerializableTransaction(
+                prismaMock as unknown as PrismaService,
+                (tx) => produce(tx as unknown as typeof prismaMock),
+              ),
+          ),
+        },
+        {
+          provide: ApplicantListingAccess,
+          useValue: unitApplicantOperations(
+            prismaMock,
+            <R>(produce: (tx: typeof prismaMock) => Promise<R>) =>
+              runSerializableTransaction(
+                prismaMock as unknown as PrismaService,
+                (tx) => produce(tx as unknown as typeof prismaMock),
+              ),
+          ),
+        },
         {
           provide: ListingCriteriaRevisionService,
           useValue: {
@@ -239,6 +289,8 @@ describe('ApplicationsService', () => {
     }).compile();
 
     service = module.get<ApplicationsService>(ApplicationsService);
+    workspaceAccess = module.get(ProviderListingAccess);
+    jest.spyOn(workspaceAccess, 'read');
     eligibilityService = module.get(EligibilityService);
     eligibilityService.evaluate.mockReturnValue(
       new EligibilityResponseDto(true, [], [], new Date()),
@@ -258,7 +310,7 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
 
       await expect(
-        service.apply(LISTING_ID, APPLICANT_ID),
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
       ).rejects.toMatchObject({
         constructor: UnprocessableEntityException,
         response: {
@@ -281,7 +333,7 @@ describe('ApplicationsService', () => {
       prismaMock.application.count.mockResolvedValue(2);
       prismaMock.application.create.mockResolvedValue(application);
 
-      const result = await service.apply(LISTING_ID, APPLICANT_ID);
+      const result = await service.apply(LISTING_ID, unitSession(APPLICANT_ID));
 
       expect(prismaMock.$transaction).toHaveBeenCalledWith(
         expect.any(Function),
@@ -329,9 +381,9 @@ describe('ApplicationsService', () => {
         callback(prismaMock),
       );
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).resolves.toBe(
-        application,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).resolves.toBe(application);
       expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
     });
 
@@ -353,9 +405,9 @@ describe('ApplicationsService', () => {
         callback(prismaMock),
       );
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).resolves.toBe(
-        application,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).resolves.toBe(application);
       expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
     });
 
@@ -368,7 +420,7 @@ describe('ApplicationsService', () => {
       prismaMock.application.count.mockResolvedValue(5);
       prismaMock.application.create.mockResolvedValue(application);
 
-      const result = await service.apply(LISTING_ID, APPLICANT_ID);
+      const result = await service.apply(LISTING_ID, unitSession(APPLICANT_ID));
 
       expect(prismaMock.application.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -398,18 +450,18 @@ describe('ApplicationsService', () => {
     it('throws NotFoundException when listing does not exist', async () => {
       prismaMock.listing.findUnique.mockResolvedValue(null);
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('throws UnprocessableEntityException when listing is not PUBLISHED', async () => {
       const listing = makeRawListing({ status: ListingStatus.DRAFT });
       prismaMock.listing.findUnique.mockResolvedValue(listing);
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-        UnprocessableEntityException,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).rejects.toThrow(UnprocessableEntityException);
     });
 
     it('throws ConflictException when a live application already exists', async () => {
@@ -422,9 +474,9 @@ describe('ApplicationsService', () => {
         },
       ]);
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).rejects.toThrow(ConflictException);
       expect(prismaMock.application.create).not.toHaveBeenCalled();
     });
 
@@ -438,9 +490,9 @@ describe('ApplicationsService', () => {
         },
       ]);
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).rejects.toThrow(ConflictException);
       expect(prismaMock.application.create).not.toHaveBeenCalled();
     });
 
@@ -454,9 +506,9 @@ describe('ApplicationsService', () => {
         },
       ]);
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).rejects.toThrow(ConflictException);
       expect(prismaMock.application.create).not.toHaveBeenCalled();
     });
 
@@ -470,9 +522,9 @@ describe('ApplicationsService', () => {
         },
       ]);
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).rejects.toThrow(ConflictException);
       expect(prismaMock.application.create).not.toHaveBeenCalled();
     });
 
@@ -488,9 +540,9 @@ describe('ApplicationsService', () => {
         }),
       );
 
-      await expect(service.apply(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.apply(LISTING_ID, unitSession(APPLICANT_ID)),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('creates a new application when the previous one is WITHDRAWN', async () => {
@@ -505,7 +557,7 @@ describe('ApplicationsService', () => {
       prismaMock.application.count.mockResolvedValue(0);
       prismaMock.application.create.mockResolvedValue(reapplied);
 
-      const result = await service.apply(LISTING_ID, APPLICANT_ID);
+      const result = await service.apply(LISTING_ID, unitSession(APPLICANT_ID));
 
       expect(result.id).toBe(reapplied.id);
       expect(result.status).toBe(ApplicationStatus.ACTIVE);
@@ -534,7 +586,7 @@ describe('ApplicationsService', () => {
       prismaMock.application.count.mockResolvedValue(5);
       prismaMock.application.create.mockResolvedValue(reapplied);
 
-      const result = await service.apply(LISTING_ID, APPLICANT_ID);
+      const result = await service.apply(LISTING_ID, unitSession(APPLICANT_ID));
 
       expect(result.status).toBe(ApplicationStatus.WAITING);
       expect(prismaMock.application.create).toHaveBeenCalledWith(
@@ -563,7 +615,10 @@ describe('ApplicationsService', () => {
       prismaMock.application.count.mockResolvedValue(4);
       prismaMock.application.findMany.mockResolvedValue([]);
 
-      const result = await service.withdraw(APPLICATION_ID, APPLICANT_ID);
+      const result = await service.withdraw(
+        APPLICATION_ID,
+        unitSession(APPLICANT_ID),
+      );
 
       expect(result.status).toBe(ApplicationStatus.WITHDRAWN);
       expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
@@ -608,7 +663,7 @@ describe('ApplicationsService', () => {
       prismaMock.application.update.mockResolvedValue(withdrawn);
 
       await expect(
-        service.withdraw(APPLICATION_ID, APPLICANT_ID),
+        service.withdraw(APPLICATION_ID, unitSession(APPLICANT_ID)),
       ).resolves.toEqual(withdrawn);
       expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
         expect.anything(),
@@ -639,7 +694,7 @@ describe('ApplicationsService', () => {
         );
 
       await expect(
-        service.withdraw(APPLICATION_ID, APPLICANT_ID),
+        service.withdraw(APPLICATION_ID, unitSession(APPLICANT_ID)),
       ).rejects.toThrow(NotFoundException);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
     });
@@ -653,7 +708,7 @@ describe('ApplicationsService', () => {
         .mockResolvedValueOnce(withdrawn);
 
       await expect(
-        service.withdraw(APPLICATION_ID, APPLICANT_ID),
+        service.withdraw(APPLICATION_ID, unitSession(APPLICANT_ID)),
       ).resolves.toEqual(withdrawn);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
     });
@@ -667,7 +722,7 @@ describe('ApplicationsService', () => {
         .mockResolvedValueOnce(rejected);
 
       await expect(
-        service.withdraw(APPLICATION_ID, APPLICANT_ID),
+        service.withdraw(APPLICATION_ID, unitSession(APPLICANT_ID)),
       ).rejects.toThrow(ConflictException);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
       expect(prismaMock.application.findMany).not.toHaveBeenCalled();
@@ -689,7 +744,7 @@ describe('ApplicationsService', () => {
           ...application,
           listing: {
             id: LISTING_ID,
-            providerId: PROVIDER_ID,
+            workspaceId: UNIT_WORKSPACE_ID,
             status: ListingStatus.PUBLISHED,
           },
         })
@@ -698,7 +753,10 @@ describe('ApplicationsService', () => {
       prismaMock.application.count.mockResolvedValue(4);
       prismaMock.application.findMany.mockResolvedValue([]);
 
-      const result = await service.reject(APPLICATION_ID, PROVIDER_ID);
+      const result = await service.reject(
+        APPLICATION_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result.status).toBe(ApplicationStatus.REJECTED);
       expect(prismaMock.application.update).toHaveBeenCalledWith(
@@ -721,14 +779,14 @@ describe('ApplicationsService', () => {
         id: APPLICATION_ID,
         listing: {
           id: LISTING_ID,
-          providerId: '00000000-0000-4000-8000-000000000099',
+          workspaceId: '00000000-0000-4000-8000-000000000099',
           status: ListingStatus.PUBLISHED,
         },
       });
 
-      await expect(service.reject(APPLICATION_ID, PROVIDER_ID)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.reject(APPLICATION_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(NotFoundException);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
     });
 
@@ -740,14 +798,14 @@ describe('ApplicationsService', () => {
         ...application,
         listing: {
           id: LISTING_ID,
-          providerId: PROVIDER_ID,
+          workspaceId: UNIT_WORKSPACE_ID,
           status: ListingStatus.PUBLISHED,
         },
       });
 
-      await expect(service.reject(APPLICATION_ID, PROVIDER_ID)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.reject(APPLICATION_ID, unitProvider(PROVIDER_ID)),
+      ).rejects.toThrow(ConflictException);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
     });
 
@@ -765,7 +823,7 @@ describe('ApplicationsService', () => {
           ...application,
           listing: {
             id: LISTING_ID,
-            providerId: PROVIDER_ID,
+            workspaceId: UNIT_WORKSPACE_ID,
             status: ListingStatus.PUBLISHED,
           },
         })
@@ -773,7 +831,7 @@ describe('ApplicationsService', () => {
       prismaMock.application.update.mockResolvedValue(rejected);
       prismaMock.listingEvent.create.mockResolvedValue({});
 
-      await service.reject(APPLICATION_ID, PROVIDER_ID);
+      await service.reject(APPLICATION_ID, unitProvider(PROVIDER_ID));
 
       expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
         expect.anything(),
@@ -815,7 +873,7 @@ describe('ApplicationsService', () => {
           ...application,
           listing: {
             id: LISTING_ID,
-            providerId: PROVIDER_ID,
+            workspaceId: UNIT_WORKSPACE_ID,
             status: ListingStatus.PUBLISHED,
           },
         })
@@ -825,7 +883,7 @@ describe('ApplicationsService', () => {
       });
 
       await expect(
-        service.reject(APPLICATION_ID, PROVIDER_ID),
+        service.reject(APPLICATION_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toBeInstanceOf(HttpException);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
       expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
@@ -841,7 +899,7 @@ describe('ApplicationsService', () => {
       publicReason: ApplicationRejectionReason.NOT_SELECTED,
       listing: {
         id: LISTING_ID,
-        providerId: PROVIDER_ID,
+        workspaceId: UNIT_WORKSPACE_ID,
       },
     };
 
@@ -890,7 +948,10 @@ describe('ApplicationsService', () => {
       mockRestoreSetup();
       prismaMock.application.count.mockResolvedValue(2);
 
-      const result = await service.restore(APPLICATION_ID, PROVIDER_ID);
+      const result = await service.restore(
+        APPLICATION_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result.status).toBe(ApplicationStatus.ACTIVE);
       expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
@@ -951,7 +1012,10 @@ describe('ApplicationsService', () => {
       prismaMock.listingEvent.create.mockResolvedValue({});
       prismaMock.application.count.mockResolvedValue(5);
 
-      const result = await service.restore(APPLICATION_ID, PROVIDER_ID);
+      const result = await service.restore(
+        APPLICATION_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result.status).toBe(ApplicationStatus.WAITING);
       expect(activityService.appendWithinTransaction).toHaveBeenCalledWith(
@@ -998,12 +1062,12 @@ describe('ApplicationsService', () => {
         publicReason: ApplicationRejectionReason.NOT_SELECTED,
         listing: {
           id: LISTING_ID,
-          providerId: '00000000-0000-4000-8000-000000000099',
+          workspaceId: '00000000-0000-4000-8000-000000000099',
         },
       });
 
       await expect(
-        service.restore(APPLICATION_ID, PROVIDER_ID),
+        service.restore(APPLICATION_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
       expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
@@ -1014,7 +1078,7 @@ describe('ApplicationsService', () => {
         .mockResolvedValueOnce({
           id: APPLICATION_ID,
           listingId: LISTING_ID,
-          listing: { providerId: PROVIDER_ID },
+          listing: { workspaceId: UNIT_WORKSPACE_ID },
         })
         .mockResolvedValueOnce({
           ...makeRawApplication({
@@ -1025,7 +1089,7 @@ describe('ApplicationsService', () => {
         });
 
       await expect(
-        service.restore(APPLICATION_ID, PROVIDER_ID),
+        service.restore(APPLICATION_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(ConflictException);
       expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
     });
@@ -1035,7 +1099,7 @@ describe('ApplicationsService', () => {
         .mockResolvedValueOnce({
           id: APPLICATION_ID,
           listingId: LISTING_ID,
-          listing: { providerId: PROVIDER_ID },
+          listing: { workspaceId: UNIT_WORKSPACE_ID },
         })
         .mockResolvedValueOnce({
           ...makeRawApplication({
@@ -1046,7 +1110,7 @@ describe('ApplicationsService', () => {
         });
 
       await expect(
-        service.restore(APPLICATION_ID, PROVIDER_ID),
+        service.restore(APPLICATION_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(ConflictException);
       expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
     });
@@ -1056,7 +1120,7 @@ describe('ApplicationsService', () => {
         .mockResolvedValueOnce({
           id: APPLICATION_ID,
           listingId: LISTING_ID,
-          listing: { providerId: PROVIDER_ID },
+          listing: { workspaceId: UNIT_WORKSPACE_ID },
         })
         .mockResolvedValueOnce({
           ...makeRawApplication({
@@ -1067,7 +1131,7 @@ describe('ApplicationsService', () => {
         });
 
       await expect(
-        service.restore(APPLICATION_ID, PROVIDER_ID),
+        service.restore(APPLICATION_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(ConflictException);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
       expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
@@ -1078,7 +1142,7 @@ describe('ApplicationsService', () => {
         .mockResolvedValueOnce({
           id: APPLICATION_ID,
           listingId: LISTING_ID,
-          listing: { providerId: PROVIDER_ID },
+          listing: { workspaceId: UNIT_WORKSPACE_ID },
         })
         .mockResolvedValueOnce(reloadedRejected);
       prismaMock.applicantProfile.findUnique.mockResolvedValue(
@@ -1094,7 +1158,7 @@ describe('ApplicationsService', () => {
       );
 
       await expect(
-        service.restore(APPLICATION_ID, PROVIDER_ID),
+        service.restore(APPLICATION_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toMatchObject({
         constructor: UnprocessableEntityException,
         response: {
@@ -1121,7 +1185,7 @@ describe('ApplicationsService', () => {
       });
 
       await expect(
-        service.restore(APPLICATION_ID, PROVIDER_ID),
+        service.restore(APPLICATION_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toBeInstanceOf(HttpException);
       expect(prismaMock.application.update).not.toHaveBeenCalled();
       expect(prismaMock.listingEvent.create).not.toHaveBeenCalled();
@@ -1133,12 +1197,12 @@ describe('ApplicationsService', () => {
       const applications = [makeRawApplication()];
       prismaMock.application.findMany.mockResolvedValue(applications);
 
-      const result = await service.findAllByProvider(PROVIDER_ID);
+      const result = await service.findAllByProvider(unitProvider(PROVIDER_ID));
 
       expect(prismaMock.application.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            listing: { providerId: PROVIDER_ID },
+            listing: { workspaceId: UNIT_WORKSPACE_ID },
             status: { notIn: [ApplicationStatus.WAITING] },
             OR: [
               { status: { in: [ApplicationStatus.ACTIVE] } },
@@ -1158,13 +1222,16 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.application.findMany.mockResolvedValue(applications);
 
-      const result = await service.findAllByListing(LISTING_ID, PROVIDER_ID);
+      const result = await service.findAllByListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(prismaMock.application.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             listingId: LISTING_ID,
-            listing: { providerId: PROVIDER_ID },
+            listing: { workspaceId: UNIT_WORKSPACE_ID },
             status: { notIn: [ApplicationStatus.WAITING] },
             OR: [
               { status: { in: [ApplicationStatus.ACTIVE] } },
@@ -1178,9 +1245,12 @@ describe('ApplicationsService', () => {
 
     it('throws NotFoundException when listing does not belong to the provider', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
+      jest
+        .mocked(workspaceAccess.read)
+        .mockRejectedValueOnce(new NotFoundException('Listing not found'));
 
       await expect(
-        service.findAllByListing(LISTING_ID, PROVIDER_ID),
+        service.findAllByListing(LISTING_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -1191,7 +1261,10 @@ describe('ApplicationsService', () => {
       prismaMock.application.count.mockResolvedValue(3);
 
       await expect(
-        service.findWaitingCountByListing(LISTING_ID, PROVIDER_ID),
+        service.findWaitingCountByListing(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(3);
       expect(prismaMock.application.count).toHaveBeenCalledWith({
         where: { listingId: LISTING_ID, status: ApplicationStatus.WAITING },
@@ -1237,10 +1310,10 @@ describe('ApplicationsService', () => {
       prismaMock.application.findMany.mockResolvedValue(rawApplications);
 
       await expect(
-        service.findActiveByListing(LISTING_ID, PROVIDER_ID),
+        service.findActiveByListing(LISTING_ID, unitProvider(PROVIDER_ID)),
       ).resolves.toEqual(expected);
       expect(prismaMock.listing.findFirst).toHaveBeenCalledWith({
-        where: { id: LISTING_ID, providerId: PROVIDER_ID },
+        where: { id: LISTING_ID, workspaceId: UNIT_WORKSPACE_ID },
         select: { id: true, petsPolicy: true, smokingPolicy: true },
       });
       expect(prismaMock.application.findMany).toHaveBeenCalledWith({
@@ -1294,7 +1367,10 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.application.findMany.mockResolvedValue(rawApplications);
 
-      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+      const result = await service.findActiveByListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result[0]?.warnings).toEqual([
         'pets_by_arrangement',
@@ -1326,7 +1402,10 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.application.findMany.mockResolvedValue(rawApplications);
 
-      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+      const result = await service.findActiveByListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result[0]?.warnings).toEqual(['pets_by_arrangement']);
     });
@@ -1353,7 +1432,10 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.application.findMany.mockResolvedValue(rawApplications);
 
-      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+      const result = await service.findActiveByListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result[0]?.warnings).toEqual(['smoking_by_arrangement']);
     });
@@ -1380,7 +1462,10 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.application.findMany.mockResolvedValue(rawApplications);
 
-      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+      const result = await service.findActiveByListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result[0]?.warnings).toEqual([]);
     });
@@ -1402,7 +1487,10 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.application.findMany.mockResolvedValue(rawApplications);
 
-      const result = await service.findActiveByListing(LISTING_ID, PROVIDER_ID);
+      const result = await service.findActiveByListing(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(result[0]?.warnings).toEqual([]);
     });
@@ -1411,7 +1499,7 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.findActiveByListing(LISTING_ID, PROVIDER_ID),
+        service.findActiveByListing(LISTING_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -1436,7 +1524,7 @@ describe('ApplicationsService', () => {
         prismaMock.application.create.mockResolvedValue(
           makeRawApplication({ status: ApplicationStatus.WAITING }),
         );
-        await service.apply(LISTING_ID, APPLICANT_ID);
+        await service.apply(LISTING_ID, unitSession(APPLICANT_ID));
         expect(
           prismaMock.application.update.mock.calls.map(
             ([arg]) => (arg as { where: { id: string } }).where.id,
@@ -1481,7 +1569,7 @@ describe('ApplicationsService', () => {
       prismaMock.application.create.mockResolvedValue(
         makeRawApplication({ status: ApplicationStatus.WAITING }),
       );
-      await service.apply(LISTING_ID, APPLICANT_ID);
+      await service.apply(LISTING_ID, unitSession(APPLICANT_ID));
       expect(prismaMock.application.update).toHaveBeenCalledTimes(1);
       expect(prismaMock.application.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'eligible-501' } }),
@@ -1511,7 +1599,10 @@ describe('ApplicationsService', () => {
         () => new EligibilityResponseDto(++checks === 51, [], [], new Date()),
       );
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(1);
       expect(prismaMock.application.findMany).toHaveBeenNthCalledWith(
         2,
@@ -1533,7 +1624,10 @@ describe('ApplicationsService', () => {
         makeRawListing({ status: ListingStatus.PAUSED }),
       );
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(0);
       expect(prismaMock.application.count).not.toHaveBeenCalled();
       expect(prismaMock.application.update).not.toHaveBeenCalled();
@@ -1575,7 +1669,10 @@ describe('ApplicationsService', () => {
         );
 
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(1);
       expect(prismaMock.application.findMany).toHaveBeenCalledWith({
         where: { listingId: LISTING_ID, status: ApplicationStatus.WAITING },
@@ -1618,7 +1715,10 @@ describe('ApplicationsService', () => {
       prismaMock.application.update.mockResolvedValue(makeRawApplication());
 
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(2);
 
       expect(prismaMock.application.findMany).toHaveBeenCalledWith(
@@ -1650,7 +1750,10 @@ describe('ApplicationsService', () => {
       prismaMock.application.update.mockResolvedValue(makeRawApplication());
       prismaMock.applicantProfile.findUnique.mockResolvedValue(null);
 
-      await service.promoteWaitingApplications(LISTING_ID);
+      await service.promoteWaitingApplications(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(eligibilityService.evaluate).toHaveBeenCalledWith(listing, null);
       expect(prismaMock.applicantProfile.findUnique).toHaveBeenCalledWith({
@@ -1674,7 +1777,10 @@ describe('ApplicationsService', () => {
       prismaMock.application.update.mockResolvedValue(makeRawApplication());
 
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(1);
       expect(prismaMock.application.update).toHaveBeenCalledTimes(1);
     });
@@ -1684,7 +1790,10 @@ describe('ApplicationsService', () => {
       prismaMock.application.count.mockResolvedValue(5);
 
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(0);
       expect(prismaMock.application.findMany).not.toHaveBeenCalled();
       expect(prismaMock.application.update).not.toHaveBeenCalled();
@@ -1694,7 +1803,10 @@ describe('ApplicationsService', () => {
       prismaMock.listing.findUnique.mockResolvedValue(makeRawListing());
       prismaMock.application.count.mockResolvedValue(5);
 
-      await service.promoteWaitingApplications(LISTING_ID);
+      await service.promoteWaitingApplications(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+      );
 
       expect(prismaMock.$transaction).toHaveBeenCalledWith(
         expect.any(Function),
@@ -1713,7 +1825,10 @@ describe('ApplicationsService', () => {
       prismaMock.$transaction.mockRejectedValueOnce(conflict);
 
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(0);
       expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
     });
@@ -1721,14 +1836,20 @@ describe('ApplicationsService', () => {
     it('promotes nothing when the listing no longer exists or is not published', async () => {
       prismaMock.listing.findUnique.mockResolvedValueOnce(null);
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(0);
 
       prismaMock.listing.findUnique.mockResolvedValueOnce(
-        makeRawListing({ status: ListingStatus.ARCHIVED }),
+        makeRawListing({ status: ListingStatus.RETIRED }),
       );
       await expect(
-        service.promoteWaitingApplications(LISTING_ID),
+        service.promoteWaitingApplications(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).resolves.toBe(0);
 
       expect(prismaMock.application.update).not.toHaveBeenCalled();
@@ -1763,15 +1884,6 @@ describe('ApplicationsService', () => {
       listing,
     });
 
-    const extractLockedListingId = (
-      strings: unknown,
-      ...values: unknown[]
-    ): string | undefined => {
-      void strings;
-      const firstValue = values[0];
-      return typeof firstValue === 'string' ? firstValue : undefined;
-    };
-
     it('leaves eligible ACTIVE applications unchanged', async () => {
       const listing = makeRawListing();
       const application = makeApplicationWithListing(
@@ -1784,6 +1896,7 @@ describe('ApplicationsService', () => {
         prismaMock as unknown as Prisma.TransactionClient,
         APPLICANT_ID,
         makeProfile(),
+        [listing],
       );
 
       expect(prismaMock.application.update).not.toHaveBeenCalled();
@@ -1821,6 +1934,7 @@ describe('ApplicationsService', () => {
         prismaMock as unknown as Prisma.TransactionClient,
         APPLICANT_ID,
         makeProfile(),
+        [listing],
       );
 
       expect(prismaMock.application.update).toHaveBeenNthCalledWith(1, {
@@ -1872,6 +1986,7 @@ describe('ApplicationsService', () => {
         prismaMock as unknown as Prisma.TransactionClient,
         APPLICANT_ID,
         makeProfile(),
+        [listing],
       );
 
       expect(prismaMock.application.update).toHaveBeenCalledWith({
@@ -1923,6 +2038,7 @@ describe('ApplicationsService', () => {
         prismaMock as unknown as Prisma.TransactionClient,
         APPLICANT_ID,
         makeProfile(),
+        [listing],
       );
 
       expect(prismaMock.application.update).toHaveBeenNthCalledWith(
@@ -1966,14 +2082,13 @@ describe('ApplicationsService', () => {
         prismaMock as unknown as Prisma.TransactionClient,
         APPLICANT_ID,
         makeProfile(),
+        [listingB, listingA],
       );
 
-      expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(2);
-
-      const lockedListingIds = prismaMock.$queryRaw.mock.calls
-        .map((call) => extractLockedListingId(...call))
-        .filter((id): id is string => id !== undefined);
-      expect(lockedListingIds).toEqual([listingA.id, listingB.id]);
+      expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+      expect(
+        eligibilityService.evaluate.mock.calls.map((call) => call[0]),
+      ).toEqual([listingA, listingB]);
     });
   });
 
@@ -2000,20 +2115,25 @@ describe('ApplicationsService', () => {
       );
       recentExits.cards.mockResolvedValue([card]);
       expect(
-        await service.findExitedByListing(LISTING_ID, PROVIDER_ID),
+        await service.findExitedByListing(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).toEqual({ items: [card], totalCount: 7 });
-      expect(prismaMock.$transaction).toHaveBeenCalledWith(
+      expect(workspaceAccess.read).toHaveBeenCalledWith(
+        unitProvider(PROVIDER_ID),
+        'applications.exited',
+        LISTING_ID,
         expect.any(Function),
-        { isolationLevel: 'RepeatableRead' },
       );
       expect(recentExits.select).toHaveBeenCalledWith(
         expect.any(Object),
-        PROVIDER_ID,
+        unitContext(PROVIDER_ID),
         [LISTING_ID],
       );
       expect(recentExits.cards).toHaveBeenCalledWith(
         expect.any(Object),
-        PROVIDER_ID,
+        unitContext(PROVIDER_ID),
         [projection],
         expect.any(Date),
       );
@@ -2022,7 +2142,7 @@ describe('ApplicationsService', () => {
     it('rejects foreign listing access before selecting or hydrating identities', async () => {
       prismaMock.listing.findFirst.mockResolvedValue(null);
       await expect(
-        service.findExitedByListing(LISTING_ID, PROVIDER_ID),
+        service.findExitedByListing(LISTING_ID, unitProvider(PROVIDER_ID)),
       ).rejects.toThrow(NotFoundException);
       expect(recentExits.select).not.toHaveBeenCalled();
       expect(recentExits.cards).not.toHaveBeenCalled();
@@ -2035,7 +2155,10 @@ describe('ApplicationsService', () => {
       );
       recentExits.cards.mockResolvedValue([]);
       expect(
-        await service.findExitedByListing(LISTING_ID, PROVIDER_ID),
+        await service.findExitedByListing(
+          LISTING_ID,
+          unitProvider(PROVIDER_ID),
+        ),
       ).toEqual({ items: [], totalCount: 0 });
     });
   });

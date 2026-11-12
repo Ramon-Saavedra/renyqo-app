@@ -1,3 +1,6 @@
+import type { Request } from 'express';
+import { Req } from '@nestjs/common';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import {
   Body,
   Controller,
@@ -12,8 +15,6 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicationDocumentRequestService } from './application-document-request.service';
 import { ApplicationDocumentService } from './application-document.service';
 import {
@@ -37,11 +38,12 @@ export class ApplicantDocumentsController {
   ) {}
 
   @Get('document-requests')
-  list(
-    @Param() params: DocumentApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
-  ) {
-    return this.requests.list(params.applicationId, user.id, 'applicant');
+  list(@Param() params: DocumentApplicationParamsDto, @Req() request: Request) {
+    return this.requests.list(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+    );
   }
 
   @Post('document-requests/:requestId/document')
@@ -51,12 +53,12 @@ export class ApplicantDocumentsController {
     @Param() params: DocumentRequestParamsDto,
     @Body() _dto: UploadDocumentBodyDto,
     @UploadedFile(ApplicationDocumentUploadPipe) file: Express.Multer.File,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.documents.upload(
       params.applicationId,
       params.requestId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       file,
     );
   }
@@ -64,14 +66,11 @@ export class ApplicantDocumentsController {
   @Get('documents/:documentId/content')
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Content-Type-Options', 'nosniff')
-  download(
-    @Param() params: DocumentFileParamsDto,
-    @CurrentUser() user: SafeUser,
-  ) {
+  download(@Param() params: DocumentFileParamsDto, @Req() request: Request) {
     return this.documents.download(
       params.applicationId,
       params.documentId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
     );
   }

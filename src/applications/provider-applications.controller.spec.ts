@@ -1,3 +1,4 @@
+import { unitRequest, unitProvider } from '../../test/unit-workspace-authority';
 import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
 import {
   METHOD_METADATA,
@@ -169,10 +170,10 @@ describe('ProviderApplicationsController', () => {
       const applications = [makeApplication()];
       applicationsService.findAllByProvider.mockResolvedValue(applications);
 
-      const result = await controller.findAll(makeProviderUser());
+      const result = await controller.findAll(unitRequest(makeProviderUser()));
 
       expect(applicationsService.findAllByProvider).toHaveBeenCalledWith(
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(result).toEqual(
         applications.map(
@@ -196,12 +197,12 @@ describe('ProviderApplicationsController', () => {
 
       const result = await controller.findByListing(
         LISTING_ID,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(applicationsService.findAllByListing).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(result).toEqual(
         applications.map(
@@ -222,15 +223,15 @@ describe('ProviderApplicationsController', () => {
 
       const result = await controller.findActiveByListing(
         LISTING_ID,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(applicationsService.findActiveByListing).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(activeAttention.forApplications).toHaveBeenCalledWith(
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
         [APPLICATION_ID],
       );
       expect(result).toEqual(
@@ -261,12 +262,12 @@ describe('ProviderApplicationsController', () => {
 
       const result = await controller.findExitedByListing(
         LISTING_ID,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(applicationsService.findExitedByListing).toHaveBeenCalledWith(
         LISTING_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(result).toEqual(
         new ProviderExitedApplicationsResponseDto({
@@ -289,11 +290,14 @@ describe('ProviderApplicationsController', () => {
       applicationsService.findWaitingCountByListing.mockResolvedValue(4);
 
       await expect(
-        controller.findWaitingCount(LISTING_ID, makeProviderUser()),
+        controller.findWaitingCount(
+          LISTING_ID,
+          unitRequest(makeProviderUser()),
+        ),
       ).resolves.toEqual(new WaitingCountResponseDto(4));
       expect(
         applicationsService.findWaitingCountByListing,
-      ).toHaveBeenCalledWith(LISTING_ID, PROVIDER_ID);
+      ).toHaveBeenCalledWith(LISTING_ID, unitProvider(PROVIDER_ID));
     });
   });
 
@@ -304,12 +308,12 @@ describe('ProviderApplicationsController', () => {
 
       const result = await controller.reject(
         APPLICATION_ID,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(applicationsService.reject).toHaveBeenCalledWith(
         APPLICATION_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(result).toEqual(new ApplicationResponseDto(application));
     });
@@ -322,12 +326,12 @@ describe('ProviderApplicationsController', () => {
 
       const result = await controller.restore(
         APPLICATION_ID,
-        makeProviderUser(),
+        unitRequest(makeProviderUser()),
       );
 
       expect(applicationsService.restore).toHaveBeenCalledWith(
         APPLICATION_ID,
-        PROVIDER_ID,
+        unitProvider(PROVIDER_ID),
       );
       expect(result).toEqual(new ApplicationResponseDto(application));
     });

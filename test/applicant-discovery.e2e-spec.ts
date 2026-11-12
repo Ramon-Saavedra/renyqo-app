@@ -1,14 +1,10 @@
 import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
 import { clearE2EData } from './e2e-cleanup';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
-import type { EnvironmentVariables } from '../src/config/env.validation';
 import {
   ApplicationRejectionReason,
   ApplicationStatus,
@@ -22,9 +18,15 @@ import {
   assertSafeE2EDatabaseUrl,
   getE2EDatabaseName,
 } from './e2e-database-safety';
+import {
+  createListingInWorkspaceForProvider,
+  createPublishedListingForProvider,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
+import type { Prisma } from '../src/generated/prisma/client';
 
 type RequestTarget = Parameters<typeof request>[0];
-type PgSessionStore = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 type RegisterPayload = {
   name: string;
@@ -42,7 +44,6 @@ const userPassword = 'StrongPass123';
 
 let app: INestApplication | undefined;
 let prisma: PrismaService | undefined;
-let sessionStore: PgSessionStore | undefined;
 let emailSequence = 0;
 
 function useE2eEnvironment(): void {
@@ -186,10 +187,16 @@ function providerPayload(email = uniqueEmail('provider')): RegisterPayload {
   };
 }
 
+type RegisteredSession = {
+  cookies: string[];
+  agent: ReturnType<typeof request.agent>;
+};
+
 async function registerAndGetCookies(
   payload: RegisterPayload,
-): Promise<string[]> {
-  const res = await request(getServer())
+): Promise<RegisteredSession> {
+  const agent = request.agent(getServer());
+  const res = await agent
     .post('/api/v1/auth/register')
     .send(payload)
     .expect(201);
@@ -201,21 +208,22 @@ async function registerAndGetCookies(
     throw new Error('Expected set-cookie array');
   }
 
-  return cookies as string[];
+  if (payload.role === 'provider') {
+    const providerId = responseBody(res).id;
+    if (typeof providerId !== 'string') {
+      throw new Error('Expected provider id');
+    }
+    await bindProviderWorkspaceHeader(getPrisma(), providerId, agent);
+  }
+
+  return { cookies: cookies as string[], agent };
 }
 
 async function createPublishedListing(
   providerId: string,
   overrides: Record<string, unknown> = {},
 ) {
-  const maxOrder = await getPrisma().listing.aggregate({
-    where: { providerId },
-    _max: { displayOrder: true },
-  });
-
-  const base = {
-    providerId,
-    displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
+  return createPublishedListingForProvider(getPrisma(), providerId, {
     status: ListingStatus.PUBLISHED,
     city: 'Berlin',
     zip: '10115',
@@ -240,9 +248,20 @@ async function createPublishedListing(
     petsPolicy: PetsPolicy.ALLOWED,
     smokingPolicy: SmokingPolicy.NOT_ALLOWED,
     ...overrides,
-  };
+  });
+}
 
-  return getPrisma().listing.create({ data: base });
+async function createWorkspaceListing(
+  providerUserId: string,
+  data: Omit<
+    Prisma.ListingUncheckedCreateInput,
+    'workspaceId' | 'createdByMembershipId' | 'responsibleMembershipId'
+  >,
+) {
+  return createListingInWorkspaceForProvider(getPrisma(), providerUserId, {
+    city: 'Berlin',
+    ...data,
+  });
 }
 
 async function updateApplicantProfile(
@@ -303,32 +322,7 @@ describe('Applicant Discovery E2E', () => {
       }),
     );
 
-    const config = app.get(ConfigService<EnvironmentVariables, true>);
-    const PgSessionStore = connectPgSimple(session);
-
-    sessionStore = new PgSessionStore({
-      conString: config.getOrThrow<string>('DATABASE_URL'),
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-
-    app.use(
-      session({
-        store: sessionStore,
-        secret: sessionSecret,
-        resave: false,
-        saveUninitialized: false,
-        cookie: {
-          httpOnly: true,
-          secure: false,
-          sameSite: 'lax',
-          maxAge: 24 * 60 * 60 * 1000,
-        },
-      }),
-    );
-
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
 
     await app.init();
     prisma = app.get(PrismaService);
@@ -338,11 +332,6 @@ describe('Applicant Discovery E2E', () => {
     if (app) {
       await app.close();
       app = undefined;
-    }
-
-    if (sessionStore) {
-      await Promise.resolve(sessionStore.close());
-      sessionStore = undefined;
     }
   }, 15_000);
 
@@ -360,7 +349,7 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('allows provider requests', async () => {
-      const cookies = await registerAndGetCookies(providerPayload());
+      const { cookies } = await registerAndGetCookies(providerPayload());
 
       await request(getServer())
         .get('/api/v1/listings')
@@ -369,7 +358,7 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns an empty page when no listings are published', async () => {
-      const cookies = await registerAndGetCookies(applicantPayload());
+      const { cookies } = await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get('/api/v1/listings')
@@ -382,7 +371,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns published listings for an anonymous user', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -403,7 +393,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('excludes non-published listings', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -411,45 +402,29 @@ describe('Applicant Discovery E2E', () => {
       const providerId = responseBody(meRes).id as string;
 
       await createPublishedListing(providerId);
-      await getPrisma().listing.create({
-        data: {
-          providerId,
-          displayOrder: 2,
-          status: ListingStatus.DRAFT,
-          city: 'Berlin',
-          title: 'Draft Listing',
-        },
+      await createWorkspaceListing(providerId, {
+        displayOrder: 2,
+        status: ListingStatus.DRAFT,
+        title: 'Draft Listing',
       });
-      await getPrisma().listing.create({
-        data: {
-          providerId,
-          displayOrder: 3,
-          status: ListingStatus.ARCHIVED,
-          publishedAt: new Date(),
-          city: 'Berlin',
-          title: 'Archived Listing',
-        },
+      await createWorkspaceListing(providerId, {
+        displayOrder: 3,
+        status: ListingStatus.RETIRED,
+        publishedAt: new Date(),
+        title: 'Archived Listing',
       });
-      await getPrisma().listing.create({
-        data: {
-          providerId,
-          displayOrder: 4,
-          status: ListingStatus.PAUSED,
-          publishedAt: new Date(),
-          city: 'Berlin',
-          title: 'Paused Listing',
-        },
+      await createWorkspaceListing(providerId, {
+        displayOrder: 4,
+        status: ListingStatus.PAUSED,
+        publishedAt: new Date(),
+        title: 'Paused Listing',
       });
-      await getPrisma().listing.create({
-        data: {
-          providerId,
-          displayOrder: 5,
-          status: ListingStatus.RENTED,
-          publishedAt: new Date(),
-          rentedAt: new Date(),
-          city: 'Berlin',
-          title: 'Rented Listing',
-        },
+      await createWorkspaceListing(providerId, {
+        displayOrder: 5,
+        status: ListingStatus.RENTED,
+        publishedAt: new Date(),
+        rentedAt: new Date(),
+        title: 'Rented Listing',
       });
 
       const res = await request(getServer())
@@ -463,7 +438,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('filters by city', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -473,7 +449,8 @@ describe('Applicant Discovery E2E', () => {
       await createPublishedListing(providerId, { city: 'Berlin' });
       await createPublishedListing(providerId, { city: 'Munich' });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const berlin = await request(getServer())
         .get('/api/v1/listings')
@@ -499,7 +476,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('filters by rent range', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -517,7 +495,8 @@ describe('Applicant Discovery E2E', () => {
         title: 'Expensive',
       });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get('/api/v1/listings')
@@ -532,7 +511,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('never exposes providerId in responses', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -552,7 +532,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('includes coverImage with only secureUrl', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -560,17 +541,12 @@ describe('Applicant Discovery E2E', () => {
       const providerId = responseBody(meRes).id as string;
       const listing = await createPublishedListing(providerId);
 
-      await getPrisma().listingImage.create({
-        data: {
-          listingId: listing.id,
-          publicId: `e2e/listings/${listing.id}/cover`,
-          secureUrl: 'https://example.com/cover.jpg',
-          position: 0,
-          isCover: true,
-        },
+      await updateListingForProvider(getPrisma(), listing.id, {
+        photos: ['https://example.com/cover.jpg'],
       });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get('/api/v1/listings')
@@ -585,7 +561,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('includes null coverImage when listing has no images', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -593,7 +570,8 @@ describe('Applicant Discovery E2E', () => {
       const providerId = responseBody(meRes).id as string;
       await createPublishedListing(providerId);
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get('/api/v1/listings')
@@ -616,7 +594,8 @@ describe('Applicant Discovery E2E', () => {
       };
 
       it('exposes ACTIVE application state on collection for an authenticated applicant', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -661,7 +640,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes REJECTED NOT_SELECTED application state on collection', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies, agent: providerAgent } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -682,11 +662,10 @@ describe('Applicant Discovery E2E', () => {
           .post(`/api/v1/listings/${listing.id}/apply`)
           .expect(201);
 
-        await request(getServer())
+        await providerAgent
           .patch(
             `/api/v1/provider/applications/${applicationIdFromResponse(applicationResponse)}/reject`,
           )
-          .set('Cookie', providerCookies)
           .send()
           .expect(200);
 
@@ -699,7 +678,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('returns empty application state after withdrawal', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -733,7 +713,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('returns empty application state for anonymous collection requests', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -751,7 +732,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes WAITING application state on collection', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -793,7 +775,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes ACCEPTED application state on collection', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -828,7 +811,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes REJECTED PROFILE_NO_LONGER_ELIGIBLE application state on collection', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -868,7 +852,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes REJECTED LISTING_RENTED application state on collection', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -916,7 +901,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('allows provider requests for published listings', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -931,7 +917,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns 404 for non-published listings', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -941,20 +928,17 @@ describe('Applicant Discovery E2E', () => {
       const statuses = [
         ListingStatus.DRAFT,
         ListingStatus.PAUSED,
-        ListingStatus.ARCHIVED,
+        ListingStatus.RETIRED,
         ListingStatus.RENTED,
       ];
 
       for (const [index, status] of statuses.entries()) {
-        const listing = await getPrisma().listing.create({
-          data: {
-            providerId,
-            displayOrder: index + 1,
-            status,
-            title: `${status} Listing`,
-            publishedAt: status === ListingStatus.DRAFT ? null : new Date(),
-            rentedAt: status === ListingStatus.RENTED ? new Date() : null,
-          },
+        const listing = await createWorkspaceListing(providerId, {
+          displayOrder: index + 1,
+          status,
+          title: `${status} Listing`,
+          publishedAt: status === ListingStatus.DRAFT ? null : new Date(),
+          rentedAt: status === ListingStatus.RENTED ? new Date() : null,
         });
 
         await request(getServer())
@@ -964,7 +948,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns public-safe published listing detail anonymously', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -992,7 +977,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('hides street when showExactAddress is false', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1003,7 +989,8 @@ describe('Applicant Discovery E2E', () => {
         street: 'Teststrasse 1',
       });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get(`/api/v1/listings/${listing.id}`)
@@ -1015,7 +1002,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('shows street when showExactAddress is true', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1026,7 +1014,8 @@ describe('Applicant Discovery E2E', () => {
         street: 'Teststrasse 1',
       });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get(`/api/v1/listings/${listing.id}`)
@@ -1038,7 +1027,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('never exposes showExactAddress flag', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1046,7 +1036,8 @@ describe('Applicant Discovery E2E', () => {
       const providerId = responseBody(meRes).id as string;
       const listing = await createPublishedListing(providerId);
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get(`/api/v1/listings/${listing.id}`)
@@ -1058,7 +1049,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('never exposes providerId', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1066,7 +1058,8 @@ describe('Applicant Discovery E2E', () => {
       const providerId = responseBody(meRes).id as string;
       const listing = await createPublishedListing(providerId);
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get(`/api/v1/listings/${listing.id}`)
@@ -1078,7 +1071,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('includes public application requirements', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1086,7 +1080,8 @@ describe('Applicant Discovery E2E', () => {
       const providerId = responseBody(meRes).id as string;
       const listing = await createPublishedListing(providerId);
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get(`/api/v1/listings/${listing.id}`)
@@ -1104,7 +1099,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('includes public images without publicId', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1112,17 +1108,12 @@ describe('Applicant Discovery E2E', () => {
       const providerId = responseBody(meRes).id as string;
       const listing = await createPublishedListing(providerId);
 
-      await getPrisma().listingImage.create({
-        data: {
-          listingId: listing.id,
-          publicId: `e2e/listings/${listing.id}/img`,
-          secureUrl: 'https://example.com/img.jpg',
-          position: 0,
-          isCover: true,
-        },
+      await updateListingForProvider(getPrisma(), listing.id, {
+        photos: ['https://example.com/img.jpg'],
       });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get(`/api/v1/listings/${listing.id}`)
@@ -1146,7 +1137,8 @@ describe('Applicant Discovery E2E', () => {
       };
 
       it('exposes ACTIVE application state on detail for an authenticated applicant', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1178,7 +1170,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes REJECTED NOT_SELECTED application state on detail', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies, agent: providerAgent } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1199,11 +1192,10 @@ describe('Applicant Discovery E2E', () => {
           .post(`/api/v1/listings/${listing.id}/apply`)
           .expect(201);
 
-        await request(getServer())
+        await providerAgent
           .patch(
             `/api/v1/provider/applications/${applicationIdFromResponse(applicationResponse)}/reject`,
           )
-          .set('Cookie', providerCookies)
           .send()
           .expect(200);
 
@@ -1218,7 +1210,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('returns empty application state on detail after withdrawal', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1256,7 +1249,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('returns empty application state for anonymous detail requests', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1275,7 +1269,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes WAITING application state on detail', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1313,7 +1308,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes ACCEPTED application state on detail', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1344,7 +1340,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes REJECTED PROFILE_NO_LONGER_ELIGIBLE application state on detail', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1384,7 +1381,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('exposes REJECTED LISTING_RENTED application state on detail', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1419,7 +1417,8 @@ describe('Applicant Discovery E2E', () => {
       });
 
       it('does not expose applicant application state to provider detail requests', async () => {
-        const providerCookies = await registerAndGetCookies(providerPayload());
+        const { cookies: providerCookies } =
+          await registerAndGetCookies(providerPayload());
         const meRes = await request(getServer())
           .get('/api/v1/auth/me')
           .set('Cookie', providerCookies)
@@ -1450,7 +1449,8 @@ describe('Applicant Discovery E2E', () => {
 
   describe('cursor pagination', () => {
     it('supports cursor-based pagination', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1464,7 +1464,8 @@ describe('Applicant Discovery E2E', () => {
         });
       }
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const page1Res = await request(getServer())
         .get('/api/v1/listings')
@@ -1526,7 +1527,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('handles equal publishedAt with id tiebreaker', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1542,7 +1544,8 @@ describe('Applicant Discovery E2E', () => {
         });
       }
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get('/api/v1/listings')
@@ -1564,7 +1567,8 @@ describe('Applicant Discovery E2E', () => {
 
   describe('malformed cursor', () => {
     it('returns 400 for an oversize cursor', async () => {
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       await request(getServer())
         .get('/api/v1/listings')
@@ -1574,7 +1578,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns 400 for an invalid base64 cursor', async () => {
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       await request(getServer())
         .get('/api/v1/listings')
@@ -1584,7 +1589,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns 400 for a cursor with an invalid date', async () => {
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
       const cursor = Buffer.from(
         JSON.stringify({
           publishedAt: 'not-a-date',
@@ -1600,7 +1606,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns 400 for a cursor with an invalid UUID', async () => {
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
       const cursor = Buffer.from(
         JSON.stringify({
           publishedAt: new Date().toISOString(),
@@ -1616,7 +1623,8 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns 400 for a cursor with extra fields', async () => {
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
       const cursor = Buffer.from(
         JSON.stringify({
           publishedAt: new Date().toISOString(),
@@ -1635,7 +1643,8 @@ describe('Applicant Discovery E2E', () => {
 
   describe('publishedAt is null exclusion', () => {
     it('does not return PUBLISHED listings without publishedAt', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
@@ -1646,19 +1655,16 @@ describe('Applicant Discovery E2E', () => {
         title: 'Good',
         publishedAt: new Date(),
       });
-      await getPrisma().listing.create({
-        data: {
-          providerId,
-          displayOrder: 2,
-          status: ListingStatus.PUBLISHED,
-          city: 'Berlin',
-          title: 'NoPublishedAt',
-          publishedAt: null,
-          objectType: ObjectType.APARTMENT,
-        },
+      await createWorkspaceListing(providerId, {
+        displayOrder: 2,
+        status: ListingStatus.PUBLISHED,
+        title: 'NoPublishedAt',
+        publishedAt: null,
+        objectType: ObjectType.APARTMENT,
       });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       const res = await request(getServer())
         .get('/api/v1/listings')
@@ -1672,26 +1678,24 @@ describe('Applicant Discovery E2E', () => {
     });
 
     it('returns 404 for a PUBLISHED detail without publishedAt', async () => {
-      const providerCookies = await registerAndGetCookies(providerPayload());
+      const { cookies: providerCookies } =
+        await registerAndGetCookies(providerPayload());
       const meRes = await request(getServer())
         .get('/api/v1/auth/me')
         .set('Cookie', providerCookies)
         .expect(200);
       const providerId = responseBody(meRes).id as string;
 
-      const noPublishedAt = await getPrisma().listing.create({
-        data: {
-          providerId,
-          displayOrder: 2,
-          status: ListingStatus.PUBLISHED,
-          city: 'Berlin',
-          title: 'NoPublishedAt',
-          publishedAt: null,
-          objectType: ObjectType.APARTMENT,
-        },
+      const noPublishedAt = await createWorkspaceListing(providerId, {
+        displayOrder: 2,
+        status: ListingStatus.PUBLISHED,
+        title: 'NoPublishedAt',
+        publishedAt: null,
+        objectType: ObjectType.APARTMENT,
       });
 
-      const applicantCookies = await registerAndGetCookies(applicantPayload());
+      const { cookies: applicantCookies } =
+        await registerAndGetCookies(applicantPayload());
 
       await request(getServer())
         .get(`/api/v1/listings/${noPublishedAt.id}`)

@@ -2,18 +2,30 @@ import {
   createEligibleApplicantProfile,
   eligibleProfileFields,
 } from './eligible-applicant-fixture';
-import { clearE2EData } from './e2e-cleanup';
+import { assertE2EDatabaseEmpty, clearE2EData } from './e2e-cleanup';
+import {
+  createDraftListingForProvider,
+  createPublishedListingForProvider,
+  setListingStatusForProvider,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import {
+  applicantAuthorityFor,
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { ApplicationLifecycleService } from '../src/applications/application-lifecycle.service';
-import { ApplicationTransactionService } from '../src/applications/application-transaction.service';
 import { ProviderApplicationCurationService } from '../src/applications/provider-application-curation.service';
-import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import {
+  holdListingRowLockExternal,
+  waitForListingLockContention,
+} from './e2e-listing-lock-barrier';
+import { Pool } from 'pg';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import request, { type Response } from 'supertest';
 import {
   afterAll,
@@ -27,7 +39,6 @@ import {
 import { AppModule } from '../src/app.module';
 import { ApplicationActivityService } from '../src/applications/application-activity.service';
 import { REAPPLICATION_COOLDOWN_MS } from '../src/applications/application-admission.service';
-import type { EnvironmentVariables } from '../src/config/env.validation';
 import { PrismaService } from '../src/prisma/prisma.service';
 import type { Prisma } from '../src/generated/prisma/client';
 import { EligibilityService } from '../src/eligibility/eligibility.service';
@@ -54,7 +65,6 @@ import {
 } from './e2e-database-safety';
 
 type RequestTarget = Parameters<typeof request>[0];
-type PgSessionStore = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 type RegisterPayload = {
   name: string;
@@ -83,7 +93,7 @@ const userPassword = 'StrongPass123';
 
 let app: INestApplication | undefined;
 let prisma: PrismaService | undefined;
-let sessionStore: PgSessionStore | undefined;
+let lockAdminPool: Pool | undefined;
 let emailSequence = 0;
 
 function useE2eEnvironment(): void {
@@ -238,32 +248,23 @@ async function registerProvider() {
     .post('/api/v1/auth/register')
     .send(providerPayload())
     .expect(201);
-  return { agent, provider: safeUserBody(resp) };
+  const provider = safeUserBody(resp);
+  await bindProviderWorkspaceHeader(getPrisma(), provider.id, agent);
+  return { agent, provider };
 }
 
-async function publishListing(providerId: string) {
-  const maxOrder = await getPrisma().listing.aggregate({
-    where: { providerId },
-    _max: { displayOrder: true },
+async function publishListing(providerUserId: string) {
+  return createPublishedListingForProvider(getPrisma(), providerUserId, {
+    publishedAt: new Date(),
+    city: 'Berlin',
+    street: 'Test Street 1',
+    title: 'E2E Test Listing',
+    coldRent: 800,
+    livingArea: 50,
+    rooms: 2,
+    bedrooms: 1,
+    availableFrom: new Date(),
   });
-
-  const created = await getPrisma().listing.create({
-    data: {
-      providerId,
-      displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
-      status: ListingStatus.PUBLISHED,
-      publishedAt: new Date(),
-      city: 'Berlin',
-      street: 'Test Street 1',
-      title: 'E2E Test Listing',
-      coldRent: 800,
-      livingArea: 50,
-      rooms: 2,
-      bedrooms: 1,
-      availableFrom: new Date(),
-    },
-  });
-  return created;
 }
 
 async function applyToListing(
@@ -293,32 +294,22 @@ async function updateApplicantProfile(
 }
 
 async function publishListingWithRequirements(
-  providerId: string,
+  providerUserId: string,
   requirements: {
     suitableForPeopleCount?: number;
   },
 ) {
-  const maxOrder = await getPrisma().listing.aggregate({
-    where: { providerId },
-    _max: { displayOrder: true },
-  });
-
-  return getPrisma().listing.create({
-    data: {
-      providerId,
-      displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
-      status: ListingStatus.PUBLISHED,
-      publishedAt: new Date(),
-      city: 'Berlin',
-      street: 'Test Street 1',
-      title: 'E2E Test Listing',
-      coldRent: 800,
-      livingArea: 50,
-      rooms: 2,
-      bedrooms: 1,
-      availableFrom: new Date(),
-      ...requirements,
-    },
+  return createPublishedListingForProvider(getPrisma(), providerUserId, {
+    publishedAt: new Date(),
+    city: 'Berlin',
+    street: 'Test Street 1',
+    title: 'E2E Test Listing',
+    coldRent: 800,
+    livingArea: 50,
+    rooms: 2,
+    bedrooms: 1,
+    availableFrom: new Date(),
+    ...requirements,
   });
 }
 
@@ -381,45 +372,34 @@ describe('Application Lifecycle E2E', () => {
       }),
     );
 
-    const config = app.get(ConfigService<EnvironmentVariables, true>);
-    const PgSessionStore = connectPgSimple(session);
-
-    sessionStore = new PgSessionStore({
-      conString: config.getOrThrow<string>('DATABASE_URL'),
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-
-    app.use(
-      session({
-        store: sessionStore,
-        secret: config.getOrThrow<string>('SESSION_SECRET'),
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { httpOnly: true, secure: false, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
 
     prisma = app.get<PrismaService>(PrismaService);
     await app.init();
+    lockAdminPool = new Pool({
+      connectionString: process.env['E2E_DATABASE_URL'],
+      max: 2,
+    });
+    await clearDatabase();
+    await assertE2EDatabaseEmpty(getPrisma());
+  });
+
+  beforeEach(async () => {
+    jest.restoreAllMocks();
+    await clearDatabase();
   });
 
   afterAll(async () => {
+    await lockAdminPool?.end();
+    lockAdminPool = undefined;
     if (app) {
       await app.close();
       app = undefined;
     }
-
-    if (sessionStore) {
-      await Promise.resolve(sessionStore.close());
-      sessionStore = undefined;
-    }
   });
 
   afterEach(async () => {
+    jest.restoreAllMocks();
     await clearDatabase();
   });
 
@@ -514,10 +494,11 @@ describe('Application Lifecycle E2E', () => {
           await applicant.get('/api/v1/auth/me').expect(200),
         ).id;
         const listing = await publishListing(provider.id);
-        const currentListing = await getPrisma().listing.update({
-          where: { id: listing.id },
-          data: fixture.listing,
-        });
+        const currentListing = await updateListingForProvider(
+          getPrisma(),
+          listing.id,
+          fixture.listing,
+        );
         await getPrisma().applicantProfile.create({
           data: {
             applicantId,
@@ -1127,19 +1108,16 @@ describe('Application Lifecycle E2E', () => {
     it.each([
       ListingStatus.PAUSED,
       ListingStatus.DRAFT,
-      ListingStatus.ARCHIVED,
+      ListingStatus.RETIRED,
       ListingStatus.RENTED,
     ])('refuses fresh submission to %s after expiry', async (status) => {
       const { listing, applicant, id } = await rejectedByProvider();
       await ageRejection(id, REAPPLICATION_COOLDOWN_MS + 1000);
-      await getPrisma().listing.update({
-        where: { id: listing.id },
-        data: { status },
-      });
+      await updateListingForProvider(getPrisma(), listing.id, { status });
       await applicant
         .post(`/api/v1/listings/${listing.id}/apply`)
         .send()
-        .expect(422);
+        .expect(404);
     });
 
     it('serializes concurrent fresh submissions after expiry', async () => {
@@ -1204,7 +1182,7 @@ describe('Application Lifecycle E2E', () => {
       const path = `/api/v1/provider/applications/${String(entry['id'])}/reject`;
 
       await request(getServer()).patch(path).send().expect(401);
-      await applicantAgent.patch(path).send().expect(403);
+      await applicantAgent.patch(path).send().expect(404);
     });
 
     it('rejects unauthenticated and applicant access to restore', async () => {
@@ -1221,7 +1199,7 @@ describe('Application Lifecycle E2E', () => {
 
       const path = `/api/v1/provider/applications/${applicationId}/restore`;
       await request(getServer()).patch(path).send().expect(401);
-      await applicantAgent.patch(path).send().expect(403);
+      await applicantAgent.patch(path).send().expect(404);
     });
 
     it('rejects unauthenticated and applicant access to rent', async () => {
@@ -1233,7 +1211,7 @@ describe('Application Lifecycle E2E', () => {
       const body = { selectedApplicationId: String(entry['id']) };
 
       await request(getServer()).patch(path).send(body).expect(401);
-      await applicantAgent.patch(path).send(body).expect(403);
+      await applicantAgent.patch(path).send(body).expect(404);
     });
   });
 
@@ -2083,9 +2061,8 @@ describe('Application Lifecycle E2E', () => {
       const applicantAgent = await registerEligibleApplicant();
       const entry = await applyToListing(applicantAgent, listing.id);
 
-      await getPrisma().listing.update({
-        where: { id: listing.id },
-        data: { status: ListingStatus.PAUSED },
+      await updateListingForProvider(getPrisma(), listing.id, {
+        status: ListingStatus.PAUSED,
       });
 
       await providerAgent
@@ -2225,20 +2202,20 @@ describe('Application Lifecycle E2E', () => {
       const anotherApplicant = await registerEligibleApplicant();
       await anotherApplicant
         .post(`/api/v1/listings/${listing.id}/apply`)
-        .expect(422);
+        .expect(404);
     });
 
     it('returns 409 when listing is DRAFT', async () => {
       const { agent: providerAgent, provider } = await registerProvider();
-      const listing = await getPrisma().listing.create({
-        data: {
-          providerId: provider.id,
+      const listing = await createDraftListingForProvider(
+        getPrisma(),
+        provider.id,
+        {
           displayOrder: 1,
-          status: ListingStatus.DRAFT,
           city: 'Berlin',
           title: 'Draft Listing',
         },
-      });
+      );
 
       await providerAgent
         .patch(`/api/v1/provider/listings/${listing.id}/rent`)
@@ -2871,39 +2848,30 @@ describe('Application Lifecycle E2E', () => {
     const originalPublishedAt = new Date('2020-01-15T10:00:00.000Z');
 
     async function createCompleteDraft(
-      providerId: string,
+      providerUserId: string,
       publishedAt: Date | null,
     ) {
-      const maxOrder = await getPrisma().listing.aggregate({
-        where: { providerId },
-        _max: { displayOrder: true },
-      });
-
-      return getPrisma().listing.create({
-        data: {
-          providerId,
-          displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
-          status: ListingStatus.DRAFT,
-          publishedAt,
-          city: 'Berlin',
-          zip: '10115',
-          street: 'Test Street 1',
-          title: 'Lifecycle Listing',
-          coldRent: 800,
-          livingArea: 50,
-          rooms: 2,
-          bedrooms: 1,
-          availableFrom: new Date('2026-11-01T00:00:00.000Z'),
-        },
+      return createDraftListingForProvider(getPrisma(), providerUserId, {
+        publishedAt,
+        city: 'Berlin',
+        zip: '10115',
+        street: 'Test Street 1',
+        title: 'Lifecycle Listing',
+        coldRent: 800,
+        livingArea: 50,
+        rooms: 2,
+        bedrooms: 1,
+        availableFrom: new Date('2026-11-01T00:00:00.000Z'),
       });
     }
 
-    async function loginProvider(email: string) {
+    async function loginProvider(email: string, providerUserId: string) {
       const agent = request.agent(getServer());
       await agent
         .post('/api/v1/auth/login')
         .send({ email, password: userPassword })
         .expect(200);
+      await bindProviderWorkspaceHeader(getPrisma(), providerUserId, agent);
       return agent;
     }
 
@@ -2929,12 +2897,12 @@ describe('Application Lifecycle E2E', () => {
       await agent.patch(lifecyclePath(listing.id, 'resume')).expect(200);
       await agent.patch(lifecyclePath(listing.id, 'draft')).expect(200);
       await agent.patch(lifecyclePath(listing.id, 'publish')).expect(200);
-      await agent.patch(lifecyclePath(listing.id, 'archive')).expect(200);
+      await agent.patch(lifecyclePath(listing.id, 'retire')).expect(200);
 
       const archived = await getPrisma().listing.findUniqueOrThrow({
         where: { id: listing.id },
       });
-      expect(archived.status).toBe(ListingStatus.ARCHIVED);
+      expect(archived.status).toBe(ListingStatus.RETIRED);
       expect(archived.publishedAt).toEqual(firstPublishedAt);
     });
 
@@ -2956,21 +2924,20 @@ describe('Application Lifecycle E2E', () => {
     it.each([
       ['publish', ListingStatus.PUBLISHED],
       ['publish', ListingStatus.PAUSED],
-      ['publish', ListingStatus.ARCHIVED],
+      ['publish', ListingStatus.RETIRED],
       ['publish', ListingStatus.RENTED],
       ['draft', ListingStatus.DRAFT],
-      ['draft', ListingStatus.ARCHIVED],
+      ['draft', ListingStatus.RETIRED],
       ['draft', ListingStatus.RENTED],
       ['pause', ListingStatus.DRAFT],
       ['pause', ListingStatus.PAUSED],
-      ['pause', ListingStatus.ARCHIVED],
+      ['pause', ListingStatus.RETIRED],
       ['pause', ListingStatus.RENTED],
       ['resume', ListingStatus.DRAFT],
       ['resume', ListingStatus.PUBLISHED],
-      ['resume', ListingStatus.ARCHIVED],
+      ['resume', ListingStatus.RETIRED],
       ['resume', ListingStatus.RENTED],
-      ['archive', ListingStatus.ARCHIVED],
-      ['archive', ListingStatus.RENTED],
+      ['retire', ListingStatus.RETIRED],
     ] as const)('rejects %s from %s', async (action, status) => {
       const { agent } = await registerProvider();
       const me = await agent.get('/api/v1/auth/me').expect(200);
@@ -2978,13 +2945,12 @@ describe('Application Lifecycle E2E', () => {
         safeUserBody(me).id,
         originalPublishedAt,
       );
-      await getPrisma().listing.update({
-        where: { id: listing.id },
-        data: {
-          status,
-          rentedAt: status === ListingStatus.RENTED ? new Date() : null,
-        },
-      });
+      await setListingStatusForProvider(
+        getPrisma(),
+        listing.id,
+        status,
+        originalPublishedAt,
+      );
 
       await agent.patch(lifecyclePath(listing.id, action)).expect(409);
     });
@@ -2993,7 +2959,7 @@ describe('Application Lifecycle E2E', () => {
       const { provider } = await registerProvider();
       const applicantAgent = await registerApplicant();
       const listing = await publishListing(provider.id);
-      const actions = ['publish', 'draft', 'pause', 'resume', 'archive'];
+      const actions = ['publish', 'draft', 'pause', 'resume', 'retire'];
 
       for (const action of actions) {
         await request(getServer())
@@ -3001,7 +2967,7 @@ describe('Application Lifecycle E2E', () => {
           .expect(401);
         await applicantAgent
           .patch(lifecyclePath(listing.id, action))
-          .expect(403);
+          .expect(404);
       }
     });
 
@@ -3036,10 +3002,10 @@ describe('Application Lifecycle E2E', () => {
 
       await secondApplicant
         .post(`/api/v1/listings/${listing.id}/apply`)
-        .expect(422);
+        .expect(404);
       await secondApplicant
         .get(`/api/v1/listings/${listing.id}/eligibility`)
-        .expect(422);
+        .expect(404);
 
       await agent.patch(lifecyclePath(listing.id, 'resume')).expect(200);
       const resumed = await getPrisma().listing.findUniqueOrThrow({
@@ -3081,7 +3047,7 @@ describe('Application Lifecycle E2E', () => {
       const applicantAgent = await registerEligibleApplicant();
       const listing = await publishListing(provider.id);
       const application = await applyToListing(applicantAgent, listing.id);
-      const renter = await loginProvider(provider.email);
+      const renter = await loginProvider(provider.email, provider.id);
       const body = { selectedApplicationId: String(application['id']) };
 
       const status = await expectConsistentRace(
@@ -3108,14 +3074,14 @@ describe('Application Lifecycle E2E', () => {
       const { agent, provider } = await registerProvider();
       const listing = await publishListing(provider.id);
       await agent.patch(lifecyclePath(listing.id, 'pause')).expect(200);
-      const other = await loginProvider(provider.email);
+      const other = await loginProvider(provider.email, provider.id);
 
       await expectConsistentRace(
         agent.patch(lifecyclePath(listing.id, 'resume')),
-        other.patch(lifecyclePath(listing.id, 'archive')),
+        other.patch(lifecyclePath(listing.id, 'retire')),
         listing.id,
-        [ListingStatus.PUBLISHED, ListingStatus.ARCHIVED],
-        ListingStatus.ARCHIVED,
+        [ListingStatus.PUBLISHED, ListingStatus.RETIRED],
+        ListingStatus.RETIRED,
       );
       const stored = await getPrisma().listing.findUniqueOrThrow({
         where: { id: listing.id },
@@ -3129,14 +3095,14 @@ describe('Application Lifecycle E2E', () => {
         provider.id,
         originalPublishedAt,
       );
-      const other = await loginProvider(provider.email);
+      const other = await loginProvider(provider.email, provider.id);
 
       await expectConsistentRace(
         agent.patch(lifecyclePath(listing.id, 'publish')),
-        other.patch(lifecyclePath(listing.id, 'archive')),
+        other.patch(lifecyclePath(listing.id, 'retire')),
         listing.id,
-        [ListingStatus.PUBLISHED, ListingStatus.ARCHIVED],
-        ListingStatus.ARCHIVED,
+        [ListingStatus.PUBLISHED, ListingStatus.RETIRED],
+        ListingStatus.RETIRED,
       );
       const stored = await getPrisma().listing.findUniqueOrThrow({
         where: { id: listing.id },
@@ -3145,6 +3111,8 @@ describe('Application Lifecycle E2E', () => {
     });
   });
   describe('canonical queue fairness (F1/F2)', () => {
+    jest.setTimeout(30_000);
+
     async function fixture(activeCount = 4, waitingCount = 2) {
       const { agent: providerAgent, provider } = await registerProvider();
       const entrant = await registerEligibleApplicant();
@@ -3152,6 +3120,7 @@ describe('Application Lifecycle E2E', () => {
         responseBody(await entrant.get('/api/v1/auth/me').expect(200))['id'],
       );
       const listing = await publishListing(provider.id);
+      const providerActor = await providerActorFor(getPrisma(), provider.id);
       const users = await getPrisma().user.createManyAndReturn({
         data: Array.from({ length: activeCount + waitingCount + 2 }, () => ({
           id: randomUUID(),
@@ -3187,6 +3156,7 @@ describe('Application Lifecycle E2E', () => {
       return {
         listing,
         provider,
+        providerActor,
         providerAgent,
         entrant,
         entrantId,
@@ -3215,7 +3185,10 @@ describe('Application Lifecycle E2E', () => {
         .expect(200);
       await app!
         .get(ApplicationLifecycleService)
-        .withdraw(f.active[0].id, f.active[0].applicantId);
+        .withdraw(
+          f.active[0].id,
+          await applicantAuthorityFor(getPrisma(), f.active[0].applicantId),
+        );
       expect(
         await getPrisma().application.count({
           where: { listingId: f.listing.id, status: 'ACTIVE' },
@@ -3228,7 +3201,7 @@ describe('Application Lifecycle E2E', () => {
           })
         ).status,
       ).toBe('WAITING');
-      await f.entrant.post(path(f.listing.id)).expect(422);
+      await f.entrant.post(path(f.listing.id)).expect(404);
       await f.providerAgent
         .patch(`/api/v1/provider/listings/${f.listing.id}/resume`)
         .expect(200);
@@ -3271,9 +3244,8 @@ describe('Application Lifecycle E2E', () => {
       'skips %s-1 ineligible WAITING entries before admitting anyone newer',
       async (count) => {
         const f = await fixture(4, count);
-        await getPrisma().listing.update({
-          where: { id: f.listing.id },
-          data: { minimumHouseholdNetIncome: 100 },
+        await updateListingForProvider(getPrisma(), f.listing.id, {
+          minimumHouseholdNetIncome: 100,
         });
         await getPrisma().applicantProfile.updateMany({
           where: { applicantId: { in: f.waiting.map((a) => a.applicantId) } },
@@ -3331,52 +3303,45 @@ describe('Application Lifecycle E2E', () => {
                   },
                 })
               : null;
-          const locks = app!.get(ApplicationTransactionService),
-            realLock = locks.lockListing.bind(locks);
-          let signalLocked!: () => void,
-            signalContender!: () => void,
-            release!: () => void;
-          const locked = new Promise<void>((r) => {
-              signalLocked = r;
-            }),
-            contender = new Promise<void>((r) => {
-              signalContender = r;
-            }),
-            gate = new Promise<void>((r) => {
-              release = r;
-            });
-          let calls = 0;
-          const spy = jest
-            .spyOn(locks, 'lockListing')
-            .mockImplementation(async (tx, id) => {
-              if (id !== f.listing.id) return realLock(tx, id);
-              const call = ++calls;
-              if (call === 2) signalContender();
-              await realLock(tx, id);
-              if (call === 1) {
-                signalLocked();
-                await gate;
-              }
-            });
-          const apply = () => lifecycle.apply(f.listing.id, f.entrantId);
+          const pool = getPrisma().getSharedPool();
+          const gate = await holdListingRowLockExternal(
+            getPrisma(),
+            pool,
+            f.listing.id,
+            lockAdminPool,
+          );
+          const entrantAuthority = await applicantAuthorityFor(
+            getPrisma(),
+            f.entrantId,
+          );
+          const activeAuthority = await applicantAuthorityFor(
+            getPrisma(),
+            f.active[0].applicantId,
+          );
+          const apply = () => lifecycle.apply(f.listing.id, entrantAuthority);
           const other = () =>
             operation === 'promotion'
-              ? lifecycle.promoteWaitingApplications(f.listing.id)
+              ? lifecycle.promoteWaitingApplications(
+                  f.listing.id,
+                  f.providerActor,
+                )
               : operation === 'withdrawal'
-                ? lifecycle.withdraw(f.active[0].id, f.active[0].applicantId)
+                ? lifecycle.withdraw(f.active[0].id, activeAuthority)
                 : operation === 'rejection'
-                  ? curation.reject(f.active[0].id, f.provider.id)
-                  : curation.restore(rejected!.id, f.provider.id);
+                  ? curation.reject(f.active[0].id, f.providerActor)
+                  : curation.restore(rejected!.id, f.providerActor);
+          let winner: Promise<unknown> | undefined;
+          let second: Promise<unknown> | undefined;
           try {
-            const winner = first === 'apply' ? apply() : other();
-            await locked;
-            const second = first === 'apply' ? other() : apply();
-            await contender;
-            release();
+            winner = first === 'apply' ? apply() : other();
+            await waitForListingLockContention(getPrisma(), lockAdminPool);
+            second = first === 'apply' ? other() : apply();
+            await gate.waitForDatabaseWaiter();
+            gate.release();
             await Promise.all([winner, second]);
           } finally {
-            release();
-            spy.mockRestore();
+            gate.release();
+            await Promise.allSettled([winner, second]);
           }
           expect(
             (
@@ -3416,7 +3381,7 @@ describe('Application Lifecycle E2E', () => {
         rejected.map((a) =>
           app!
             .get(ProviderApplicationCurationService)
-            .restore(a.id, f.provider.id),
+            .restore(a.id, f.providerActor),
         ),
       );
       expect(restored.every((a) => a.status === 'WAITING')).toBe(true);
@@ -3462,7 +3427,7 @@ describe('Application Lifecycle E2E', () => {
         f.entrant.post(path(f.listing.id)),
       ]);
       expect(resume.status).toBe(200);
-      expect([201, 422]).toContain(fresh.status);
+      expect([201, 404, 422]).toContain(fresh.status);
       if (fresh.status === 201)
         expect(responseBody(fresh)['status']).toBe('WAITING');
       expect(
@@ -3557,7 +3522,7 @@ describe('Application Lifecycle E2E', () => {
         await getPrisma().notification.count({
           where: { applicationId: f.waiting[0].id },
         }),
-      ).toBe(2);
+      ).toBe(1);
       expect(
         await getPrisma().outboxEvent.count({
           where: {

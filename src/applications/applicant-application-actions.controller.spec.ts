@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { unitRequest, unitSession } from '../../test/unit-workspace-authority';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { Application } from '../generated/prisma/client';
@@ -67,11 +68,11 @@ describe('ApplicantApplicationActionsController', () => {
   it('withdraws an application for the authenticated applicant', async () => {
     applicationsService.withdraw.mockResolvedValue(application);
 
-    const result = await controller.withdraw(APPLICATION_ID, user);
+    const result = await controller.withdraw(APPLICATION_ID, unitRequest(user));
 
     expect(applicationsService.withdraw).toHaveBeenCalledWith(
       APPLICATION_ID,
-      APPLICANT_ID,
+      unitSession(APPLICANT_ID),
     );
     expect(result).toEqual({
       id: APPLICATION_ID,

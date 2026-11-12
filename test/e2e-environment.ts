@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import 'dotenv/config';
+import { applyCanonicalSharedE2EProcessEnv } from './e2e-shared-test-env';
+
+// Isolate every suite from developer .env worker flags before AppModule loads.
+// Realtime/worker suites opt in explicitly after this common setup.
+applyCanonicalSharedE2EProcessEnv();
 
 process.env['OPENAI_API_KEY'] ??= 'e2e-openai-api-key';
 process.env['OPENAI_LISTING_MODEL'] ??= 'e2e-listing-model';

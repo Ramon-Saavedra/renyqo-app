@@ -9,6 +9,8 @@ describe('Application viewing PostgreSQL integrity', () => {
   let applicationId: string;
   let listingId: string;
   let userId: string;
+  let workspaceId: string;
+  let membershipId: string;
 
   beforeAll(() => {
     const url = process.env['E2E_DATABASE_URL'];
@@ -25,6 +27,8 @@ describe('Application viewing PostgreSQL integrity', () => {
     applicationId = randomUUID();
     listingId = randomUUID();
     userId = randomUUID();
+    workspaceId = randomUUID();
+    membershipId = randomUUID();
     await client.query('BEGIN');
     await client.query(
       'INSERT INTO users (id,name,email,password_hash,accepted_terms_at,accepted_privacy_at,updated_at) VALUES ($1,$2,$3,$4,now(),now(),now())',
@@ -36,8 +40,47 @@ describe('Application viewing PostgreSQL integrity', () => {
       ],
     );
     await client.query(
-      'INSERT INTO listings (id,provider_id,display_order,photos,updated_at) VALUES ($1,$2,1,ARRAY[]::text[],now())',
-      [listingId, userId],
+      `SELECT set_config('app.workspace_id', $1, true),
+              set_config('app.tenant_xid', pg_current_xact_id()::text, true),
+              set_config('app.bootstrap_user_id', '', true),
+              set_config('app.bootstrap_workspace_id', '', true)`,
+      [workspaceId],
+    );
+    await client.query(
+      `INSERT INTO provider_workspaces (id, kind, display_name, lifecycle_status, ownership_revision, revision, created_at, updated_at)
+       VALUES ($1, 'PERSONAL', 'Integrity workspace', 'ACTIVE', 1, 1, now(), now())`,
+      [workspaceId],
+    );
+    await client.query(
+      `INSERT INTO workspace_memberships (id, workspace_id, user_id, role, status, revision, display_color, created_at, updated_at)
+       VALUES ($1, $2, $3, 'OWNER', 'ACTIVE', 1, '#336699', now(), now())`,
+      [membershipId, workspaceId, userId],
+    );
+    await client.query(
+      `INSERT INTO personal_workspace_allocations (id, workspace_id, user_id, allocated_at)
+       VALUES ($1, $2, $3, now())`,
+      [randomUUID(), workspaceId, userId],
+    );
+    await client.query(
+      `SELECT set_config('app.workspace_id', $1, true),
+              set_config('app.tenant_xid', pg_current_xact_id()::text, true),
+              set_config('app.bootstrap_user_id', '', true),
+              set_config('app.bootstrap_workspace_id', '', true)`,
+      [workspaceId],
+    );
+    await client.query('SELECT lock_workspace_ownership_revision($1, $2)', [
+      workspaceId,
+      1,
+    ]);
+    await client.query(
+      `INSERT INTO listings (id, workspace_id, created_by_membership_id, responsible_membership_id, display_order, photos, updated_at, revision, assignment_sequence, status)
+       VALUES ($1, $2, $3, $3, 1, ARRAY[]::text[], now(), 1, 1, 'draft')`,
+      [listingId, workspaceId, membershipId],
+    );
+    await client.query(
+      `INSERT INTO listing_assignment_transitions (id, workspace_id, listing_id, sequence, new_membership_id, reason, initiated_by_membership_id, command_id)
+       VALUES ($1, $2, $3, 1, $4, 'INITIAL', $4, $5)`,
+      [randomUUID(), workspaceId, listingId, membershipId, randomUUID()],
     );
     await client.query(
       'INSERT INTO applications (id,listing_id,applicant_id,updated_at) VALUES ($1,$2,$3,now())',
@@ -57,8 +100,6 @@ describe('Application viewing PostgreSQL integrity', () => {
       'TRUNCATE application_no_show_consequences, viewing_workflows, viewing_proposals, viewing_appointments, application_consideration_positions, application_viewing_interests, application_viewing_outcomes, application_viewings',
     );
     await client.query('DELETE FROM applications WHERE id=$1', [applicationId]);
-    await client.query('DELETE FROM listings WHERE id=$1', [listingId]);
-    await client.query('DELETE FROM users WHERE id=$1', [userId]);
     client.release();
   });
 

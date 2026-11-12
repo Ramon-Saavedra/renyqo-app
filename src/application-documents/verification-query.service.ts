@@ -1,3 +1,8 @@
+import {
+  ApplicationListingAccess,
+  actorUserId as actorIdentity,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -58,17 +63,25 @@ const requirementSelect = {
 export class VerificationQueryService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly listingBoundary: ApplicationListingAccess,
     private readonly access: ApplicationDocumentAccessService,
     private readonly decisions: VerificationDecisionService,
   ) {}
 
   subjects(
     applicationId: string,
-    actorUserId: string,
+    actor: ApplicationActor,
     query: ReadModelPageQueryDto,
   ) {
+    const actorUserId = actorIdentity(actor);
     const cursor = decodeReadModelCursor(query.cursor, 'subjects');
-    return this.prisma.$transaction(
+    return this.listingBoundary.read(
+      actor,
+      'provider',
+      applicationId,
+      async (tx) => {
+        await this.access.authorize(tx, applicationId, actorUserId, 'provider');
+      },
       async (tx) => {
         const application = await this.access.authorize(
           tx,
@@ -126,22 +139,28 @@ export class VerificationQueryService {
           },
         };
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
   requirements(
     applicationId: string,
-    actorUserId: string,
+    actor: ApplicationActor,
     audience: DocumentAudience,
     query: OutstandingRequirementsQueryDto | ProviderRequirementsQueryDto,
   ) {
+    const actorUserId = actorIdentity(actor);
     const cursor = decodeReadModelCursor(query.cursor, 'requirements');
     const lifecycleState =
       audience === 'provider' && 'lifecycleState' in query
         ? query.lifecycleState
         : 'OPEN';
-    return this.prisma.$transaction(
+    return this.listingBoundary.read(
+      actor,
+      audience,
+      applicationId,
+      async (tx) => {
+        await this.access.authorize(tx, applicationId, actorUserId, audience);
+      },
       async (tx) => {
         const application = await this.access.authorize(
           tx,
@@ -288,7 +307,6 @@ export class VerificationQueryService {
           },
         };
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 }

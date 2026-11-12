@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { unitRequest } from '../../test/unit-workspace-authority';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { ApplicationStatus, Role, UserStatus } from '../generated/prisma/enums';
@@ -77,7 +78,7 @@ describe('ApplicantApplicationsController', () => {
       application,
     ]);
 
-    const [result] = await controller.findAll(user);
+    const [result] = await controller.findAll(unitRequest(user));
 
     expect(result.id).toBe(application.id);
     expect(result.listingId).toBe(LISTING_ID);

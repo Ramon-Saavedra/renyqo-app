@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
 import type { BlockingApplicationState } from '../applications/applicant-listing-application-state';
 import { ApplicationAttentionQueryService } from './application-attention-query.service';
 import { ApplicantListingAttentionDto } from './dto/attention-response.dto';
@@ -8,7 +9,7 @@ export class ApplicantListingAttentionEnricher {
   constructor(private readonly attention: ApplicationAttentionQueryService) {}
 
   async forApplications(
-    applicantId: string,
+    applicantId: HumanAuthority,
     blockingByListingId: ReadonlyMap<string, BlockingApplicationState>,
   ): Promise<ReadonlyMap<string, ApplicantListingAttentionDto>> {
     const applicationIdByListingId = new Map(

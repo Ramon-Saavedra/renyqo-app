@@ -9,8 +9,10 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
 import {
   evaluateProfile,
   PROFILE_EVALUATOR_VERSION,
@@ -19,16 +21,23 @@ import {
 @Controller('applicant/applications')
 @UseGuards(AuthenticatedGuard, ApplicantOnlyGuard)
 export class ApplicationEligibilityReadController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: ApplicantListingAccess,
+  ) {}
   @Get(':id/profile-eligibility')
   async summary(
     @Param('id', ParseUUIDPipe) id: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.prisma.$transaction(
+    const authority = sessionAuthorityFromRequest(request);
+    return this.access.readApplication(
+      authority,
+      id,
+      async () => {},
       async (tx) => {
         const app = await tx.application.findFirst({
-          where: { id, applicantId: user.id },
+          where: { id, applicantId: authority.userId },
           select: {
             id: true,
             listingId: true,
@@ -75,7 +84,6 @@ export class ApplicationEligibilityReadController {
           currentAssessmentIsCurrent: isCurrent,
         };
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 }

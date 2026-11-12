@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
+import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ApplicationConversationReadModule } from '../application-conversation/application-conversation-read.module';
 import { ApplicationDocumentReadModule } from '../application-documents/application-document-read.module';
@@ -12,6 +14,8 @@ import { ApplicantAttentionController } from './applicant-attention.controller';
 
 @Module({
   imports: [
+    ListingConsumerAccessModule,
+    ProviderAuthorizationModule,
     PrismaModule,
     ApplicationConversationReadModule,
     ApplicationDocumentReadModule,

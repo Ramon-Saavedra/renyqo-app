@@ -1,3 +1,5 @@
+import { unitContext } from '../../test/unit-workspace-authority';
+import { providerListingWhere } from '../provider-authorization/provider-listing-access';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { PrismaService } from '../prisma/prisma.service';
@@ -107,7 +109,7 @@ describe('ProviderRecentExitsQueryService', () => {
 
   it('retains full qualifying counts when only a bounded page is projected', async () => {
     query.mockResolvedValue([{ ...projection, totalCount: 8n }]);
-    const result = await service.select(tx, 'provider-1', [
+    const result = await service.select(tx, unitContext('provider-1'), [
       'listing-1',
       'listing-2',
     ]);
@@ -120,8 +122,12 @@ describe('ProviderRecentExitsQueryService', () => {
   });
 
   it('does not query or hydrate identities for empty input', async () => {
-    expect(await service.select(tx, 'provider-1', [])).toEqual(new Map());
-    expect(await service.cards(tx, 'provider-1', [], asOf)).toEqual([]);
+    expect(await service.select(tx, unitContext('provider-1'), [])).toEqual(
+      new Map(),
+    );
+    expect(
+      await service.cards(tx, unitContext('provider-1'), [], asOf),
+    ).toEqual([]);
     expect(query).not.toHaveBeenCalled();
     expect(findMany).not.toHaveBeenCalled();
     expect(eventFindMany).not.toHaveBeenCalled();
@@ -132,7 +138,12 @@ describe('ProviderRecentExitsQueryService', () => {
     eventFindMany.mockResolvedValue([
       { applicationId: projection.id, occurredAt: projection.exitedAt },
     ]);
-    const result = await service.cards(tx, 'provider-1', [projection], asOf);
+    const result = await service.cards(
+      tx,
+      unitContext('provider-1'),
+      [projection],
+      asOf,
+    );
     expect(result[0]).toMatchObject({
       ...projection,
       canRestore: true,
@@ -150,7 +161,7 @@ describe('ProviderRecentExitsQueryService', () => {
       expect.objectContaining({
         where: {
           id: { in: [projection.id] },
-          listing: { providerId: 'provider-1' },
+          listing: providerListingWhere(unitContext('provider-1')),
         },
       }),
     );
@@ -185,7 +196,7 @@ describe('ProviderRecentExitsQueryService', () => {
       { applicationId: projection.id, occurredAt: atBoundary },
     ]);
     await expect(
-      service.cards(tx, 'provider-1', [projection], asOf),
+      service.cards(tx, unitContext('provider-1'), [projection], asOf),
     ).resolves.toMatchObject([{ canRestore: false }]);
 
     eventFindMany.mockResolvedValue([
@@ -193,7 +204,7 @@ describe('ProviderRecentExitsQueryService', () => {
       { applicationId: projection.id, occurredAt: insideWindow },
     ]);
     await expect(
-      service.cards(tx, 'provider-1', [projection], asOf),
+      service.cards(tx, unitContext('provider-1'), [projection], asOf),
     ).resolves.toMatchObject([{ canRestore: true }]);
   });
 

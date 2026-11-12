@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import type { AppendApplicationActivityInput } from '../applications/application-activity.service';
-import { providerApplicationIsVisible } from '../applications/application-process.policy';
 import { notifiableActivity } from './notification.policy';
 
 @Injectable()
@@ -23,10 +22,6 @@ export class NotificationProducer {
       },
     });
     // Keep relation reads sequential on the caller's single pg transaction connection.
-    const listing = await tx.listing.findUniqueOrThrow({
-      where: { id: app.listingId },
-      select: { providerId: true },
-    });
     const recipients: { id: string; side: 'APPLICANT' | 'PROVIDER' }[] = [];
     if (input.visibility !== 'PROVIDER' && input.actorType !== 'APPLICANT') {
       const user = await tx.user.findUniqueOrThrow({
@@ -36,18 +31,8 @@ export class NotificationProducer {
       if (user.role === 'APPLICANT' && user.status === 'ACTIVE')
         recipients.push({ id: app.applicantId, side: 'APPLICANT' });
     }
-    if (
-      input.visibility !== 'APPLICANT' &&
-      input.actorType !== 'PROVIDER' &&
-      providerApplicationIsVisible(app)
-    ) {
-      const user = await tx.user.findUniqueOrThrow({
-        where: { id: listing.providerId },
-        select: { role: true, status: true },
-      });
-      if (user.role === 'PROVIDER' && user.status === 'ACTIVE')
-        recipients.push({ id: listing.providerId, side: 'PROVIDER' });
-    }
+    // Provider delivery is deliberately disabled until authorization-aware team
+    // fan-out exists. Creator/responsible members are never fallback recipients.
     const m = input.metadata;
     const workflowId =
       m?.workflowId ??

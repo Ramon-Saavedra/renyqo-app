@@ -1,8 +1,10 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
+
 import { ApplicationAttentionQueryService } from './application-attention-query.service';
 import {
   AttentionApplicationParamsDto,
@@ -17,13 +19,21 @@ export class ApplicantAttentionController {
   @Get('applications/:applicationId/attention')
   detail(
     @Param() params: AttentionApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.queries.detail(user.id, 'applicant', params.applicationId);
+    return this.queries.detail(
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      params.applicationId,
+    );
   }
 
   @Get('attention')
-  aggregate(@Query() query: AttentionQueryDto, @CurrentUser() user: SafeUser) {
-    return this.queries.aggregate(user.id, 'applicant', query);
+  aggregate(@Query() query: AttentionQueryDto, @Req() request: Request) {
+    return this.queries.aggregate(
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      query,
+    );
   }
 }

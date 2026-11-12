@@ -7,9 +7,10 @@ import {
 } from '@nestjs/common';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantEligibilityResponseDto } from './dto/applicant-eligibility-response.dto';
 import { EligibilityService } from './eligibility.service';
 
@@ -21,10 +22,13 @@ export class EligibilityController {
   @Get(':id/eligibility')
   async check(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ApplicantEligibilityResponseDto> {
     return new ApplicantEligibilityResponseDto(
-      await this.eligibilityService.check(listingId, user.id),
+      await this.eligibilityService.check(
+        listingId,
+        sessionAuthorityFromRequest(request),
+      ),
     );
   }
 }

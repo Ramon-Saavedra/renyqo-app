@@ -1,3 +1,4 @@
+import { unitRequest, unitSession } from '../../test/unit-workspace-authority';
 import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
 import {
   GUARDS_METADATA,
@@ -135,7 +136,7 @@ describe('EligibilityController', () => {
       eligibilityService.check.mockResolvedValue(response);
 
       await expect(
-        controller.check(LISTING_ID, makeApplicantUser()),
+        controller.check(LISTING_ID, unitRequest(makeApplicantUser())),
       ).resolves.toEqual({
         canApply,
         result: response.result,
@@ -148,7 +149,7 @@ describe('EligibilityController', () => {
       expect(response.warnings).toEqual(['smoking_by_arrangement']);
       expect(eligibilityService.check).toHaveBeenCalledWith(
         LISTING_ID,
-        APPLICANT_ID,
+        unitSession(APPLICANT_ID),
       );
     },
   );

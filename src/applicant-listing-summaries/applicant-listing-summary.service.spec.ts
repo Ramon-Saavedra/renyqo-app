@@ -18,9 +18,21 @@ import { ProfileMatch } from '../listings/dto/applicant-listing-profile-match.en
 import type { ApplicantListingSummaryBuildSource } from './applicant-listing-summary-listing.select';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantListingAttentionEnricher } from '../application-attention/applicant-listing-attention.enricher';
+import { unitSession } from '../../test/unit-workspace-authority';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
 import { ApplicantListingSummaryService } from './applicant-listing-summary.service';
 
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000099';
+const applicantOptions = (
+  extra: {
+    isSavedByListingId?: Set<string>;
+    applicantProfile?: ApplicantProfile;
+  } = {},
+) => ({
+  isSavedByListingId: new Set<string>(),
+  authority: unitSession(APPLICANT_ID),
+  ...extra,
+});
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
 const OTHER_LISTING_ID = '00000000-0000-4000-8000-000000000003';
 
@@ -145,6 +157,10 @@ describe('ApplicantListingSummaryService', () => {
           },
         },
         {
+          provide: ApplicantListingAccess,
+          useValue: { assertPrincipal: () => Promise.resolve() },
+        },
+        {
           provide: EligibilityService,
           useValue: {
             isProfileComplete: jest.fn().mockReturnValue(false),
@@ -166,9 +182,11 @@ describe('ApplicantListingSummaryService', () => {
   });
 
   it('returns an empty array for no listings', async () => {
-    const result = await service.buildSummaries(applicantUser, [], {
-      isSavedByListingId: new Set(),
-    });
+    const result = await service.buildSummaries(
+      applicantUser,
+      [],
+      applicantOptions(),
+    );
 
     expect(result).toEqual([]);
     expect(prismaMock.applicantProfile.findUnique).not.toHaveBeenCalled();
@@ -180,9 +198,11 @@ describe('ApplicantListingSummaryService', () => {
       makeListing({ id: OTHER_LISTING_ID, title: 'Other' }),
     ];
 
-    const result = await service.buildSummaries(applicantUser, listings, {
-      isSavedByListingId: new Set([LISTING_ID]),
-    });
+    const result = await service.buildSummaries(
+      applicantUser,
+      listings,
+      applicantOptions({ isSavedByListingId: new Set([LISTING_ID]) }),
+    );
 
     expect(result[0].isSaved).toBe(true);
     expect(result[1].isSaved).toBe(false);
@@ -219,9 +239,7 @@ describe('ApplicantListingSummaryService', () => {
     const result = await service.buildSummaries(
       applicantUser,
       [makeListing()],
-      {
-        isSavedByListingId: new Set([LISTING_ID]),
-      },
+      applicantOptions({ isSavedByListingId: new Set([LISTING_ID]) }),
     );
 
     expect(result[0].profileMatch).toBe(ProfileMatch.PROFILE_INCOMPLETE);
@@ -244,9 +262,7 @@ describe('ApplicantListingSummaryService', () => {
     const result = await service.buildSummaries(
       applicantUser,
       [makeListing()],
-      {
-        isSavedByListingId: new Set(),
-      },
+      applicantOptions(),
     );
 
     expect(result[0].profileMatch).toBe(ProfileMatch.MATCH);
@@ -268,9 +284,7 @@ describe('ApplicantListingSummaryService', () => {
     const result = await service.buildSummaries(
       applicantUser,
       [makeListing()],
-      {
-        isSavedByListingId: new Set(),
-      },
+      applicantOptions(),
     );
 
     expect(result[0].profileMatch).toBe(ProfileMatch.NO_MATCH);
@@ -290,10 +304,7 @@ describe('ApplicantListingSummaryService', () => {
     const result = await service.buildSummaries(
       applicantUser,
       [makeListing()],
-      {
-        isSavedByListingId: new Set(),
-        applicantProfile: profile,
-      },
+      applicantOptions({ applicantProfile: profile }),
     );
 
     expect(result[0].profileMatch).toBe(ProfileMatch.MATCH);
@@ -320,9 +331,7 @@ describe('ApplicantListingSummaryService', () => {
     const result = await service.buildSummaries(
       applicantUser,
       [makeListing()],
-      {
-        isSavedByListingId: new Set([LISTING_ID]),
-      },
+      applicantOptions({ isSavedByListingId: new Set([LISTING_ID]) }),
     );
 
     expect(result[0].hasApplied).toBe(true);

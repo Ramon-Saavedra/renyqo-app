@@ -4,7 +4,17 @@ import {
   considerationSummary,
   ApplicationConsiderationReadService,
 } from '../applications/application-consideration-read';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
+import {
+  ApplicationListingAccess,
+  actorUserId,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
+import type { AuthorizationContext } from '../provider-authorization/domain/authorization.types';
 import { Prisma } from '../generated/prisma/client';
 import { ConversationSide } from '../generated/prisma/enums';
 import { ApplicationConversationReadService } from '../application-conversation/application-conversation-read.service';
@@ -47,14 +57,18 @@ export class ApplicationWorkspaceQueryService {
     private readonly activity: ApplicationActivityReadService,
     private readonly conversations: ApplicationConversationReadService,
     readonly consideration: ApplicationConsiderationReadService,
+    readonly listingAccess: ApplicationListingAccess,
   ) {}
 
   scope(
     userId: string,
     audience: AttentionAudience,
+    context?: AuthorizationContext,
   ): Prisma.ApplicationWhereInput {
+    if (audience === 'provider' && !context)
+      throw new ForbiddenException('Provider workspace context required');
     return audience === 'provider'
-      ? providerApplicationVisibility(userId)
+      ? providerApplicationVisibility(context!)
       : { applicantId: userId };
   }
 
@@ -63,9 +77,12 @@ export class ApplicationWorkspaceQueryService {
     applicationId: string,
     userId: string,
     audience: AttentionAudience,
+    context?: AuthorizationContext,
   ) {
     const application = await tx.application.findFirst({
-      where: { AND: [this.scope(userId, audience), { id: applicationId }] },
+      where: {
+        AND: [this.scope(userId, audience, context), { id: applicationId }],
+      },
       select: readModelApplicationSelect,
     });
     if (!application) throw new NotFoundException('Application not found');
@@ -148,14 +165,19 @@ export class ApplicationWorkspaceQueryService {
 
   workspace(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     audience: AttentionAudience,
   ) {
-    return this.prisma.$transaction(
-      async (tx) => {
+    const userId = actorUserId(actor);
+    return this.listingAccess.read(
+      actor,
+      audience,
+      applicationId,
+      async () => {},
+      async (tx, _listingId, context) => {
         const asOf = this.clock.now();
         const where = {
-          AND: [this.scope(userId, audience), { id: applicationId }],
+          AND: [this.scope(userId, audience, context), { id: applicationId }],
         };
         const providerApplication =
           audience === 'provider'
@@ -217,7 +239,6 @@ export class ApplicationWorkspaceQueryService {
           ),
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 }

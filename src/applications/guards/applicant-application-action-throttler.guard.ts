@@ -91,7 +91,7 @@ export class ApplicantApplicationActionThrottlerGuard implements CanActivate {
     }
 
     if (req['method'] !== 'DELETE') {
-      const listing = await this.prisma.listing.findUnique({
+      const listing = await this.prisma.publicListingProjection.findUnique({
         where: { id: routeId },
         select: { id: true },
       });

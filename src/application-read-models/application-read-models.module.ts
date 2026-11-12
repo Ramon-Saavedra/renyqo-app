@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
+import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ApplicationConversationReadModule } from '../application-conversation/application-conversation-read.module';
 import { ApplicationAttentionModule } from '../application-attention/application-attention.module';
@@ -15,6 +17,8 @@ import { ApplicationHistoryQueryService } from './application-history-query.serv
 
 @Module({
   imports: [
+    ListingConsumerAccessModule,
+    ProviderAuthorizationModule,
     PrismaModule,
     ApplicationConversationReadModule,
     ApplicationAttentionModule,

@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
 
 import type { ApplicantProfile } from '../generated/prisma/client';
 import { Role, UserStatus } from '../generated/prisma/enums';
@@ -22,6 +24,7 @@ import type { ApplicationAdmission } from '../applications/application-admission
 export type BuildApplicantListingSummariesOptions = {
   readonly isSavedByListingId: ReadonlySet<string>;
   readonly applicantProfile?: ApplicantProfile | null;
+  readonly authority?: HumanAuthority;
 };
 
 function isActiveApplicant(user: SafeUser | null): user is SafeUser {
@@ -35,17 +38,21 @@ export class ApplicantListingSummaryService {
     private readonly applicationsService: ApplicationsService,
     private readonly eligibilityService: EligibilityService,
     private readonly listingAttention: ApplicantListingAttentionEnricher,
+    private readonly access: ApplicantListingAccess,
   ) {}
 
   applicationAttentionFor(
     applicantUser: SafeUser | null,
     blockingByListingId: ReadonlyMap<string, BlockingApplicationState>,
+    authority?: HumanAuthority,
   ): Promise<ReadonlyMap<string, ApplicantListingAttentionDto>> {
     if (!isActiveApplicant(applicantUser) || blockingByListingId.size === 0) {
       return Promise.resolve(new Map());
     }
+    if (!authority || authority.userId !== applicantUser.id)
+      throw new ForbiddenException('Applicant session authority required');
     return this.listingAttention.forApplications(
-      applicantUser.id,
+      authority,
       blockingByListingId,
     );
   }
@@ -62,6 +69,11 @@ export class ApplicantListingSummaryService {
     const evaluationTimestamp = new Date();
 
     const isApplicant = isActiveApplicant(applicantUser);
+    if (isApplicant) {
+      if (!options.authority || options.authority.userId !== applicantUser.id)
+        throw new ForbiddenException('Applicant session authority required');
+      await this.access.assertPrincipal(options.authority);
+    }
 
     let profile: ApplicantProfile | null = null;
     let blockingApplicationsByListingId: ReadonlyMap<
@@ -97,6 +109,7 @@ export class ApplicantListingSummaryService {
     const attentionByListingId = await this.applicationAttentionFor(
       applicantUser,
       blockingApplicationsByListingId,
+      options.authority,
     );
 
     return listings.map((listing) =>

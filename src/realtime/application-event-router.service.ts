@@ -1,9 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '../generated/prisma/enums';
-import { providerApplicationIsVisible } from '../applications/application-process.policy';
 import {
-  listingInvalidation,
   type ApplicationRealtimeEvent,
   type RealtimeEvent,
 } from './realtime-event';
@@ -20,24 +18,18 @@ export class ApplicationEventRouter {
         applicantId: true,
         status: true,
         activeAt: true,
-        applicant: { select: { role: true } },
+        applicant: { select: { role: true, status: true } },
         listingId: true,
-        listing: {
-          select: { providerId: true, provider: { select: { role: true } } },
-        },
       },
     });
     if (!app || app.listingId !== event.payload.listingId) return [];
     const routes: { userId: string; event: RealtimeEvent }[] = [];
-    if (app.applicant.role === Role.APPLICANT)
+    if (
+      app.applicant.role === Role.APPLICANT &&
+      app.applicant.status === 'ACTIVE'
+    )
       routes.push({ userId: app.applicantId, event });
-    if (app.listing.provider.role === Role.PROVIDER)
-      routes.push({
-        userId: app.listing.providerId,
-        event: providerApplicationIsVisible(app)
-          ? event
-          : listingInvalidation(event, app.listingId),
-      });
+    // Provider team delivery remains disabled; no creator/responsible fallback.
     return routes;
   }
 }

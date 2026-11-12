@@ -21,7 +21,11 @@ import { EligibilityService } from '../eligibility/eligibility.service';
 import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
 import { EligibilityAssessmentTrigger } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import {
+  ProviderListingAccess,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
+import { hasListingParticipation } from '../provider-authorization/domain/listing-participation';
 import type { ApplicationTransactionClient } from './application-lifecycle.service';
 import { ApplicationTransactionService } from './application-transaction.service';
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
@@ -41,14 +45,19 @@ export class ProviderApplicationCurationService {
     private readonly activityService: ApplicationActivityService,
     private readonly admissionService: ApplicationAdmissionService,
     private readonly viewingLifecycle: ViewingLifecycleService,
+    private readonly listings: ProviderListingAccess,
   ) {}
 
   async reject(
     applicationId: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<Application> {
-    return runSerializableTransaction(this.prisma, (tx) =>
-      this.rejectWithinTransaction(tx, applicationId, providerId),
+    return this.listings.mutateApplication(
+      actor,
+      'application.reject',
+      applicationId,
+      (tx) =>
+        this.rejectWithinTransaction(tx, applicationId, actor.authority.userId),
     );
   }
 
@@ -62,7 +71,14 @@ export class ProviderApplicationCurationService {
     const application = await tx.application.findUnique({
       where: { id: applicationId },
       include: {
-        listing: { select: { id: true, providerId: true, status: true } },
+        listing: {
+          select: {
+            id: true,
+            workspaceId: true,
+            responsibleMembershipId: true,
+            status: true,
+          },
+        },
       },
     });
 
@@ -70,7 +86,7 @@ export class ProviderApplicationCurationService {
       throw new NotFoundException('Application not found');
     }
 
-    if (application.listing.providerId !== providerId) {
+    if (!(await hasListingParticipation(tx, providerId, application.listing))) {
       throw new NotFoundException('Application not found');
     }
 
@@ -149,161 +165,180 @@ export class ProviderApplicationCurationService {
 
   async restore(
     applicationId: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<Application> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const applicationReference = await tx.application.findUnique({
-        where: { id: applicationId },
-        select: { listingId: true, listing: { select: { providerId: true } } },
-      });
-
-      if (
-        !applicationReference ||
-        applicationReference.listing.providerId !== providerId
-      ) {
-        throw new NotFoundException('Application not found');
-      }
-
-      await this.transactionService.lockListing(
-        tx,
-        applicationReference.listingId,
-      );
-      await this.transactionService.lockApplication(tx, applicationId);
-
-      const application = await tx.application.findUnique({
-        where: { id: applicationId },
-        include: { listing: true },
-      });
-
-      if (!application) {
-        throw new NotFoundException('Application not found');
-      }
-
-      if (application.listing.status !== ListingStatus.PUBLISHED) {
-        throw new ConflictException(
-          'This listing is not accepting applications',
-        );
-      }
-
-      if (
-        application.status !== ApplicationStatus.REJECTED ||
-        application.publicReason !== ApplicationRejectionReason.NOT_SELECTED
-      ) {
-        throw new ConflictException('This application cannot be restored');
-      }
-
-      const profile = await this.transactionService.lockApplicantProfile(
-        tx,
-        application.applicantId,
-      );
-      if (await this.admissionService.hasNewerAttempt(tx, application)) {
-        throw new ConflictException({
-          message: 'A newer application attempt already exists',
-          code: 'APPLICATION_ATTEMPT_SUPERSEDED',
+    const providerId = actor.authority.userId;
+    return this.listings.mutateApplication(
+      actor,
+      'application.restore',
+      applicationId,
+      async (tx) => {
+        const applicationReference = await tx.application.findUnique({
+          where: { id: applicationId },
+          select: {
+            listingId: true,
+            listing: {
+              select: {
+                workspaceId: true,
+                responsibleMembershipId: true,
+                status: true,
+              },
+            },
+          },
         });
-      }
-      const eligibility = this.eligibilityService.evaluate(
-        application.listing,
-        profile,
-      );
 
-      if (!eligibility.canApply) {
-        throw new UnprocessableEntityException({
-          message: 'Applicant is not eligible for this listing',
-          canApply: eligibility.canApply,
-          reasons: eligibility.reasons,
-          warnings: eligibility.warnings,
-          evaluatedAt: eligibility.evaluatedAt,
-        });
-      }
+        if (
+          !applicationReference ||
+          !(await hasListingParticipation(
+            tx,
+            providerId,
+            applicationReference.listing,
+          ))
+        ) {
+          throw new NotFoundException('Application not found');
+        }
 
-      const now = new Date();
-      await this.assertProviderCurationCooldown(tx, applicationId, now);
-      const { remainingCapacity } =
-        await this.promotionService.reconcileWithinTransaction(
+        await this.transactionService.lockListing(
           tx,
+          applicationReference.listingId,
+        );
+        await this.transactionService.lockApplication(tx, applicationId);
+
+        const application = await tx.application.findUnique({
+          where: { id: applicationId },
+          include: { listing: true },
+        });
+
+        if (!application) {
+          throw new NotFoundException('Application not found');
+        }
+
+        if (application.listing.status !== ListingStatus.PUBLISHED) {
+          throw new ConflictException(
+            'This listing is not accepting applications',
+          );
+        }
+
+        if (
+          application.status !== ApplicationStatus.REJECTED ||
+          application.publicReason !== ApplicationRejectionReason.NOT_SELECTED
+        ) {
+          throw new ConflictException('This application cannot be restored');
+        }
+
+        const profile = await this.transactionService.lockApplicantProfile(
+          tx,
+          application.applicantId,
+        );
+        if (await this.admissionService.hasNewerAttempt(tx, application)) {
+          throw new ConflictException({
+            message: 'A newer application attempt already exists',
+            code: 'APPLICATION_ATTEMPT_SUPERSEDED',
+          });
+        }
+        const eligibility = this.eligibilityService.evaluate(
           application.listing,
+          profile,
         );
-      const restoreToActive = remainingCapacity > 0;
 
-      await this.viewingLifecycle.restoreWithinTransaction(
-        tx,
-        applicationId,
-        providerId,
-      );
-      let restored: Application;
-      if (restoreToActive) {
-        restored = await tx.application.update({
-          where: { id: applicationId },
-          data: {
-            status: ApplicationStatus.ACTIVE,
-            activeAt: now,
-            rejectedAt: null,
-            publicReason: null,
-          },
-        });
-      } else {
-        await this.transactionService.assignWaitingQueueOrder(
+        if (!eligibility.canApply) {
+          throw new UnprocessableEntityException({
+            message: 'Applicant is not eligible for this listing',
+            canApply: eligibility.canApply,
+            reasons: eligibility.reasons,
+            warnings: eligibility.warnings,
+            evaluatedAt: eligibility.evaluatedAt,
+          });
+        }
+
+        const now = new Date();
+        await this.assertProviderCurationCooldown(tx, applicationId, now);
+        const { remainingCapacity } =
+          await this.promotionService.reconcileWithinTransaction(
+            tx,
+            application.listing,
+          );
+        const restoreToActive = remainingCapacity > 0;
+
+        await this.viewingLifecycle.restoreWithinTransaction(
           tx,
-          application.listingId,
           applicationId,
+          providerId,
         );
-        restored = await tx.application.update({
-          where: { id: applicationId },
-          data: {
-            status: ApplicationStatus.WAITING,
-            activeAt: null,
-            rejectedAt: null,
-            publicReason: null,
-          },
-        });
-      }
+        let restored: Application;
+        if (restoreToActive) {
+          restored = await tx.application.update({
+            where: { id: applicationId },
+            data: {
+              status: ApplicationStatus.ACTIVE,
+              activeAt: now,
+              rejectedAt: null,
+              publicReason: null,
+            },
+          });
+        } else {
+          await this.transactionService.assignWaitingQueueOrder(
+            tx,
+            application.listingId,
+            applicationId,
+          );
+          restored = await tx.application.update({
+            where: { id: applicationId },
+            data: {
+              status: ApplicationStatus.WAITING,
+              activeAt: null,
+              rejectedAt: null,
+              publicReason: null,
+            },
+          });
+        }
 
-      await this.activityService.appendWithinTransaction(tx, {
-        applicationId,
-        type: ApplicationActivityType.APPLICATION_RESTORED,
-        actorUserId: providerId,
-        actorType: ApplicationActivityActorType.PROVIDER,
-        visibility: restoreToActive
-          ? ApplicationActivityVisibility.BOTH
-          : ApplicationActivityVisibility.APPLICANT,
-        occurredAt: now,
-        metadata: {
-          fromStatus: ApplicationStatus.REJECTED,
-          toStatus: restoreToActive
-            ? ApplicationStatus.ACTIVE
-            : ApplicationStatus.WAITING,
-        },
-      });
-      await this.assessments.record(
-        tx,
-        applicationId,
-        application.listing,
-        profile,
-        EligibilityAssessmentTrigger.RESTORE,
-        providerId,
-      );
-
-      await tx.listingEvent.create({
-        data: {
-          listingId: application.listingId,
+        await this.activityService.appendWithinTransaction(tx, {
           applicationId,
-          type: ListingEventType.RESTORED_BY_PROVIDER,
-          source: ListingEventSource.PROVIDER,
+          type: ApplicationActivityType.APPLICATION_RESTORED,
           actorUserId: providerId,
-          reason: ApplicationRejectionReason.NOT_SELECTED,
-          payload: {
+          actorType: ApplicationActivityActorType.PROVIDER,
+          visibility: restoreToActive
+            ? ApplicationActivityVisibility.BOTH
+            : ApplicationActivityVisibility.APPLICANT,
+          occurredAt: now,
+          metadata: {
             fromStatus: ApplicationStatus.REJECTED,
             toStatus: restoreToActive
               ? ApplicationStatus.ACTIVE
               : ApplicationStatus.WAITING,
           },
-          occurredAt: now,
-        },
-      });
+        });
+        await this.assessments.record(
+          tx,
+          applicationId,
+          application.listing,
+          profile,
+          EligibilityAssessmentTrigger.RESTORE,
+          providerId,
+        );
 
-      return restored;
-    });
+        await tx.listingEvent.create({
+          data: {
+            listingId: application.listingId,
+            applicationId,
+            type: ListingEventType.RESTORED_BY_PROVIDER,
+            source: ListingEventSource.PROVIDER,
+            actorUserId: providerId,
+            reason: ApplicationRejectionReason.NOT_SELECTED,
+            payload: {
+              fromStatus: ApplicationStatus.REJECTED,
+              toStatus: restoreToActive
+                ? ApplicationStatus.ACTIVE
+                : ApplicationStatus.WAITING,
+            },
+            occurredAt: now,
+          },
+        });
+
+        return restored;
+      },
+    );
   }
 
   private async assertProviderCurationCooldown(

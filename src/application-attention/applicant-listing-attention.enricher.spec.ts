@@ -1,3 +1,4 @@
+import { unitSession } from '../../test/unit-workspace-authority';
 import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ApplicationStatus } from '../generated/prisma/enums';
@@ -49,7 +50,7 @@ describe('ApplicantListingAttentionEnricher', () => {
     const result = await module
       .get(ApplicantListingAttentionEnricher)
       .forApplications(
-        'applicant',
+        unitSession('applicant'),
         new Map([
           ['listing-a', selected],
           ['listing-b', { ...selected, id: 'other' }],
@@ -57,7 +58,7 @@ describe('ApplicantListingAttentionEnricher', () => {
       );
 
     expect(batch).toHaveBeenCalledTimes(1);
-    expect(batch).toHaveBeenCalledWith('applicant', 'applicant', [
+    expect(batch).toHaveBeenCalledWith(unitSession('applicant'), 'applicant', [
       'selected',
       'other',
     ]);
@@ -77,7 +78,7 @@ describe('ApplicantListingAttentionEnricher', () => {
     await expect(
       module
         .get(ApplicantListingAttentionEnricher)
-        .forApplications('applicant', new Map()),
+        .forApplications(unitSession('applicant'), new Map()),
     ).resolves.toEqual(new Map());
     expect(batch).not.toHaveBeenCalled();
   });
@@ -96,7 +97,10 @@ describe('ApplicantListingAttentionEnricher', () => {
     await expect(
       module
         .get(ApplicantListingAttentionEnricher)
-        .forApplications('applicant', new Map([['listing', selected]])),
+        .forApplications(
+          unitSession('applicant'),
+          new Map([['listing', selected]]),
+        ),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Listing, Prisma } from '../generated/prisma/client';
 import { CriteriaRevisionSource } from '../generated/prisma/enums';
+import type { ListingEligibilityState } from './profile-eligibility-evaluator';
 
 export const CRITERIA_FIELDS = [
   'minimumHouseholdNetIncome',
@@ -27,7 +28,7 @@ export class ListingCriteriaRevisionService {
   // Caller holds the listing lock, including on retries. No historical snapshot is fabricated.
   async current(
     tx: Prisma.TransactionClient,
-    listing: Listing,
+    listing: ListingEligibilityState,
     actorUserId?: string,
     source: CriteriaRevisionSource = CriteriaRevisionSource.LEGACY_BASELINE,
   ) {

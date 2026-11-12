@@ -1,8 +1,10 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
+
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
+
 import { ProviderApplicationOverviewQueryService } from './provider-application-overview-query.service';
 import { ApplicationWorkspaceQueryService } from './application-workspace-query.service';
 import { ApplicationHistoryQueryService } from './application-history-query.service';
@@ -13,7 +15,7 @@ import {
   ReadModelRequestParamsDto,
 } from './dto/read-model-input.dto';
 
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 @Controller('provider')
 export class ProviderReadModelsController {
   constructor(
@@ -23,37 +25,38 @@ export class ProviderReadModelsController {
   ) {}
 
   @Get('listings/overview')
-  overview(
-    @CurrentUser() user: SafeUser,
-    @Query() query: ReadModelPageQueryDto,
-  ) {
-    return this.overviews.overview(user.id, query);
+  overview(@Req() request: Request, @Query() query: ReadModelPageQueryDto) {
+    return this.overviews.overview(providerActorFromRequest(request), query);
   }
 
   @Get('listings/:listingId/application-overview')
-  listing(
-    @CurrentUser() user: SafeUser,
-    @Param() params: ReadModelListingParamsDto,
-  ) {
-    return this.overviews.listing(user.id, params.listingId);
+  listing(@Req() request: Request, @Param() params: ReadModelListingParamsDto) {
+    return this.overviews.listing(
+      providerActorFromRequest(request),
+      params.listingId,
+    );
   }
 
   @Get('applications/:applicationId/workspace')
   workspace(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Param() params: ReadModelApplicationParamsDto,
   ) {
-    return this.workspaces.workspace(params.applicationId, user.id, 'provider');
+    return this.workspaces.workspace(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+    );
   }
 
   @Get('applications/:applicationId/activity')
   activity(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Param() params: ReadModelApplicationParamsDto,
     @Query() query: ReadModelPageQueryDto,
   ) {
     return this.history.activity(
-      user.id,
+      providerActorFromRequest(request),
       'provider',
       params.applicationId,
       query,
@@ -62,12 +65,12 @@ export class ProviderReadModelsController {
 
   @Get('applications/:applicationId/document-history')
   documents(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Param() params: ReadModelApplicationParamsDto,
     @Query() query: ReadModelPageQueryDto,
   ) {
     return this.history.documents(
-      user.id,
+      providerActorFromRequest(request),
       'provider',
       params.applicationId,
       query,
@@ -76,12 +79,12 @@ export class ProviderReadModelsController {
 
   @Get('applications/:applicationId/document-requests/:requestId/files')
   files(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Param() params: ReadModelRequestParamsDto,
     @Query() query: ReadModelPageQueryDto,
   ) {
     return this.history.files(
-      user.id,
+      providerActorFromRequest(request),
       'provider',
       params.applicationId,
       params.requestId,

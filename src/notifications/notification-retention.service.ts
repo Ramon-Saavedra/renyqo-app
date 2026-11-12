@@ -34,7 +34,7 @@ export class NotificationRetention implements OnModuleInit, OnModuleDestroy {
     } catch {
       this.logger.error({ signal: 'NOTIFICATION_RETENTION_FAILED' });
     } finally {
-      this.schedule();
+      if (!this.stopped) this.schedule();
     }
   }
   async onModuleDestroy() {

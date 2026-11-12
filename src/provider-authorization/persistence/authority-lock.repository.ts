@@ -15,9 +15,14 @@ export class AuthorityLockRepository {
   async global(
     tx: Prisma.TransactionClient,
     authority: HumanAuthority,
+    participantUserIds: readonly string[] = [],
   ): Promise<void> {
     // FOR KEY SHARE would NOT fence updates of status/auth_version.
-    await tx.$queryRaw`SELECT id FROM users WHERE id=${authority.userId}::uuid FOR SHARE`;
+    const ids = [...new Set([authority.userId, ...participantUserIds])];
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM users WHERE id=ANY(${ids}::uuid[]) ORDER BY id FOR SHARE`;
+    if (rows.length !== ids.length)
+      throw new NotFoundException('Workspace not found');
     if (authority.mode === 'SESSION_BOUND')
       await tx.$queryRaw`SELECT sid FROM session_auth_grants WHERE sid=${authority.sessionId} FOR SHARE`;
   }

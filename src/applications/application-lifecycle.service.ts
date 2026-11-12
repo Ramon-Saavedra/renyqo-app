@@ -22,7 +22,6 @@ import {
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { ApplicantEligibilityResponseDto } from '../eligibility/dto/applicant-eligibility-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationAdmissionService } from './application-admission.service';
 import { ViewingLifecycleService } from './viewing-lifecycle.service';
 import { applicationCanWithdraw } from './application-process.policy';
@@ -32,6 +31,13 @@ import { ApplicationTransactionService } from './application-transaction.service
 import { ApplicationWaitingPromotionService } from './application-waiting-promotion.service';
 import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
 import { EligibilityAssessmentTrigger } from '../generated/prisma/enums';
+import type { ListingEligibilityState } from '../eligibility/profile-eligibility-evaluator';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
+import {
+  ProviderListingAccess,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
 
 export type ApplicationTransactionClient = Prisma.TransactionClient;
 
@@ -46,131 +52,149 @@ export class ApplicationLifecycleService {
     private readonly activityService: ApplicationActivityService,
     private readonly admissionService: ApplicationAdmissionService,
     private readonly viewingLifecycle: ViewingLifecycleService,
+    private readonly listingAccess: ApplicantListingAccess,
+    private readonly providerListingAccess: ProviderListingAccess,
   ) {}
 
-  async apply(listingId: string, applicantId: string): Promise<Application> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await this.transactionService.lockListing(tx, listingId);
-      const listing = await tx.listing.findUnique({ where: { id: listingId } });
-
-      if (!listing) {
-        throw new NotFoundException('Listing not found');
-      }
-
-      if (listing.status !== ListingStatus.PUBLISHED) {
-        throw new UnprocessableEntityException(
-          'This listing is not accepting applications',
-        );
-      }
-
-      const histories = await this.admissionService.historyForListings(
-        tx,
-        applicantId,
-        [listingId],
-      );
-      const history = histories.get(listingId) ?? [];
-      const admission = this.admissionService.evaluate(
-        history,
-        listing.status,
-        true,
-        new Date(),
-      );
-      if (!admission.canSubmitApplication) {
-        throw new ConflictException({
-          message:
-            admission.submissionBlockReason ===
-            'APPLICATION_REAPPLICATION_COOLDOWN'
-              ? 'Re-application is temporarily unavailable after provider rejection'
-              : 'You have already applied to this listing',
-          code: admission.submissionBlockReason,
-          reapplyAvailableAt: admission.reapplyAvailableAt,
-        });
-      }
-
-      const profile = await this.transactionService.lockApplicantProfile(
-        tx,
-        applicantId,
-      );
-      const eligibility = this.eligibilityService.evaluate(listing, profile);
-
-      if (!eligibility.canApply) {
-        const applicantEligibility = new ApplicantEligibilityResponseDto(
-          eligibility,
-        );
-        throw new UnprocessableEntityException({
-          message: 'Applicant is not eligible for this listing',
-          code: 'APPLICANT_NOT_ELIGIBLE',
-          canApply: applicantEligibility.canApply,
-          evaluatedAt: applicantEligibility.evaluatedAt,
-          result: applicantEligibility.result,
-        });
-      }
-
-      const { remainingCapacity } =
-        await this.promotionService.reconcileWithinTransaction(tx, listing);
-      const isActive = remainingCapacity > 0;
-      const status = isActive
-        ? ApplicationStatus.ACTIVE
-        : ApplicationStatus.WAITING;
-      const now = new Date(
-        history.reduce(
-          (timestamp, row) => Math.max(timestamp, row.createdAt.getTime() + 1),
-          Date.now(),
-        ),
-      );
-
-      try {
-        const application = await tx.application.create({
-          data: {
-            listingId,
-            applicantId,
-            status,
-            createdAt: now,
-            activeAt: isActive ? now : undefined,
-          },
+  async apply(
+    listingId: string,
+    authority: HumanAuthority,
+  ): Promise<Application> {
+    const applicantId = authority.userId;
+    return this.listingAccess.admit(
+      authority,
+      listingId,
+      async () => {},
+      async (tx) => {
+        await this.transactionService.lockListing(tx, listingId);
+        const listing = await tx.listing.findUnique({
+          where: { id: listingId },
         });
 
-        await this.activityService.appendWithinTransaction(tx, {
-          applicationId: application.id,
-          type: ApplicationActivityType.APPLICATION_SUBMITTED,
-          actorUserId: applicantId,
-          actorType: ApplicationActivityActorType.APPLICANT,
-          visibility: isActive
-            ? ApplicationActivityVisibility.BOTH
-            : ApplicationActivityVisibility.APPLICANT,
-          occurredAt: now,
-          metadata: { initialStatus: status },
-        });
-        await this.assessments.record(
-          tx,
-          application.id,
-          listing,
-          profile,
-          EligibilityAssessmentTrigger.APPLICATION_CREATED,
-          applicantId,
-        );
+        if (!listing) {
+          throw new NotFoundException('Listing not found');
+        }
 
-        return application;
-      } catch (err) {
-        if (
-          err instanceof PrismaClientKnownRequestError &&
-          err.code === 'P2002'
-        ) {
-          throw new ConflictException(
-            'You have already applied to this listing',
+        if (listing.status !== ListingStatus.PUBLISHED) {
+          throw new UnprocessableEntityException(
+            'This listing is not accepting applications',
           );
         }
-        throw err;
-      }
-    });
+
+        const histories = await this.admissionService.historyForListings(
+          tx,
+          applicantId,
+          [listingId],
+        );
+        const history = histories.get(listingId) ?? [];
+        const admission = this.admissionService.evaluate(
+          history,
+          listing.status,
+          true,
+          new Date(),
+        );
+        if (!admission.canSubmitApplication) {
+          throw new ConflictException({
+            message:
+              admission.submissionBlockReason ===
+              'APPLICATION_REAPPLICATION_COOLDOWN'
+                ? 'Re-application is temporarily unavailable after provider rejection'
+                : 'You have already applied to this listing',
+            code: admission.submissionBlockReason,
+            reapplyAvailableAt: admission.reapplyAvailableAt,
+          });
+        }
+
+        const profile = await this.transactionService.lockApplicantProfile(
+          tx,
+          applicantId,
+        );
+        const eligibility = this.eligibilityService.evaluate(listing, profile);
+
+        if (!eligibility.canApply) {
+          const applicantEligibility = new ApplicantEligibilityResponseDto(
+            eligibility,
+          );
+          throw new UnprocessableEntityException({
+            message: 'Applicant is not eligible for this listing',
+            code: 'APPLICANT_NOT_ELIGIBLE',
+            canApply: applicantEligibility.canApply,
+            evaluatedAt: applicantEligibility.evaluatedAt,
+            result: applicantEligibility.result,
+          });
+        }
+
+        const { remainingCapacity } =
+          await this.promotionService.reconcileWithinTransaction(tx, listing);
+        const isActive = remainingCapacity > 0;
+        const status = isActive
+          ? ApplicationStatus.ACTIVE
+          : ApplicationStatus.WAITING;
+        const now = new Date(
+          history.reduce(
+            (timestamp, row) =>
+              Math.max(timestamp, row.createdAt.getTime() + 1),
+            Date.now(),
+          ),
+        );
+
+        try {
+          const application = await tx.application.create({
+            data: {
+              listingId,
+              applicantId,
+              status,
+              createdAt: now,
+              activeAt: isActive ? now : undefined,
+            },
+          });
+
+          await this.activityService.appendWithinTransaction(tx, {
+            applicationId: application.id,
+            type: ApplicationActivityType.APPLICATION_SUBMITTED,
+            actorUserId: applicantId,
+            actorType: ApplicationActivityActorType.APPLICANT,
+            visibility: isActive
+              ? ApplicationActivityVisibility.BOTH
+              : ApplicationActivityVisibility.APPLICANT,
+            occurredAt: now,
+            metadata: { initialStatus: status },
+          });
+          await this.assessments.record(
+            tx,
+            application.id,
+            listing,
+            profile,
+            EligibilityAssessmentTrigger.APPLICATION_CREATED,
+            applicantId,
+          );
+
+          return application;
+        } catch (err) {
+          if (
+            err instanceof PrismaClientKnownRequestError &&
+            err.code === 'P2002'
+          ) {
+            throw new ConflictException(
+              'You have already applied to this listing',
+            );
+          }
+          throw err;
+        }
+      },
+    );
   }
 
   async withdraw(
     applicationId: string,
-    applicantId: string,
+    authority: HumanAuthority,
   ): Promise<Application> {
-    return runSerializableTransaction(this.prisma, (tx) =>
-      this.withdrawWithinTransaction(tx, applicationId, applicantId),
+    return this.listingAccess.mutateApplication(
+      authority,
+      applicationId,
+      async () => {},
+      (tx) =>
+        this.withdrawWithinTransaction(tx, applicationId, authority.userId),
     );
   }
 
@@ -264,17 +288,27 @@ export class ApplicationLifecycleService {
     return this.promotionService.promoteWithinTransaction(tx, listing);
   }
 
-  async promoteWaitingApplications(listingId: string): Promise<number> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await this.transactionService.lockListing(tx, listingId);
-      const listing = await tx.listing.findUnique({ where: { id: listingId } });
+  async promoteWaitingApplications(
+    listingId: string,
+    actor: ProviderActor,
+  ): Promise<number> {
+    return this.providerListingAccess.mutate(
+      actor,
+      'application.promote',
+      listingId,
+      async (tx) => {
+        await this.transactionService.lockListing(tx, listingId);
+        const listing = await tx.listing.findUnique({
+          where: { id: listingId },
+        });
 
-      if (!listing) {
-        return 0;
-      }
+        if (!listing) {
+          return 0;
+        }
 
-      return this.promotionService.promoteWithinTransaction(tx, listing);
-    });
+        return this.promotionService.promoteWithinTransaction(tx, listing);
+      },
+    );
   }
 
   /** Worker-ready system transition. Caller owns the transaction and retry boundary. */
@@ -379,21 +413,27 @@ export class ApplicationLifecycleService {
     tx: ApplicationTransactionClient,
     applicantId: string,
     profile: ApplicantProfile,
+    lockedListings: readonly ListingEligibilityState[],
   ): Promise<void> {
     const applications = await tx.application.findMany({
       where: {
         applicantId,
         status: { in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING] },
       },
-      include: { listing: true },
     });
-
-    type ApplicationWithListing = Prisma.ApplicationGetPayload<{
-      include: { listing: true };
-    }>;
+    const listingById = new Map(
+      lockedListings.map((listing) => [listing.id, listing]),
+    );
+    type ApplicationWithListing = Application & {
+      listing: ListingEligibilityState;
+    };
     const applicationsByListing = new Map<string, ApplicationWithListing[]>();
 
-    for (const application of applications) {
+    for (const row of applications) {
+      const listing = listingById.get(row.listingId);
+      if (!listing)
+        throw new ConflictException('Profile revalidation listing set changed');
+      const application: ApplicationWithListing = { ...row, listing };
       const listingApplications = applicationsByListing.get(
         application.listingId,
       );
@@ -405,7 +445,6 @@ export class ApplicationLifecycleService {
     }
 
     for (const listingId of Array.from(applicationsByListing.keys()).sort()) {
-      await this.transactionService.lockListing(tx, listingId);
       const listingApplications = applicationsByListing.get(listingId);
 
       if (listingApplications === undefined) {

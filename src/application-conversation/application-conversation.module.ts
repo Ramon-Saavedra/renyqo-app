@@ -1,3 +1,5 @@
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
+import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
 import { ApplicationConversationAccessService } from './application-conversation-access.service';
 import { ApplicationConversationPermissionService } from './application-conversation-permission.service';
 import { Module } from '@nestjs/common';
@@ -10,7 +12,13 @@ import { ApplicantConversationController } from './applicant-conversation.contro
 import { ProviderConversationController } from './provider-conversation.controller';
 
 @Module({
-  imports: [PrismaModule, ApplicationsModule, OutboxModule],
+  imports: [
+    ProviderAuthorizationModule,
+    ListingConsumerAccessModule,
+    PrismaModule,
+    ApplicationsModule,
+    OutboxModule,
+  ],
   controllers: [
     ProviderConversationController,
     ApplicantConversationController,

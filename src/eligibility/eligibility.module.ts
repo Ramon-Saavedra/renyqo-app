@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
 
 import { PrismaModule } from '../prisma/prisma.module';
 import { EligibilityController } from './eligibility.controller';
@@ -8,7 +9,7 @@ import { ApplicationEligibilityAssessmentService } from './application-eligibili
 import { ApplicationEligibilityReadController } from './application-eligibility-read.controller';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [ListingConsumerAccessModule, PrismaModule],
   controllers: [EligibilityController, ApplicationEligibilityReadController],
   providers: [
     EligibilityService,

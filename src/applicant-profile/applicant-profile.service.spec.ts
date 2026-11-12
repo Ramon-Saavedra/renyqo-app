@@ -1,4 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { unitSession } from '../../test/unit-workspace-authority';
+import { ProfileRevalidationTransactions } from './profile-revalidation-transactions';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -45,6 +47,12 @@ type TransactionMock = {
 
 describe('ApplicantProfileService', () => {
   let service: ApplicantProfileService;
+  let runRevalidation: jest.MockedFunction<
+    (
+      authority: unknown,
+      mutate: (tx: TransactionMock, listings: []) => Promise<unknown>,
+    ) => Promise<unknown>
+  >;
   let applicationsServiceMock: jest.Mocked<
     Pick<ApplicationLifecycleService, 'revalidateActiveAndWaitingApplications'>
   >;
@@ -76,10 +84,20 @@ describe('ApplicantProfileService', () => {
     applicationsServiceMock = {
       revalidateActiveAndWaitingApplications: jest.fn(),
     };
+    runRevalidation = jest.fn(
+      (
+        _authority: unknown,
+        mutate: (tx: TransactionMock, listings: []) => Promise<unknown>,
+      ) => mutate(prismaMock, []),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ApplicantProfileService,
+        {
+          provide: ProfileRevalidationTransactions,
+          useValue: { run: runRevalidation },
+        },
         { provide: PrismaService, useValue: prismaMock },
         {
           provide: ApplicationLifecycleService,
@@ -114,7 +132,7 @@ describe('ApplicantProfileService', () => {
   });
 
   describe('upsert', () => {
-    it('locks relevant listings before updating the profile and invoking lifecycle revalidation', async () => {
+    it('enters the bounded lock coordinator before updating the profile and invoking lifecycle revalidation', async () => {
       prismaMock.application.findMany.mockResolvedValue([
         { listingId: '00000000-0000-4000-8000-000000000003' },
       ]);
@@ -122,8 +140,10 @@ describe('ApplicantProfileService', () => {
         makeRawProfile(),
       );
       prismaMock.applicantProfile.upsert.mockResolvedValue(makeRawProfile());
-      await service.upsert(APPLICANT_ID, { householdNetIncome: 3000 });
-      expect(prismaMock.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      await service.upsert(unitSession(APPLICANT_ID), {
+        householdNetIncome: 3000,
+      });
+      expect(runRevalidation.mock.invocationCallOrder[0]).toBeLessThan(
         prismaMock.applicantProfile.upsert.mock.invocationCallOrder[0],
       );
       expect(
@@ -149,7 +169,7 @@ describe('ApplicantProfileService', () => {
       prismaMock.applicantProfile.findUnique.mockResolvedValue(null);
       prismaMock.applicantProfile.upsert.mockResolvedValue(profile);
 
-      const result = await service.upsert(APPLICANT_ID, dto);
+      const result = await service.upsert(unitSession(APPLICANT_ID), dto);
 
       expect(result.householdNetIncome).toBe(3000);
       expect(result.introduction).toBe('New applicant introduction');
@@ -159,7 +179,7 @@ describe('ApplicantProfileService', () => {
       prismaMock.applicantProfile.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.upsert(APPLICANT_ID, { householdNetIncome: 3000 }),
+        service.upsert(unitSession(APPLICANT_ID), { householdNetIncome: 3000 }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -169,7 +189,7 @@ describe('ApplicantProfileService', () => {
       );
 
       await expect(
-        service.upsert(APPLICANT_ID, { householdNetIncome: 3000 }),
+        service.upsert(unitSession(APPLICANT_ID), { householdNetIncome: 3000 }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -180,7 +200,7 @@ describe('ApplicantProfileService', () => {
       );
       prismaMock.applicantProfile.upsert.mockResolvedValue(updated);
 
-      const result = await service.upsert(APPLICANT_ID, {
+      const result = await service.upsert(unitSession(APPLICANT_ID), {
         introduction: '  Hello from Berlin  ',
       });
 
@@ -214,7 +234,7 @@ describe('ApplicantProfileService', () => {
       prismaMock.applicantProfile.findUnique.mockResolvedValue(existing);
       prismaMock.applicantProfile.upsert.mockResolvedValue(updated);
 
-      const result = await service.upsert(APPLICANT_ID, dto);
+      const result = await service.upsert(unitSession(APPLICANT_ID), dto);
 
       expect(result.householdNetIncome).toBe(3500);
     });
@@ -234,7 +254,7 @@ describe('ApplicantProfileService', () => {
       );
       prismaMock.applicantProfile.upsert.mockResolvedValue(profile);
 
-      const result = await service.upsert(APPLICANT_ID, dto);
+      const result = await service.upsert(unitSession(APPLICANT_ID), dto);
 
       expect(result.peopleCount).toBe(3);
     });
@@ -257,7 +277,7 @@ describe('ApplicantProfileService', () => {
       prismaMock.applicantProfile.findUnique.mockResolvedValue(existing);
       prismaMock.applicantProfile.upsert.mockResolvedValue(cleared);
 
-      const result = await service.upsert(APPLICANT_ID, dto);
+      const result = await service.upsert(unitSession(APPLICANT_ID), dto);
 
       expect(result.peopleCount).toBeNull();
       expect(result.adultsCount).toBeNull();
@@ -270,9 +290,9 @@ describe('ApplicantProfileService', () => {
         makeRawProfile(),
       );
 
-      await expect(service.upsert(APPLICANT_ID, dto)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.upsert(unitSession(APPLICANT_ID), dto),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('rejects household counts when only childrenCount is provided', async () => {
@@ -281,9 +301,9 @@ describe('ApplicantProfileService', () => {
         makeRawProfile(),
       );
 
-      await expect(service.upsert(APPLICANT_ID, dto)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.upsert(unitSession(APPLICANT_ID), dto),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('uses persisted counterparts for partial household updates', async () => {
@@ -301,15 +321,15 @@ describe('ApplicantProfileService', () => {
       prismaMock.applicantProfile.findUnique.mockResolvedValue(existing);
       prismaMock.applicantProfile.upsert.mockResolvedValue(updated);
 
-      const result = await service.upsert(APPLICANT_ID, dto);
+      const result = await service.upsert(unitSession(APPLICANT_ID), dto);
 
       expect(result.peopleCount).toBe(5);
     });
 
     it('rejects an empty PATCH body', async () => {
-      await expect(service.upsert(APPLICANT_ID, {})).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.upsert(unitSession(APPLICANT_ID), {}),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('revalidates active and waiting applications after updating the profile', async () => {
@@ -320,7 +340,7 @@ describe('ApplicantProfileService', () => {
       );
       prismaMock.applicantProfile.upsert.mockResolvedValue(updated);
 
-      await service.upsert(APPLICANT_ID, dto);
+      await service.upsert(unitSession(APPLICANT_ID), dto);
 
       expect(
         applicationsServiceMock.revalidateActiveAndWaitingApplications,
@@ -328,6 +348,7 @@ describe('ApplicantProfileService', () => {
         expect.anything(),
         APPLICANT_ID,
         expect.objectContaining({ id: updated.id }),
+        [],
       );
     });
   });

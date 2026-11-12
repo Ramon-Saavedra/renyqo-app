@@ -1,3 +1,6 @@
+import { publicListingSource } from '../published-listings/public-listing-source';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
+import { ApplicantListingAccess } from './applicant-listing-access';
 import { Injectable, NotFoundException } from '@nestjs/common';
 
 import type { ApplicantProfile } from '../generated/prisma/client';
@@ -11,7 +14,6 @@ import { ApplicantListingSummaryService } from '../applicant-listing-summaries/a
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SavedListingsService } from '../saved-listings/saved-listings.service';
-import { PublishedListingsService } from '../published-listings/published-listings.service';
 import type { SafeUser } from '../users/types/safe-user.type';
 import { ApplicantListingDetailDto } from './dto/applicant-listing-detail.dto';
 import { ApplicantListingsPageDto } from './dto/applicant-listings-page.dto';
@@ -33,9 +35,9 @@ export class ApplicantListingsService {
     private readonly eligibilityService: EligibilityService,
     private readonly applicationsService: ApplicationsService,
     private readonly savedListingsService: SavedListingsService,
-    private readonly publishedListingsService: PublishedListingsService,
     private readonly applicantListingSummaryService: ApplicantListingSummaryService,
     private readonly discoveryQuery: ApplicantListingDiscoveryQuery,
+    private readonly access: ApplicantListingAccess,
   ) {}
 
   async isProfileCompleteForUser(userId: string): Promise<boolean> {
@@ -50,6 +52,7 @@ export class ApplicantListingsService {
     query: ApplicantListingsQueryDto,
     applicantUser: SafeUser | null,
     res?: { setHeader(name: string, value: string): void },
+    authority?: HumanAuthority,
   ): Promise<ApplicantListingsPageDto> {
     const sort: DiscoverySort = query.sort ?? 'newest';
     const take = this.discoveryQuery.getPageSize(query);
@@ -62,6 +65,9 @@ export class ApplicantListingsService {
     let profile: ApplicantProfile | null = null;
 
     if (activeApplicant) {
+      if (!authority || authority.userId !== activeApplicant.id)
+        throw new NotFoundException('Applicant not found');
+      await this.access.assertPrincipal(authority);
       profile = await this.prisma.applicantProfile.findUnique({
         where: { applicantId: activeApplicant.id },
       });
@@ -70,14 +76,16 @@ export class ApplicantListingsService {
     const baseWhere = this.discoveryQuery.buildWhere(query, sort, profile);
     const [total, listings] = await this.prisma.$transaction(
       async (tx) => {
-        const count = await tx.listing.count({ where: baseWhere });
-        const results = await tx.listing.findMany({
+        const count = await tx.publicListingProjection.count({
+          where: baseWhere,
+        });
+        const results = await tx.publicListingProjection.findMany({
           where: baseWhere,
           orderBy: this.discoveryQuery.getSortOrder(sort),
           take: take + 1,
           select: this.discoveryQuery.getSelect(),
         });
-        return [count, results];
+        return [count, results.map(publicListingSource)] as const;
       },
       { isolationLevel: 'RepeatableRead' },
     );
@@ -97,7 +105,7 @@ export class ApplicantListingsService {
     const summaries = await this.applicantListingSummaryService.buildSummaries(
       applicantUser,
       items,
-      { isSavedByListingId, applicantProfile: profile },
+      { isSavedByListingId, applicantProfile: profile, authority },
     );
 
     const nextCursor =
@@ -110,6 +118,8 @@ export class ApplicantListingsService {
       res.setHeader('Cache-Control', 'private, no-store, must-revalidate');
     }
 
+    if (activeApplicant && authority)
+      await this.access.assertPrincipal(authority);
     return new ApplicantListingsPageDto(summaries, nextCursor, total);
   }
 
@@ -117,43 +127,12 @@ export class ApplicantListingsService {
     id: string,
     applicantUser: SafeUser | null,
     res?: { setHeader(name: string, value: string): void },
+    authority?: HumanAuthority,
   ): Promise<ApplicantListingDetailDto> {
-    const listing = await this.prisma.listing.findFirst({
-      where: {
-        id,
-        ...this.publishedListingsService.getPublicAccessWhere(),
-      },
-      select: {
-        id: true,
-        title: true,
-        city: true,
-        zip: true,
-        district: true,
-        street: true,
-        showExactAddress: true,
-        objectType: true,
-        livingArea: true,
-        rooms: true,
-        bedrooms: true,
-        coldRent: true,
-        additionalCosts: true,
-        deposit: true,
-        depositMonths: true,
-        availableFrom: true,
-        shortDescription: true,
-        minimumHouseholdNetIncome: true,
-        schufaRequired: true,
-        incomeProofRequired: true,
-        suitableForPeopleCount: true,
-        petsPolicy: true,
-        smokingPolicy: true,
-        publishedAt: true,
-        images: {
-          select: { secureUrl: true, position: true, isCover: true },
-          orderBy: { position: 'asc' },
-        },
-      },
+    const projection = await this.prisma.publicListingProjection.findUnique({
+      where: { id },
     });
+    const listing = projection ? publicListingSource(projection) : null;
 
     if (!listing) {
       throw new NotFoundException('Listing not found');
@@ -170,6 +149,9 @@ export class ApplicantListingsService {
     let admission = new ApplicationAdmissionResponseDto();
 
     if (isApplicant) {
+      if (!authority || authority.userId !== applicantUser.id)
+        throw new NotFoundException('Applicant not found');
+      await this.access.assertPrincipal(authority);
       const profile = await this.prisma.applicantProfile.findUnique({
         where: { applicantId: applicantUser.id },
       });
@@ -220,9 +202,11 @@ export class ApplicantListingsService {
           blockingApplication
             ? new Map([[listing.id, blockingApplication]])
             : new Map(),
+          authority,
         )
       ).get(listing.id) ?? null;
 
+    if (isApplicant && authority) await this.access.assertPrincipal(authority);
     return new ApplicantListingDetailDto(
       listing,
       profileMatch,

@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ProviderWorkspacesController } from './provider-workspaces.controller';
+import { WorkspaceDiscovery } from './workspace-discovery';
 import { WorkspaceRepository } from './persistence/workspace.repository';
 import { MembershipIdentityRepository } from './persistence/membership-identity.repository';
 import { OrganizationProfileRepository } from './persistence/organization-profile.repository';
@@ -11,10 +13,11 @@ import { TenantTransactions } from '../provider-tenancy/tenant-transactions';
 import { GlobalAuthorityReader } from '../provider-authorization/persistence/global-authority.reader';
 import { AuthorityLockRepository } from '../provider-authorization/persistence/authority-lock.repository';
 
-// Deliberately no controllers or exports: dormant until the assigned security,
-// audit, entitlement and cutover phases supply real operational orchestration.
+// Discovery is read-only; establishment/conversion/lifecycle commands stay dormant.
 @Module({
+  controllers: [ProviderWorkspacesController],
   providers: [
+    WorkspaceDiscovery,
     WorkspaceRepository,
     MembershipIdentityRepository,
     OrganizationProfileRepository,

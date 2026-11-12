@@ -7,6 +7,11 @@ import {
 import { ViewingClock } from './application-viewing.policy';
 import { ViewingQueryDto } from './dto/viewing-input.dto';
 import { projectViewingProposal } from './viewing-workflow-projection';
+import {
+  ApplicationListingAccess,
+  actorUserId,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
 
 @Injectable()
 export class ViewingWorkflowHistoryQueryService {
@@ -14,16 +19,22 @@ export class ViewingWorkflowHistoryQueryService {
     private readonly prisma: PrismaService,
     private readonly access: ApplicationViewingAccessService,
     private readonly clock: ViewingClock,
+    private readonly listings: ApplicationListingAccess,
   ) {}
 
   proposals(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     side: ViewingAudience,
     query: ViewingQueryDto,
     proposalId?: string,
   ) {
-    return this.prisma.$transaction(
+    const userId = actorUserId(actor);
+    return this.listings.read(
+      actor,
+      side,
+      applicationId,
+      async () => {},
       async (tx) => {
         await this.access.authorize(tx, applicationId, userId, side);
         const asOf = this.clock.now();
@@ -155,7 +166,6 @@ export class ViewingWorkflowHistoryQueryService {
               },
             };
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 }

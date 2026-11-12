@@ -1,3 +1,4 @@
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import {
   BadRequestException,
   CanActivate,
@@ -30,7 +31,7 @@ export class ApplicationDocumentUploadGuard implements CanActivate {
     await this.documents.authorizeUpload(
       applicationId,
       requestId,
-      request.user.id,
+      sessionAuthorityFromRequest(request),
     );
     return true;
   }

@@ -1,29 +1,43 @@
 import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
 import { clearE2EData } from './e2e-cleanup';
+import { applyCanonicalSharedE2EProcessEnv } from './e2e-shared-test-env';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
+import { PrismaClient } from '../src/generated/prisma/client';
+import { randomUUID } from 'node:crypto';
+import { Server } from 'node:http';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
 import request, { type Response } from 'supertest';
 import type { UploadApiResponse } from 'cloudinary';
 import { AppModule } from '../src/app.module';
-import type { EnvironmentVariables } from '../src/config/env.validation';
 import {
   ApplicationStatus,
   ListingStatus,
 } from '../src/generated/prisma/enums';
 import { ApplicationsService } from '../src/applications/applications.service';
 import { CloudinaryService } from '../src/listing-images/cloudinary.service';
+import { ListingCreation } from '../src/listings/listing-creation';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   assertSafeE2EDatabaseUrl,
   getE2EDatabaseName,
 } from './e2e-database-safety';
+import {
+  compactWorkspaceListingDisplayOrder,
+  createDraftListingForProvider,
+  createPublishedListingForProvider,
+  ensurePersonalWorkspaceForProvider,
+  resolveProviderWorkspace,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import {
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 
 type RequestTarget = Parameters<typeof request>[0];
-type PgSessionStore = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 type RegisterPayload = {
   name: string;
@@ -80,7 +94,6 @@ const userPassword = 'StrongPass123';
 
 let app: INestApplication | undefined;
 let prisma: PrismaService | undefined;
-let sessionStore: PgSessionStore | undefined;
 let cloudinaryStub: CloudinaryServiceStub | undefined;
 let emailSequence = 0;
 
@@ -90,31 +103,14 @@ function useE2eEnvironment(): void {
     throw new Error('E2E_DATABASE_URL is required for destructive E2E tests.');
   }
 
-  const e2eDatabaseName = getE2EDatabaseName(databaseUrl);
-
   if (process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true') {
     throw new Error(
       'E2E_DATABASE_ALLOW_RESET=true is required for destructive E2E tests.',
     );
   }
 
-  process.env['NODE_ENV'] = 'test';
-  process.env['PORT'] = '3000';
-  process.env['DATABASE_URL'] = databaseUrl;
-  if (getE2EDatabaseName(process.env['DATABASE_URL']) !== e2eDatabaseName) {
-    throw new Error(
-      'DATABASE_URL and E2E_DATABASE_URL must target the same E2E database.',
-    );
-  }
+  applyCanonicalSharedE2EProcessEnv();
   process.env['SESSION_SECRET'] = sessionSecret;
-  process.env['FRONTEND_URL'] = 'http://localhost:3001';
-  process.env['OPENAI_API_KEY'] = 'e2e-openai-api-key';
-  process.env['OPENAI_LISTING_MODEL'] = 'e2e-listing-model';
-  process.env['OPENAI_TRANSCRIPTION_MODEL'] = 'e2e-transcription-model';
-  process.env['AI_RATE_LIMIT_WINDOW_MS'] = '60000';
-  process.env['AI_TEXT_RATE_LIMIT'] = '10';
-  process.env['AI_PDF_RATE_LIMIT'] = '3';
-  process.env['AI_AUDIO_RATE_LIMIT'] = '3';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -203,9 +199,8 @@ async function seedListingImages(listingId: string, count: number) {
     );
   }
 
-  await getPrisma().listing.update({
-    where: { id: listingId },
-    data: { photos: images.map((image) => image.secureUrl) },
+  await updateListingForProvider(getPrisma(), listingId, {
+    photos: images.map((image) => image.secureUrl),
   });
 
   return images;
@@ -261,20 +256,20 @@ function providerListingOrder(body: unknown): ProviderListingOrderItem[] {
   });
 }
 
-async function createPublishedListing(providerId: string) {
-  const maxOrder = await getPrisma().listing.aggregate({
-    where: { providerId },
-    _max: { displayOrder: true },
-  });
+async function workspaceIdForProvider(providerUserId: string) {
+  await ensurePersonalWorkspaceForProvider(getPrisma(), providerUserId);
+  return (await resolveProviderWorkspace(getPrisma(), providerUserId))
+    .workspaceId;
+}
 
-  return getPrisma().listing.create({
-    data: {
-      providerId,
-      displayOrder: (maxOrder._max.displayOrder ?? 0) + 1,
-      status: ListingStatus.PUBLISHED,
-      city: 'Berlin',
-      title: 'E2E Listing',
-    },
+async function createPublishedListing(
+  providerUserId: string,
+  overrides: Parameters<typeof createPublishedListingForProvider>[2] = {},
+) {
+  await ensurePersonalWorkspaceForProvider(getPrisma(), providerUserId);
+  return createPublishedListingForProvider(getPrisma(), providerUserId, {
+    title: 'E2E Listing',
+    ...overrides,
   });
 }
 
@@ -405,33 +400,12 @@ describe('Backend API E2E', () => {
       }),
     );
 
-    const config = app.get(ConfigService<EnvironmentVariables, true>);
-    const PgSessionStore = connectPgSimple(session);
-
-    sessionStore = new PgSessionStore({
-      conString: config.getOrThrow<string>('DATABASE_URL'),
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-
-    app.use(
-      session({
-        store: sessionStore,
-        secret: config.getOrThrow<string>('SESSION_SECRET'),
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: {
-          httpOnly: true,
-          secure: false,
-          sameSite: 'lax',
-        },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
 
     await app.init();
+    // Own the server lifecycle so concurrent SuperTest requests do not each
+    // register startup listeners on an implicitly started server.
+    await app.listen(0, '127.0.0.1');
     prisma = app.get(PrismaService);
     await clearDatabase();
   });
@@ -442,16 +416,21 @@ describe('Backend API E2E', () => {
   });
 
   afterAll(async () => {
-    if (prisma) {
-      await clearDatabase();
-    }
-
     if (app) {
       await app.close();
+      app = undefined;
     }
-
-    if (sessionStore) {
-      await Promise.resolve(sessionStore.close());
+    prisma = undefined;
+    const databaseUrl = process.env['E2E_DATABASE_URL'];
+    if (databaseUrl && process.env['E2E_DATABASE_ALLOW_RESET'] === 'true') {
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const client = new PrismaClient({ adapter: new PrismaPg(pool) });
+      try {
+        await clearE2EData(client);
+      } finally {
+        await client.$disconnect();
+        await pool.end();
+      }
     }
   });
 
@@ -463,6 +442,26 @@ describe('Backend API E2E', () => {
     const body = responseBody(response);
     expect(body).toMatchObject({ status: 'ok' });
     expect(typeof body['timestamp']).toBe('string');
+  });
+
+  it('keeps server listeners stable across concurrent requests', async () => {
+    const server = getServer();
+    if (!(server instanceof Server)) {
+      throw new Error('Expected the application HTTP server.');
+    }
+    const events = ['listening', 'error', 'close'] as const;
+    const counts = () => events.map((event) => server.listenerCount(event));
+    const before = counts();
+
+    expect(server.listening).toBe(true);
+    await Promise.all(
+      Array.from({ length: 12 }, () =>
+        request(server).get('/api/v1/health').expect(200),
+      ),
+    );
+
+    expect(server.listening).toBe(true);
+    expect(counts()).toEqual(before);
   });
 
   it('returns readiness when PostgreSQL is reachable', async () => {
@@ -498,7 +497,8 @@ describe('Backend API E2E', () => {
   it('registers a private provider', async () => {
     const payload = providerPayload();
 
-    const response = await request(getServer())
+    const agent = request.agent(getServer());
+    const response = await agent
       .post('/api/v1/auth/register')
       .send(payload)
       .expect(201);
@@ -541,7 +541,7 @@ describe('Backend API E2E', () => {
     const email = uniqueEmail('login');
     const agent = request.agent(getServer());
 
-    await request(getServer())
+    await agent
       .post('/api/v1/auth/register')
       .send(applicantPayload(email))
       .expect(201);
@@ -611,10 +611,13 @@ describe('Backend API E2E', () => {
       });
 
     const providerAgent = request.agent(getServer());
-    await providerAgent
-      .post('/api/v1/auth/register')
-      .send(providerPayload())
-      .expect(201);
+    const provider = safeUserBody(
+      await providerAgent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
     await providerAgent
       .get('/api/v1/me/onboarding-state')
       .expect(200)
@@ -637,16 +640,13 @@ describe('Backend API E2E', () => {
       .send(providerPayload())
       .expect(201);
     const provider = safeUserBody(providerResponse);
-    const listing = await getPrisma().listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
-        city: 'Berlin',
-        title: 'Eligibility E2E Listing',
-        minimumHouseholdNetIncome: 3000,
-        schufaRequired: true,
-      },
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
+    const listing = await createPublishedListing(provider.id, {
+      displayOrder: 1,
+      city: 'Berlin',
+      title: 'Eligibility E2E Listing',
+      minimumHouseholdNetIncome: 3000,
+      schufaRequired: true,
     });
 
     await getPrisma().applicantProfile.create({
@@ -726,15 +726,11 @@ describe('Backend API E2E', () => {
       .post(`/api/v1/listings/${listing.id}/apply`)
       .expect(409);
 
-    const secondListing = await getPrisma().listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 2,
-        status: ListingStatus.PUBLISHED,
-        city: 'Berlin',
-        title: 'Eligibility Recalculation Listing',
-        minimumHouseholdNetIncome: 3000,
-      },
+    const secondListing = await createPublishedListing(provider.id, {
+      displayOrder: 2,
+      city: 'Berlin',
+      title: 'Eligibility Recalculation Listing',
+      minimumHouseholdNetIncome: 3000,
     });
 
     await applicantAgent
@@ -744,9 +740,8 @@ describe('Backend API E2E', () => {
         expect(responseBody(response)['canApply']).toBe(true);
       });
 
-    await getPrisma().listing.update({
-      where: { id: secondListing.id },
-      data: { minimumHouseholdNetIncome: 9000 },
+    await updateListingForProvider(getPrisma(), secondListing.id, {
+      minimumHouseholdNetIncome: 9000,
     });
 
     await applicantAgent
@@ -768,21 +763,19 @@ describe('Backend API E2E', () => {
     await createEligibleApplicantProfile(applicantAgent);
     safeUserBody(applicantResponse);
 
-    const providerResponse = await request(getServer())
+    const providerAgent = request.agent(getServer());
+    const providerResponse = await providerAgent
       .post('/api/v1/auth/register')
       .send(providerPayload())
       .expect(201);
     const provider = safeUserBody(providerResponse);
-    const listing = await getPrisma().listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
-        city: 'Berlin',
-        street: 'Private Street 1',
-        title: 'Applicant Summary Listing',
-        coldRent: 1200,
-      },
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
+    const listing = await createPublishedListing(provider.id, {
+      displayOrder: 1,
+      city: 'Berlin',
+      street: 'Private Street 1',
+      title: 'Applicant Summary Listing',
+      coldRent: 1200,
     });
     await getPrisma().listingImage.create({
       data: {
@@ -891,9 +884,8 @@ describe('Backend API E2E', () => {
       .post('/api/v1/auth/register')
       .send(providerPayload())
       .expect(201);
-    const listing = await createPublishedListing(
-      safeUserBody(providerResponse).id,
-    );
+    const providerId = safeUserBody(providerResponse).id;
+    const listing = await createPublishedListing(providerId);
     const agents = Array.from({ length: 7 }, () => request.agent(getServer()));
 
     await Promise.all(
@@ -970,9 +962,9 @@ describe('Backend API E2E', () => {
       .post('/api/v1/auth/register')
       .send(providerPayload())
       .expect(201);
-    const listing = await createPublishedListing(
-      safeUserBody(providerResponse).id,
-    );
+    const providerId = safeUserBody(providerResponse).id;
+    await bindProviderWorkspaceHeader(getPrisma(), providerId, providerAgent);
+    const listing = await createPublishedListing(providerId);
     const agents = Array.from({ length: 8 }, () => request.agent(getServer()));
 
     await Promise.all(
@@ -1062,9 +1054,16 @@ describe('Backend API E2E', () => {
       .post('/api/v1/provider/listings/' + listing.id + '/promote-waiting')
       .expect(404);
 
+    const providerActor = await providerActorFor(getPrisma(), providerId);
     const promotionResults = await Promise.all([
-      getApplicationsService().promoteWaitingApplications(listing.id),
-      getApplicationsService().promoteWaitingApplications(listing.id),
+      getApplicationsService().promoteWaitingApplications(
+        listing.id,
+        providerActor,
+      ),
+      getApplicationsService().promoteWaitingApplications(
+        listing.id,
+        providerActor,
+      ),
     ]);
     expect(promotionResults).toEqual(expect.arrayContaining([0, 1]));
 
@@ -1123,9 +1122,13 @@ describe('Backend API E2E', () => {
       .post('/api/v1/auth/register')
       .send(providerPayload())
       .expect(201);
-    const otherListing = await createPublishedListing(
-      safeUserBody(otherProviderResponse).id,
+    const otherProvider = safeUserBody(otherProviderResponse);
+    await bindProviderWorkspaceHeader(
+      getPrisma(),
+      otherProvider.id,
+      otherProviderAgent,
     );
+    const otherListing = await createPublishedListing(otherProvider.id);
     await agents[0]
       .post(`/api/v1/listings/${otherListing.id}/apply`)
       .expect(201);
@@ -1173,12 +1176,20 @@ describe('Backend API E2E', () => {
       .send(providerPayload())
       .expect(201);
     const provider = safeUserBody(providerResponse);
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
 
     const otherProviderAgent = request.agent(getServer());
-    await otherProviderAgent
-      .post('/api/v1/auth/register')
-      .send(providerPayload())
-      .expect(201);
+    const otherProvider = safeUserBody(
+      await otherProviderAgent
+        .post('/api/v1/auth/register')
+        .send(providerPayload())
+        .expect(201),
+    );
+    await bindProviderWorkspaceHeader(
+      getPrisma(),
+      otherProvider.id,
+      otherProviderAgent,
+    );
 
     const applicantAgent = request.agent(getServer());
     await applicantAgent
@@ -1224,7 +1235,7 @@ describe('Backend API E2E', () => {
       .expect(401);
     await applicantAgent
       .get(`/api/v1/provider/listings/${listing.id}/images`)
-      .expect(403);
+      .expect(404);
     await otherProviderAgent
       .get(`/api/v1/provider/listings/${listing.id}/images`)
       .expect(404);
@@ -1311,6 +1322,7 @@ describe('Backend API E2E', () => {
       .send(providerPayload())
       .expect(201);
     const provider = safeUserBody(providerResponse);
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
 
     const listing = await createPublishedListing(provider.id);
     const otherListing = await createPublishedListing(provider.id);
@@ -1622,16 +1634,17 @@ describe('Backend API E2E', () => {
           .send(providerPayload())
           .expect(201),
       );
+      await bindProviderWorkspaceHeader(
+        getPrisma(),
+        provider.id,
+        providerAgent,
+      );
 
-      const listing = await getPrisma().listing.create({
-        data: {
-          providerId: provider.id,
-          displayOrder: 1,
-          status: ListingStatus.PUBLISHED,
-          city: 'Berlin',
-          title: 'Eligibility E2E Listing',
-          minimumHouseholdNetIncome: 3000,
-        },
+      const listing = await createPublishedListing(provider.id, {
+        displayOrder: 1,
+        city: 'Berlin',
+        title: 'Eligibility E2E Listing',
+        minimumHouseholdNetIncome: 3000,
       });
 
       await applicantAgent
@@ -1660,44 +1673,45 @@ describe('Backend API E2E', () => {
   });
 
   describe('unpublished listing rejection', () => {
-    it.each([
-      ListingStatus.DRAFT,
-      ListingStatus.PAUSED,
-      ListingStatus.ARCHIVED,
-    ])('rejects applications to a listing with status %s', async (status) => {
-      const applicantAgent = request.agent(getServer());
-      await applicantAgent
-        .post('/api/v1/auth/register')
-        .send(applicantPayload())
-        .expect(201);
-
-      const providerAgent = request.agent(getServer());
-      const provider = safeUserBody(
-        await providerAgent
+    it.each([ListingStatus.DRAFT, ListingStatus.PAUSED, ListingStatus.RETIRED])(
+      'rejects applications to a listing with status %s',
+      async (status) => {
+        const applicantAgent = request.agent(getServer());
+        await applicantAgent
           .post('/api/v1/auth/register')
-          .send(providerPayload())
-          .expect(201),
-      );
+          .send(applicantPayload())
+          .expect(201);
 
-      const listing = await getPrisma().listing.create({
-        data: {
-          providerId: provider.id,
+        const providerAgent = request.agent(getServer());
+        const provider = safeUserBody(
+          await providerAgent
+            .post('/api/v1/auth/register')
+            .send(providerPayload())
+            .expect(201),
+        );
+        await bindProviderWorkspaceHeader(
+          getPrisma(),
+          provider.id,
+          providerAgent,
+        );
+
+        const listing = await createPublishedListing(provider.id, {
           displayOrder: 1,
           status,
           city: 'Berlin',
           title: 'Unpublished Listing',
-        },
-      });
+        });
 
-      await applicantAgent
-        .post(`/api/v1/listings/${listing.id}/apply`)
-        .expect(422);
+        await applicantAgent
+          .post(`/api/v1/listings/${listing.id}/apply`)
+          .expect(422);
 
-      const count = await getPrisma().application.count({
-        where: { listingId: listing.id },
-      });
-      expect(count).toBe(0);
-    });
+        const count = await getPrisma().application.count({
+          where: { listingId: listing.id },
+        });
+        expect(count).toBe(0);
+      },
+    );
   });
 
   it('returns only owned listings with counts limited to ACTIVE applications', async () => {
@@ -1708,11 +1722,18 @@ describe('Backend API E2E', () => {
         .send(providerPayload())
         .expect(201),
     );
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
+    const otherProviderAgent = request.agent(getServer());
     const otherProvider = safeUserBody(
-      await request(getServer())
+      await otherProviderAgent
         .post('/api/v1/auth/register')
         .send(providerPayload())
         .expect(201),
+    );
+    await bindProviderWorkspaceHeader(
+      getPrisma(),
+      otherProvider.id,
+      otherProviderAgent,
     );
     const applicantAgent = request.agent(getServer());
     const firstApplicant = safeUserBody(
@@ -1736,7 +1757,7 @@ describe('Backend API E2E', () => {
     await createPublishedListing(otherProvider.id);
 
     await request(getServer()).get('/api/v1/provider/listings').expect(401);
-    await applicantAgent.get('/api/v1/provider/listings').expect(403);
+    await applicantAgent.get('/api/v1/provider/listings').expect(404);
 
     await getPrisma().application.createMany({
       data: [
@@ -1771,7 +1792,6 @@ describe('Backend API E2E', () => {
 
     expect(body[0]).toMatchObject({
       id: listing.id,
-      providerId: provider.id,
       activeApplicationsCount: 1,
     });
     expect(body[0]).not.toHaveProperty('_count');
@@ -1786,6 +1806,7 @@ describe('Backend API E2E', () => {
         .send(providerPayload())
         .expect(201),
     );
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
     const otherProvider = safeUserBody(
       await request(getServer())
         .post('/api/v1/auth/register')
@@ -1794,23 +1815,15 @@ describe('Backend API E2E', () => {
     );
 
     const first = await createPublishedListing(provider.id);
-    const second = await getPrisma().listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 2,
-        status: ListingStatus.PUBLISHED,
-        city: 'Berlin',
-        title: 'Second Listing',
-      },
+    const second = await createPublishedListing(provider.id, {
+      displayOrder: 2,
+      city: 'Berlin',
+      title: 'Second Listing',
     });
-    const third = await getPrisma().listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 3,
-        status: ListingStatus.PUBLISHED,
-        city: 'Berlin',
-        title: 'Third Listing',
-      },
+    const third = await createPublishedListing(provider.id, {
+      displayOrder: 3,
+      city: 'Berlin',
+      title: 'Third Listing',
     });
     const otherListing = await createPublishedListing(otherProvider.id);
 
@@ -1858,18 +1871,15 @@ describe('Backend API E2E', () => {
         .send(providerPayload())
         .expect(201),
     );
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
     const listings = [];
 
     for (let position = 1; position <= 20; position += 1) {
       listings.push(
-        await getPrisma().listing.create({
-          data: {
-            providerId: provider.id,
-            displayOrder: position,
-            status: ListingStatus.PUBLISHED,
-            city: 'Berlin',
-            title: `Listing ${position}`,
-          },
+        await createPublishedListing(provider.id, {
+          displayOrder: position,
+          city: 'Berlin',
+          title: `Listing ${position}`,
         }),
       );
     }
@@ -1903,10 +1913,9 @@ describe('Backend API E2E', () => {
       .send({ position: 1 })
       .expect(200);
 
-    await providerAgent
-      .post('/api/v1/provider/listings')
-      .send({ title: 'Appended draft' })
-      .expect(201);
+    await createDraftListingForProvider(getPrisma(), provider.id, {
+      title: 'Appended draft',
+    });
 
     const finalListings = await providerAgent
       .get('/api/v1/provider/listings')
@@ -1936,6 +1945,7 @@ describe('Backend API E2E', () => {
         .send(providerPayload())
         .expect(201),
     );
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
     const otherProvider = safeUserBody(
       await request(getServer())
         .post('/api/v1/auth/register')
@@ -1955,29 +1965,24 @@ describe('Backend API E2E', () => {
     ];
 
     for (const listing of gappedListings) {
-      await getPrisma().listing.create({
-        data: {
-          providerId: provider.id,
-          displayOrder: listing.displayOrder,
-          status: ListingStatus.PUBLISHED,
-          city: 'Berlin',
-          title: listing.title,
-        },
+      await createPublishedListing(provider.id, {
+        displayOrder: listing.displayOrder,
+        city: 'Berlin',
+        title: listing.title,
       });
     }
 
-    await getPrisma().listing.create({
-      data: {
-        providerId: otherProvider.id,
-        displayOrder: 13,
-        status: ListingStatus.PUBLISHED,
-        city: 'Berlin',
-        title: 'Other provider listing',
-      },
+    await createPublishedListing(otherProvider.id, {
+      displayOrder: 13,
+      city: 'Berlin',
+      title: 'Other provider listing',
     });
 
     const berlin = await getPrisma().listing.findFirstOrThrow({
-      where: { providerId: provider.id, title: '5-Zimmer-Haus in Berlin' },
+      where: {
+        workspaceId: await workspaceIdForProvider(provider.id),
+        title: '5-Zimmer-Haus in Berlin',
+      },
     });
 
     await providerAgent
@@ -2005,7 +2010,7 @@ describe('Backend API E2E', () => {
     ]);
 
     const persisted = await getPrisma().listing.findMany({
-      where: { providerId: provider.id },
+      where: { workspaceId: await workspaceIdForProvider(provider.id) },
       orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
       select: { id: true, title: true, displayOrder: true },
     });
@@ -2020,7 +2025,7 @@ describe('Backend API E2E', () => {
     );
 
     const isolated = await getPrisma().listing.findMany({
-      where: { providerId: otherProvider.id },
+      where: { workspaceId: await workspaceIdForProvider(otherProvider.id) },
       select: { displayOrder: true },
     });
     expect(isolated.map((listing) => listing.displayOrder)).toEqual([13]);
@@ -2034,6 +2039,7 @@ describe('Backend API E2E', () => {
         .send(providerPayload())
         .expect(201),
     );
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
 
     const seeded = [];
     for (const listing of [
@@ -2043,14 +2049,10 @@ describe('Backend API E2E', () => {
       { title: 'Fourth', displayOrder: 15 },
     ]) {
       seeded.push(
-        await getPrisma().listing.create({
-          data: {
-            providerId: provider.id,
-            displayOrder: listing.displayOrder,
-            status: ListingStatus.PUBLISHED,
-            city: 'Berlin',
-            title: listing.title,
-          },
+        await createPublishedListing(provider.id, {
+          displayOrder: listing.displayOrder,
+          city: 'Berlin',
+          title: listing.title,
         }),
       );
     }
@@ -2111,17 +2113,14 @@ describe('Backend API E2E', () => {
       1, 2, 3, 4,
     ]);
 
-    await getPrisma().listing.update({
-      where: { id: afterMiddleMove[1].id },
-      data: { displayOrder: 20 },
+    await updateListingForProvider(getPrisma(), afterMiddleMove[1].id, {
+      displayOrder: 20,
     });
-    await getPrisma().listing.update({
-      where: { id: afterMiddleMove[2].id },
-      data: { displayOrder: 30 },
+    await updateListingForProvider(getPrisma(), afterMiddleMove[2].id, {
+      displayOrder: 30,
     });
-    await getPrisma().listing.update({
-      where: { id: afterMiddleMove[3].id },
-      data: { displayOrder: 40 },
+    await updateListingForProvider(getPrisma(), afterMiddleMove[3].id, {
+      displayOrder: 40,
     });
 
     await providerAgent
@@ -2141,14 +2140,14 @@ describe('Backend API E2E', () => {
 
     const persistedOrders = (
       await getPrisma().listing.findMany({
-        where: { providerId: provider.id },
+        where: { workspaceId: await workspaceIdForProvider(provider.id) },
         select: { displayOrder: true },
       })
     ).map((listing) => listing.displayOrder);
     expect(new Set(persistedOrders).size).toBe(persistedOrders.length);
-    expect(persistedOrders.sort((left, right) => left - right)).toEqual([
-      1, 2, 3, 4,
-    ]);
+    expect(
+      persistedOrders.sort((left, right) => (left ?? 0) - (right ?? 0)),
+    ).toEqual([1, 2, 3, 4]);
 
     await providerAgent
       .patch(`/api/v1/provider/listings/${first.id}/position`)
@@ -2179,30 +2178,32 @@ describe('Backend API E2E', () => {
         .send(providerPayload())
         .expect(201),
     );
+    await bindProviderWorkspaceHeader(getPrisma(), provider.id, providerAgent);
 
-    await getPrisma().listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
-        city: 'Berlin',
-        title: 'Existing first',
-      },
+    await createPublishedListing(provider.id, {
+      displayOrder: 1,
+      city: 'Berlin',
+      title: 'Existing first',
     });
-    await getPrisma().listing.create({
-      data: {
-        providerId: provider.id,
-        displayOrder: 6,
-        status: ListingStatus.PUBLISHED,
-        city: 'Berlin',
-        title: 'Existing second',
-      },
+    await createPublishedListing(provider.id, {
+      displayOrder: 6,
+      city: 'Berlin',
+      title: 'Existing second',
     });
 
-    await providerAgent
-      .post('/api/v1/provider/listings')
-      .send({ title: 'Appended after gaps' })
-      .expect(201);
+    const workspaceId = (
+      await resolveProviderWorkspace(getPrisma(), provider.id)
+    ).workspaceId;
+    await compactWorkspaceListingDisplayOrder(getPrisma(), workspaceId);
+    const providerActor = await providerActorFor(getPrisma(), provider.id);
+    await app!
+      .get(ListingCreation)
+      .run(
+        providerActor,
+        { title: 'Appended after gaps', city: 'Berlin' },
+        randomUUID(),
+        () => Promise.resolve(),
+      );
 
     const visibleOrder = providerListingOrder(
       (await providerAgent.get('/api/v1/provider/listings').expect(200)).body,
@@ -2236,9 +2237,14 @@ describe('Backend API E2E', () => {
           .send(providerPayload())
           .expect(201),
       );
+      await bindProviderWorkspaceHeader(
+        getPrisma(),
+        provider.id,
+        providerAgent,
+      );
 
       const listing = await createPublishedListing(provider.id);
-      return { applicantAgent, applicant, providerAgent, listing };
+      return { applicantAgent, applicant, providerAgent, provider, listing };
     }
 
     function applicationIdFromResponse(response: Response): string {
@@ -2291,6 +2297,11 @@ describe('Backend API E2E', () => {
           .post('/api/v1/auth/register')
           .send(providerPayload())
           .expect(201),
+      );
+      await bindProviderWorkspaceHeader(
+        getPrisma(),
+        provider.id,
+        providerAgent,
       );
       const listing = await createPublishedListing(provider.id);
       const agents = Array.from({ length: 7 }, () =>
@@ -2435,12 +2446,12 @@ describe('Backend API E2E', () => {
         .expect(200);
 
       await providerAgent
-        .patch(`/api/v1/provider/listings/${listing.id}/archive`)
+        .patch(`/api/v1/provider/listings/${listing.id}/retire`)
         .expect(200);
 
       await applicantAgent
         .post(`/api/v1/listings/${listing.id}/apply`)
-        .expect(422);
+        .expect(404);
 
       const count = await getPrisma().application.count({
         where: { listingId: listing.id },
@@ -2452,9 +2463,8 @@ describe('Backend API E2E', () => {
       const { applicantAgent, applicant, listing } =
         await createEligibleApplicantAndListing();
 
-      await getPrisma().listing.update({
-        where: { id: listing.id },
-        data: { minimumHouseholdNetIncome: 3000 },
+      await updateListingForProvider(getPrisma(), listing.id, {
+        minimumHouseholdNetIncome: 3000,
       });
       await getPrisma().applicantProfile.update({
         where: { applicantId: applicant.id },
@@ -2532,7 +2542,7 @@ describe('Backend API E2E', () => {
     });
 
     it('rate limits rapid application cycles per applicant and listing', async () => {
-      const { applicantAgent, applicant, listing } =
+      const { applicantAgent, applicant, provider, listing } =
         await createEligibleApplicantAndListing();
 
       const firstResponse = await applicantAgent
@@ -2577,7 +2587,7 @@ describe('Backend API E2E', () => {
         }),
       ).toBe(2);
 
-      const otherListing = await createPublishedListing(listing.providerId);
+      const otherListing = await createPublishedListing(provider.id);
       await applicantAgent
         .post(`/api/v1/listings/${otherListing.id}/apply`)
         .expect(201);

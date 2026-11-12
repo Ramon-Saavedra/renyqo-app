@@ -1,7 +1,6 @@
-import {
-  NotFoundException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { unitSession } from '../../test/unit-workspace-authority';
+import { NotFoundException } from '@nestjs/common';
+import type { ApplicantListingAccess } from '../listings/applicant-listing-access';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { ApplicantProfile, Listing } from '../generated/prisma/client';
@@ -16,11 +15,15 @@ import { EligibilityService } from './eligibility.service';
 
 const LISTING_ID = '00000000-0000-4000-8000-000000000001';
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000002';
-const PROVIDER_ID = '00000000-0000-4000-8000-000000000003';
 
 const makeListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
-  providerId: PROVIDER_ID,
+  workspaceId: '00000000-0000-4000-8000-000000000010',
+  createdByMembershipId: '00000000-0000-4000-8000-000000000011',
+  responsibleMembershipId: '00000000-0000-4000-8000-000000000011',
+  revision: 1,
+  assignmentSequence: 1,
+  retiredAt: null,
   status: ListingStatus.PUBLISHED,
   city: 'Berlin',
   zip: '10115',
@@ -80,10 +83,15 @@ describe('EligibilityService canonical contract', () => {
   const applicantProfile = {
     findUnique: jest.fn<(args: unknown) => Promise<ApplicantProfile | null>>(),
   };
-  const service = new EligibilityService({
-    listing,
-    applicantProfile,
-  } as unknown as PrismaService);
+  const service = new EligibilityService(
+    {
+      publicListingProjection: listing,
+      applicantProfile,
+    } as unknown as PrismaService,
+    {
+      assertPrincipal: () => Promise.resolve(),
+    } as unknown as ApplicantListingAccess,
+  );
   beforeEach(() => {
     jest.clearAllMocks();
     listing.findUnique.mockResolvedValue(makeListing());
@@ -94,7 +102,7 @@ describe('EligibilityService canonical contract', () => {
     listing.findUnique.mockResolvedValue(
       makeListing({ minimumHouseholdNetIncome: 5000 }),
     );
-    const result = await service.check(LISTING_ID, APPLICANT_ID);
+    const result = await service.check(LISTING_ID, unitSession(APPLICANT_ID));
     expect(result).toMatchObject({
       canApply: false,
       result: 'NO_MATCH',
@@ -108,15 +116,9 @@ describe('EligibilityService canonical contract', () => {
   });
   it('requires an existing published listing', async () => {
     listing.findUnique.mockResolvedValue(null);
-    await expect(service.check(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-      NotFoundException,
-    );
-    listing.findUnique.mockResolvedValue(
-      makeListing({ status: ListingStatus.DRAFT }),
-    );
-    await expect(service.check(LISTING_ID, APPLICANT_ID)).rejects.toThrow(
-      UnprocessableEntityException,
-    );
+    await expect(
+      service.check(LISTING_ID, unitSession(APPLICANT_ID)),
+    ).rejects.toThrow(NotFoundException);
   });
   it.each([
     ['no requirements', {}, {}, 'MATCH', true],

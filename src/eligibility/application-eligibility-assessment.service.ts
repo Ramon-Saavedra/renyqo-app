@@ -7,6 +7,7 @@ import type {
 } from '../generated/prisma/client';
 import { EligibilityAssessmentTrigger } from '../generated/prisma/enums';
 import { ListingCriteriaRevisionService } from './listing-criteria-revision.service';
+import type { ListingEligibilityState } from './profile-eligibility-evaluator';
 import {
   evaluateProfile,
   PROFILE_EVALUATOR_VERSION,
@@ -18,7 +19,7 @@ export class ApplicationEligibilityAssessmentService {
   async record(
     tx: Prisma.TransactionClient,
     applicationId: string,
-    listing: Listing,
+    listing: ListingEligibilityState,
     profile: ApplicantProfile | null,
     trigger: EligibilityAssessmentTrigger,
     actorUserId?: string,

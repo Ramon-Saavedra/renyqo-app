@@ -5,7 +5,12 @@ import { ListingResponseMapper } from './listing-response.mapper';
 
 const listing = {
   id: 'listing-id',
-  providerId: 'provider-id',
+  workspaceId: '00000000-0000-4000-8000-000000000010',
+  createdByMembershipId: '00000000-0000-4000-8000-000000000011',
+  responsibleMembershipId: '00000000-0000-4000-8000-000000000011',
+  revision: 1,
+  assignmentSequence: 1,
+  retiredAt: null,
   status: 'DRAFT',
   city: 'Berlin',
   zip: '10115',
@@ -63,6 +68,29 @@ describe('ListingResponseMapper', () => {
         isCover: true,
       },
     ]);
+  });
+
+  it('serializes only declared provider fields, including when Prisma grows', () => {
+    const result = mapper.toListingResponse({
+      ...listing,
+      internalSecret: 'private',
+      _count: { applications: 1 },
+    } as typeof listing);
+    const json = JSON.parse(JSON.stringify(result)) as Record<string, unknown>;
+    for (const field of [
+      'assignmentSequence',
+      'retiredAt',
+      'displayOrder',
+      'internalSecret',
+      '_count',
+    ])
+      expect(json).not.toHaveProperty(field);
+    expect(json).toMatchObject({
+      id: listing.id,
+      workspaceId: listing.workspaceId,
+      responsibleMembershipId: listing.responsibleMembershipId,
+      revision: 1,
+    });
   });
 
   it('preserves exact address exposure options', () => {

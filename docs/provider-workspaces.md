@@ -1,9 +1,12 @@
 # Provider Workspace foundation — Phase 4.5.1
 
-This is an additive, dormant foundation. `ProviderWorkspacesModule` is registered
-but has no controllers or exports. Existing provider registration, authentication,
-listing ownership, delivery and application workflows are unchanged. Nothing in
-this phase grants organization access or activates a commercial plan.
+This page records the additive Phase 4.5.1 foundation. Its establishment,
+conversion and lifecycle write components remain private and dormant.
+`ProviderWorkspacesModule` now also exposes read-only workspace discovery through
+`GET /api/v1/provider/workspaces`; it exports no mutation providers. Current
+Listing ownership, authorization and delivery boundaries are documented in the
+[Phase 4.5.5 cutover](listing-workspace-cutover.md). No foundation or discovery
+operation grants organization access or activates a commercial plan.
 
 ## Structures and canonical authority
 
@@ -78,15 +81,9 @@ reverse kind conversion and profile-history retention are not implemented here.
 
 ## Integration contracts left intact
 
-The exclusive future listing relation is immutable `Listing.workspaceId` →
-`ProviderWorkspace.id`. No second column or writable legacy fallback is added to
-current listings. Workspace conversion preserves workspace/member/allocation IDs;
-cross-workspace listing reparenting is not supported.
+The immutable listing relation is `Listing.workspaceId` → `ProviderWorkspace.id`. Phase 4.5.5 removed `Listing.providerId`; creator attribution and responsibility are same-workspace membership references. Workspace conversion preserves workspace/member/allocation IDs; cross-workspace listing reparenting is not supported.
 
-The assigned cutover must replace provider-user predicates, ordering locks,
-verification SQL authorization, read models, images, documents, notifications and
-realtime together. Existing `providerType`, `companyName`, `providerId`, User role,
-authVersion/session grants and all current lifecycle/fairness rules stay unchanged.
+The coordinated [Listing cutover](listing-workspace-cutover.md) replaces provider-user predicates, ordering locks, verification SQL authorization and consumer access together. Provider operational routes require explicit `x-workspace-id` selection; `GET /api/v1/provider/workspaces` discovers only the authenticated user's ACTIVE memberships in ACTIVE workspaces. Existing `providerType`, `companyName`, global User role, authVersion/session grants and application lifecycle/fairness rules remain separate from workspace ownership.
 
 ## Validation
 

@@ -19,20 +19,21 @@ describe('ListingInputRules', () => {
   });
 
   it('builds create data with default deposit months and omits empty values', () => {
-    const result = rules.buildCreateData('provider-id', {
+    const result = rules.buildCreateData({
       city: ' Berlin ',
       title: '',
       coldRent: 1200,
     });
 
     expect(result).toMatchObject({
-      providerId: 'provider-id',
       city: ' Berlin ',
       coldRent: 1200,
       deposit: 2400,
       depositMonths: 2,
     });
     expect(result).not.toHaveProperty('title');
+    expect(result).not.toHaveProperty('providerId');
+    expect(result).not.toHaveProperty('workspaceId');
   });
 
   it('preserves explicitly cleared eligibility fields on update', () => {

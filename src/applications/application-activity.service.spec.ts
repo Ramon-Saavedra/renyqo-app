@@ -1,3 +1,13 @@
+import {
+  unitContext,
+  unitProvider,
+  unitSession,
+} from '../../test/unit-workspace-authority';
+import type {
+  ApplicationActor,
+  ApplicationListingAccess,
+} from '../listings/application-listing-access';
+import type { AuthorizationContext } from '../provider-authorization/domain/authorization.types';
 import { ApplicationOutboxProducer } from '../outbox/application-outbox.producer';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ApplicationActivity, Prisma } from '../generated/prisma/client';
@@ -8,6 +18,8 @@ import {
   ApplicationRejectionReason,
   ApplicationStatus,
 } from '../generated/prisma/enums';
+import { providerListingWhere } from '../provider-authorization/provider-listing-access';
+import { providerApplicationIsVisible } from './application-process.policy';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplicationActivityService } from './application-activity.service';
 
@@ -28,6 +40,34 @@ const makeActivity = (
   ...overrides,
 });
 
+function loadApplication(
+  row: {
+    applicantId: string;
+    status: ApplicationStatus;
+    activeAt: Date | null;
+  } | null,
+) {
+  return (args?: unknown) => {
+    if (!row) return Promise.resolve(null);
+    const where = (
+      args as {
+        where?: {
+          id?: string;
+          applicantId?: string;
+          listing?: unknown;
+          OR?: unknown;
+        };
+      }
+    )?.where;
+    if (where?.id && where.id !== APPLICATION_ID) return Promise.resolve(null);
+    if (where?.applicantId && where.applicantId !== row.applicantId)
+      return Promise.resolve(null);
+    if (where && 'listing' in where && !providerApplicationIsVisible(row))
+      return Promise.resolve(null);
+    return Promise.resolve({ id: APPLICATION_ID });
+  };
+}
+
 describe('ApplicationActivityService', () => {
   let service: ApplicationActivityService;
   let prismaMock: {
@@ -39,13 +79,8 @@ describe('ApplicationActivityService', () => {
       ) => Promise<ApplicationActivity>
     >;
     application: {
-      findUnique: jest.MockedFunction<
-        (args?: unknown) => Promise<{
-          applicantId: string;
-          status: ApplicationStatus;
-          activeAt: Date | null;
-          listing: { providerId: string };
-        } | null>
+      findFirst: jest.MockedFunction<
+        (args?: unknown) => Promise<{ id: string } | null>
       >;
     };
     applicationActivity: {
@@ -62,12 +97,14 @@ describe('ApplicationActivityService', () => {
   };
 
   beforeEach(() => {
+    const findApplication =
+      jest.fn<(args?: unknown) => Promise<{ id: string } | null>>();
     prismaMock = {
       $transaction: jest.fn(async (operation) =>
         operation(prismaMock as never),
       ),
       application: {
-        findUnique: jest.fn(),
+        findFirst: findApplication,
       },
       applicationActivity: {
         create: jest.fn<(args?: unknown) => Promise<ApplicationActivity>>(),
@@ -84,16 +121,35 @@ describe('ApplicationActivityService', () => {
       {
         activity: jest.fn(() => Promise.resolve()),
       },
+      {
+        read: (
+          _actor: ApplicationActor,
+          audience: 'provider' | 'applicant',
+          _id: string,
+          _policy: unknown,
+          produce: (
+            tx: Prisma.TransactionClient,
+            listingId: string,
+            context?: AuthorizationContext,
+          ) => Promise<unknown>,
+        ) =>
+          produce(
+            prismaMock as never,
+            'listing',
+            audience === 'provider' ? unitContext('provider-id') : undefined,
+          ),
+      } as unknown as ApplicationListingAccess,
     );
   });
 
   it('allowlists viewing identifiers, timestamps and revisions without notes or internal fields', async () => {
-    prismaMock.application.findUnique.mockResolvedValue({
-      applicantId: 'applicant',
-      status: ApplicationStatus.ACTIVE,
-      activeAt: new Date(),
-      listing: { providerId: 'provider' },
-    });
+    prismaMock.application.findFirst.mockImplementation(
+      loadApplication({
+        applicantId: 'applicant',
+        status: ApplicationStatus.ACTIVE,
+        activeAt: new Date(),
+      }),
+    );
     prismaMock.applicationActivity.findMany.mockResolvedValue([
       makeActivity({
         type: ApplicationActivityType.VIEWING_PROPOSED,
@@ -120,7 +176,7 @@ describe('ApplicationActivityService', () => {
     const timeline = await service.findForAudience(
       APPLICATION_ID,
       ApplicationActivityVisibility.PROVIDER,
-      'provider',
+      unitProvider('provider'),
     );
     expect(timeline[0].payload).toEqual({
       viewingId: ACTOR_ID,
@@ -227,19 +283,32 @@ describe('ApplicationActivityService', () => {
         visibility: ApplicationActivityVisibility.APPLICANT,
       }),
     ];
-    prismaMock.applicationActivity.findMany.mockResolvedValue(activities);
-    prismaMock.application.findUnique.mockResolvedValue({
-      applicantId: 'applicant-id',
-      status: ApplicationStatus.ACTIVE,
-      activeAt: new Date('2026-09-28T11:00:00.000Z'),
-      listing: { providerId: 'provider-id' },
-    });
+    prismaMock.applicationActivity.findMany.mockImplementation(
+      (args?: unknown) => {
+        const allowed = (
+          args as {
+            where?: { visibility?: { in?: ApplicationActivityVisibility[] } };
+          }
+        )?.where?.visibility?.in;
+        if (!allowed) return Promise.resolve(activities);
+        return Promise.resolve(
+          activities.filter((row) => allowed.includes(row.visibility)),
+        );
+      },
+    );
+    prismaMock.application.findFirst.mockImplementation(
+      loadApplication({
+        applicantId: 'applicant-id',
+        status: ApplicationStatus.ACTIVE,
+        activeAt: new Date('2026-09-28T11:00:00.000Z'),
+      }),
+    );
 
     await expect(
       service.findForAudience(
         APPLICATION_ID,
         ApplicationActivityVisibility.PROVIDER,
-        'provider-id',
+        unitProvider('provider-id'),
       ),
     ).resolves.toEqual([
       {
@@ -275,26 +344,39 @@ describe('ApplicationActivityService', () => {
       orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
     });
 
-    prismaMock.applicationActivity.findMany.mockResolvedValue([
-      makeActivity({ visibility: ApplicationActivityVisibility.APPLICANT }),
-      makeActivity({
-        id: '00000000-0000-4000-8000-000000000004',
-        visibility: ApplicationActivityVisibility.BOTH,
-      }),
-      makeActivity({
-        id: '00000000-0000-4000-8000-000000000005',
-        visibility: ApplicationActivityVisibility.PROVIDER,
-      }),
-      makeActivity({
-        id: '00000000-0000-4000-8000-000000000006',
-        visibility: ApplicationActivityVisibility.INTERNAL,
-      }),
-    ]);
+    prismaMock.applicationActivity.findMany.mockImplementation(
+      (args?: unknown) => {
+        const pool = [
+          makeActivity({ visibility: ApplicationActivityVisibility.APPLICANT }),
+          makeActivity({
+            id: '00000000-0000-4000-8000-000000000004',
+            visibility: ApplicationActivityVisibility.BOTH,
+          }),
+          makeActivity({
+            id: '00000000-0000-4000-8000-000000000005',
+            visibility: ApplicationActivityVisibility.PROVIDER,
+          }),
+          makeActivity({
+            id: '00000000-0000-4000-8000-000000000006',
+            visibility: ApplicationActivityVisibility.INTERNAL,
+          }),
+        ];
+        const allowed = (
+          args as {
+            where?: { visibility?: { in?: ApplicationActivityVisibility[] } };
+          }
+        )?.where?.visibility?.in;
+        if (!allowed) return Promise.resolve(pool);
+        return Promise.resolve(
+          pool.filter((row) => allowed.includes(row.visibility)),
+        );
+      },
+    );
     await expect(
       service.findForAudience(
         APPLICATION_ID,
         ApplicationActivityVisibility.APPLICANT,
-        'applicant-id',
+        unitSession('applicant-id'),
       ),
     ).resolves.toEqual([
       expect.objectContaining({
@@ -319,68 +401,78 @@ describe('ApplicationActivityService', () => {
   });
 
   it('rejects missing and unauthorized audience reads', async () => {
-    prismaMock.application.findUnique.mockResolvedValue(null);
+    prismaMock.application.findFirst.mockImplementation(loadApplication(null));
 
     await expect(
       service.findForAudience(
         APPLICATION_ID,
         ApplicationActivityVisibility.PROVIDER,
-        'provider-id',
+        unitProvider('provider-id'),
       ),
     ).rejects.toThrow('Application not found');
 
-    prismaMock.application.findUnique.mockResolvedValue({
-      applicantId: 'applicant-id',
-      status: ApplicationStatus.ACTIVE,
-      activeAt: new Date('2026-09-28T11:00:00.000Z'),
-      listing: { providerId: 'provider-id' },
-    });
+    prismaMock.application.findFirst.mockImplementation(
+      loadApplication({
+        applicantId: 'applicant-id',
+        status: ApplicationStatus.ACTIVE,
+        activeAt: new Date('2026-09-28T11:00:00.000Z'),
+      }),
+    );
+    prismaMock.applicationActivity.findMany.mockResolvedValue([]);
+    await service.findForAudience(
+      APPLICATION_ID,
+      ApplicationActivityVisibility.PROVIDER,
+      unitProvider('provider-id'),
+    );
+    expect(prismaMock.application.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: APPLICATION_ID,
+          listing: providerListingWhere(unitContext('provider-id')),
+        }),
+      }),
+    );
 
-    await expect(
-      service.findForAudience(
-        APPLICATION_ID,
-        ApplicationActivityVisibility.PROVIDER,
-        'other-provider-id',
-      ),
-    ).rejects.toThrow('Application not found');
     await expect(
       service.findForAudience(
         APPLICATION_ID,
         ApplicationActivityVisibility.APPLICANT,
-        'other-applicant-id',
+        unitSession('other-applicant-id'),
       ),
     ).rejects.toThrow('Application not found');
 
-    prismaMock.application.findUnique.mockResolvedValue({
-      applicantId: 'applicant-id',
-      status: ApplicationStatus.WAITING,
-      activeAt: null,
-      listing: { providerId: 'provider-id' },
-    });
+    prismaMock.application.findFirst.mockImplementation(
+      loadApplication({
+        applicantId: 'applicant-id',
+        status: ApplicationStatus.WAITING,
+        activeAt: null,
+      }),
+    );
 
     await expect(
       service.findForAudience(
         APPLICATION_ID,
         ApplicationActivityVisibility.PROVIDER,
-        'provider-id',
+        unitProvider('provider-id'),
       ),
     ).rejects.toThrow('Application not found');
   });
 
   it('allows provider reads for applications that were previously active', async () => {
-    prismaMock.application.findUnique.mockResolvedValue({
-      applicantId: 'applicant-id',
-      status: ApplicationStatus.WITHDRAWN,
-      activeAt: new Date('2026-09-28T11:00:00.000Z'),
-      listing: { providerId: 'provider-id' },
-    });
+    prismaMock.application.findFirst.mockImplementation(
+      loadApplication({
+        applicantId: 'applicant-id',
+        status: ApplicationStatus.WITHDRAWN,
+        activeAt: new Date('2026-09-28T11:00:00.000Z'),
+      }),
+    );
     prismaMock.applicationActivity.findMany.mockResolvedValue([]);
 
     await expect(
       service.findForAudience(
         APPLICATION_ID,
         ApplicationActivityVisibility.PROVIDER,
-        'provider-id',
+        unitProvider('provider-id'),
       ),
     ).resolves.toEqual([]);
   });
@@ -388,37 +480,39 @@ describe('ApplicationActivityService', () => {
   it.each([ApplicationStatus.REJECTED, ApplicationStatus.WITHDRAWN])(
     'denies provider reads for never-active %s applications',
     async (status) => {
-      prismaMock.application.findUnique.mockResolvedValue({
-        applicantId: 'applicant-id',
-        status,
-        activeAt: null,
-        listing: { providerId: 'provider-id' },
-      });
+      prismaMock.application.findFirst.mockImplementation(
+        loadApplication({
+          applicantId: 'applicant-id',
+          status,
+          activeAt: null,
+        }),
+      );
 
       await expect(
         service.findForAudience(
           APPLICATION_ID,
           ApplicationActivityVisibility.PROVIDER,
-          'provider-id',
+          unitProvider('provider-id'),
         ),
       ).rejects.toThrow('Application not found');
     },
   );
 
   it('allows provider reads for previously active rejected applications', async () => {
-    prismaMock.application.findUnique.mockResolvedValue({
-      applicantId: 'applicant-id',
-      status: ApplicationStatus.REJECTED,
-      activeAt: new Date('2026-09-28T11:00:00.000Z'),
-      listing: { providerId: 'provider-id' },
-    });
+    prismaMock.application.findFirst.mockImplementation(
+      loadApplication({
+        applicantId: 'applicant-id',
+        status: ApplicationStatus.REJECTED,
+        activeAt: new Date('2026-09-28T11:00:00.000Z'),
+      }),
+    );
     prismaMock.applicationActivity.findMany.mockResolvedValue([]);
 
     await expect(
       service.findForAudience(
         APPLICATION_ID,
         ApplicationActivityVisibility.PROVIDER,
-        'provider-id',
+        unitProvider('provider-id'),
       ),
     ).resolves.toEqual([]);
   });

@@ -1,4 +1,8 @@
 import {
+  ProviderListingAccess,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
+import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -7,7 +11,6 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import type { Prisma } from '../generated/prisma/client';
 import { VerificationProvenance } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationDocumentAccessService } from './application-document-access.service';
 import { VerificationCommandReceiptService } from './verification-command-receipt.service';
 import {
@@ -65,101 +68,108 @@ function isUniqueConflict(error: unknown): boolean {
 export class VerificationDecisionService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly provider: ProviderListingAccess,
     private readonly access: ApplicationDocumentAccessService,
     private readonly receipts: VerificationCommandReceiptService,
   ) {}
 
   execute(
     applicationId: string,
-    actorUserId: string,
+    actor: ProviderActor,
     command: DecisionCommand,
     idempotencyKey: string,
   ): Promise<DecisionCommandResult> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await this.access.authorize(tx, applicationId, actorUserId, 'provider');
-      const application = await this.access.lock(tx, applicationId);
-      await this.access.authorize(tx, applicationId, actorUserId, 'provider');
-      const replay = await this.receipts.replay(
-        tx,
-        applicationId,
-        actorUserId,
-        idempotencyKey,
-        this.receipts.hash(command),
-      );
-      if (replay) return replay as unknown as DecisionCommandResult;
-      if (!this.access.canMutate(application))
-        throw new ConflictException(
-          'Documents cannot be changed for this application',
+    return this.provider.mutateApplication(
+      actor,
+      'verification.write',
+      applicationId,
+      async (tx) => {
+        const actorUserId = actor.authority.userId;
+        await this.access.authorize(tx, applicationId, actorUserId, 'provider');
+        const application = await this.access.lock(tx, applicationId);
+        await this.access.authorize(tx, applicationId, actorUserId, 'provider');
+        const replay = await this.receipts.replay(
+          tx,
+          applicationId,
+          actorUserId,
+          idempotencyKey,
+          this.receipts.hash(command),
         );
-      const requirement = await tx.applicationDocumentRequest.findFirst({
-        where: { id: command.requestId, applicationId },
-        select: {
-          id: true,
-          revision: true,
-          lifecycleState: true,
-          currentFile: {
-            select: { id: true, state: true, availableAt: true },
+        if (replay) return replay as unknown as DecisionCommandResult;
+        if (!this.access.canMutate(application))
+          throw new ConflictException(
+            'Documents cannot be changed for this application',
+          );
+        const requirement = await tx.applicationDocumentRequest.findFirst({
+          where: { id: command.requestId, applicationId },
+          select: {
+            id: true,
+            revision: true,
+            lifecycleState: true,
+            currentFile: {
+              select: { id: true, state: true, availableAt: true },
+            },
           },
-        },
-      });
-      if (!requirement)
-        throw new NotFoundException('Document request not found');
-      if (requirement.lifecycleState !== 'OPEN')
-        throw new ConflictException('Requirement is closed');
-      if (requirement.revision !== command.expectedRevision)
-        throw new ConflictException('Requirement revision changed');
-      const current = await tx.verificationDecision.findFirst({
-        where: { requirementId: requirement.id, next: { is: null } },
-        select: { id: true },
-      });
-      if ((current?.id ?? null) !== command.expectedDecisionId)
-        throw new ConflictException('Verification decision changed');
-      const evidenceFileId = this.evidence(command, requirement.currentFile);
-      let created;
-      try {
-        created = await tx.verificationDecision.create({
-          data: {
-            applicationId,
-            requirementId: requirement.id,
-            evidenceFileId,
-            outcome: command.decision,
-            reason: command.reason,
-            actorUserId,
-            scopeRevision: application.verificationScopeRevision,
-            previousDecisionId: command.expectedDecisionId,
-            provenance: VerificationProvenance.NATIVE,
-          },
-          select: { id: true, decidedAt: true },
         });
-      } catch (error) {
-        if (isUniqueConflict(error))
+        if (!requirement)
+          throw new NotFoundException('Document request not found');
+        if (requirement.lifecycleState !== 'OPEN')
+          throw new ConflictException('Requirement is closed');
+        if (requirement.revision !== command.expectedRevision)
+          throw new ConflictException('Requirement revision changed');
+        const current = await tx.verificationDecision.findFirst({
+          where: { requirementId: requirement.id, next: { is: null } },
+          select: { id: true },
+        });
+        if ((current?.id ?? null) !== command.expectedDecisionId)
           throw new ConflictException('Verification decision changed');
-        throw error;
-      }
-      const result: DecisionCommandResult = {
-        scopeRevision: application.verificationScopeRevision,
-        decision: {
-          id: created.id,
-          requestId: requirement.id,
-          evidenceFileId,
-          decision: command.decision,
-          decidedAt: created.decidedAt.toISOString(),
-        },
-        verification: {
-          state: await this.applicationState(tx, applicationId),
-        },
-      };
-      await this.receipts.record(
-        tx,
-        applicationId,
-        actorUserId,
-        idempotencyKey,
-        'DECIDE',
-        this.receipts.hash(command),
-        result,
-      );
-      return result;
-    });
+        const evidenceFileId = this.evidence(command, requirement.currentFile);
+        let created;
+        try {
+          created = await tx.verificationDecision.create({
+            data: {
+              applicationId,
+              requirementId: requirement.id,
+              evidenceFileId,
+              outcome: command.decision,
+              reason: command.reason,
+              actorUserId,
+              scopeRevision: application.verificationScopeRevision,
+              previousDecisionId: command.expectedDecisionId,
+              provenance: VerificationProvenance.NATIVE,
+            },
+            select: { id: true, decidedAt: true },
+          });
+        } catch (error) {
+          if (isUniqueConflict(error))
+            throw new ConflictException('Verification decision changed');
+          throw error;
+        }
+        const result: DecisionCommandResult = {
+          scopeRevision: application.verificationScopeRevision,
+          decision: {
+            id: created.id,
+            requestId: requirement.id,
+            evidenceFileId,
+            decision: command.decision,
+            decidedAt: created.decidedAt.toISOString(),
+          },
+          verification: {
+            state: await this.applicationState(tx, applicationId),
+          },
+        };
+        await this.receipts.record(
+          tx,
+          applicationId,
+          actorUserId,
+          idempotencyKey,
+          'DECIDE',
+          this.receipts.hash(command),
+          result,
+        );
+        return result;
+      },
+    );
   }
 
   async readModel(

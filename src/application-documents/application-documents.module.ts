@@ -1,3 +1,4 @@
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
 import { ApplicationDocumentReadModule } from './application-document-read.module';
 import { VerificationCommandHttpService } from './verification-command-http.service';
 import { ProviderVerificationCommandsController } from './provider-verification-commands.controller';
@@ -16,7 +17,11 @@ import { ProviderDocumentsController } from './provider-documents.controller';
 import { ApplicantDocumentsController } from './applicant-documents.controller';
 
 @Module({
-  imports: [ApplicationDocumentDomainModule, ApplicationDocumentReadModule],
+  imports: [
+    ListingConsumerAccessModule,
+    ApplicationDocumentDomainModule,
+    ApplicationDocumentReadModule,
+  ],
   controllers: [
     ProviderDocumentsController,
     ApplicantDocumentsController,

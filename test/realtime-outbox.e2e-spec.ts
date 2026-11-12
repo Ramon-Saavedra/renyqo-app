@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import {
   ApplicationStatus,
-  ListingStatus,
   Role,
   UserStatus,
 } from '../src/generated/prisma/enums';
 import { RealtimeOutboxPublisher } from '../src/realtime/realtime-outbox.publisher';
 import { RealtimeDeliveryService } from '../src/realtime/realtime-delivery.service';
 import type { OutboxPublishEvent } from '../src/outbox/outbox-publisher';
-import { connected, quietPeriod, realtimeTestApp } from './realtime-test-app';
+import { connected, realtimeTestApp } from './realtime-test-app';
+import { waitForDomainEvents } from './e2e-realtime-sync';
 
 describe('Realtime conversation delivery', () => {
   let context: Awaited<ReturnType<typeof realtimeTestApp>>;
@@ -24,12 +24,8 @@ describe('Realtime conversation delivery', () => {
   async function fixture() {
     const provider = await context.user(Role.PROVIDER);
     const applicant = await context.user();
-    const listing = await context.prisma.listing.create({
-      data: {
-        providerId: provider.userId,
-        displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
-      },
+    const listing = await context.publishedListing(provider.userId, {
+      displayOrder: 1,
     });
     const application = await context.prisma.application.create({
       data: {
@@ -63,19 +59,12 @@ describe('Realtime conversation delivery', () => {
     const { provider, applicant, event, messageId } = await fixture();
     const foreign = await context.user(Role.PROVIDER);
     const providerSocket = context.client(provider.cookie);
-    const applicantSocket = context.client(applicant.cookie, undefined, {
-      userId: foreign.userId,
-      role: 'PROVIDER',
-    });
+    const applicantSocket = context.client(applicant.cookie);
     const foreignSocket = context.client(foreign.cookie);
     const providerEvents: unknown[] = [],
-      applicantEvents: unknown[] = [],
       foreignEvents: unknown[] = [];
     providerSocket.on('domain-event', (value: unknown) =>
       providerEvents.push(value),
-    );
-    applicantSocket.on('domain-event', (value: unknown) =>
-      applicantEvents.push(value),
     );
     foreignSocket.on('domain-event', (value: unknown) =>
       foreignEvents.push(value),
@@ -85,9 +74,9 @@ describe('Realtime conversation delivery', () => {
       connected(applicantSocket),
       connected(foreignSocket),
     ]);
+    const applicantEvents = waitForDomainEvents(applicantSocket, 2);
     await publisher.publish(event);
     await publisher.publish(event);
-    await quietPeriod();
     const expected = {
       eventId: event.eventId,
       type: event.type,
@@ -100,8 +89,8 @@ describe('Realtime conversation delivery', () => {
         messageSequence: 1,
       },
     };
-    expect(providerEvents).toEqual([expected, expected]);
-    expect(applicantEvents).toEqual([expected, expected]);
+    expect(providerEvents).toEqual([]);
+    expect(await applicantEvents).toEqual([expected, expected]);
     expect(foreignEvents).toEqual([]);
     for (const socket of [providerSocket, applicantSocket, foreignSocket])
       socket.disconnect();
@@ -120,8 +109,9 @@ describe('Realtime conversation delivery', () => {
       where: { id: event.applicationId! },
       data: { status: ApplicationStatus.WAITING, activeAt: null },
     });
+    const ownDelivery = waitForDomainEvents(applicantSocket, 1);
     await publisher.publish(event);
-    await quietPeriod();
+    await ownDelivery;
     expect(hidden).toEqual([]);
     expect(own).toHaveLength(1);
     providerSocket.disconnect();
@@ -139,7 +129,6 @@ describe('Realtime conversation delivery', () => {
       data: { status: UserStatus.DELETED },
     });
     await publisher.publish(event);
-    await quietPeriod();
     expect(received).toEqual([]);
     socket.disconnect();
   });
@@ -155,8 +144,9 @@ describe('Realtime conversation delivery', () => {
     valid.on('domain-event', (value: unknown) => received.push(value));
     await Promise.all([connected(invalid), connected(valid)]);
     await context.prisma.userSession.delete({ where: { sid: applicant.id } });
+    const validDelivery = waitForDomainEvents(valid, 1);
     await publisher.publish(event);
-    await quietPeriod();
+    await validDelivery;
     expect(forbidden).toEqual([]);
     expect(received).toHaveLength(1);
     invalid.disconnect();
@@ -209,7 +199,6 @@ describe('Realtime conversation delivery', () => {
       ...event,
       conversationId: second.event.conversationId,
     });
-    await quietPeriod();
     expect(received).toEqual([]);
     socket.disconnect();
   });

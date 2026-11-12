@@ -334,7 +334,7 @@ describe('Application admission', () => {
   it.each([
     ListingStatus.DRAFT,
     ListingStatus.PAUSED,
-    ListingStatus.ARCHIVED,
+    ListingStatus.RETIRED,
     ListingStatus.RENTED,
   ])('does not submit to %s', (status) => {
     expect(evaluate([], expiry, true, status).submissionBlockReason).toBe(
