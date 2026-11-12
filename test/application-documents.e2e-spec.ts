@@ -1,5 +1,6 @@
 import { expectDocumentEvidencePreserved } from './document-requirement-fixture';
-import { clearE2EData } from './e2e-cleanup';
+import { WorkspaceFixture } from './provider-workspaces.fixture';
+import { prismaServiceWithSharedPool } from './e2e-prisma-override';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -70,6 +71,7 @@ function getString(record: Record<string, unknown>, key: string): string {
 }
 
 describe('Application documents E2E', () => {
+  const database = new WorkspaceFixture();
   let app: INestApplication;
   let prisma: PrismaService;
   let server: RequestTarget;
@@ -111,6 +113,11 @@ describe('Application documents E2E', () => {
   }
 
   beforeAll(async () => {
+    // One disposable schema for this suite, replaying the complete migrations.
+    await database.start(null);
+  });
+
+  beforeAll(async () => {
     const url = process.env['E2E_DATABASE_URL'];
     if (!url || process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true') {
       throw new Error('Dedicated E2E database and reset marker required');
@@ -127,7 +134,16 @@ describe('Application documents E2E', () => {
       'arn:aws:guardduty:eu-central-1:111122223333:malware-protection-plan/e2e';
     const module = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(PrismaService)
+      .useValue(
+        prismaServiceWithSharedPool(
+          database.prisma,
+          database.pool,
+          database.schema,
+        ),
+      )
+      .compile();
     tlsDirectory = mkdtempSync(join(tmpdir(), 'renyqo-conversation-tls-'));
     const keyPath = join(tlsDirectory, 'key.pem');
     const certPath = join(tlsDirectory, 'cert.pem');
@@ -208,26 +224,17 @@ describe('Application documents E2E', () => {
     applicationId = application.id;
   });
 
-  afterEach(async () => {
+  afterEach(() => {
+    // Every test owns fresh users/listing/application; retain evidence until the
+    // suite ends instead of racing an uncancelled global TRUNCATE between tests.
     jest.restoreAllMocks();
-    const url = process.env['E2E_DATABASE_URL'];
-    if (
-      !url ||
-      process.env['DATABASE_URL'] !== url ||
-      process.env['NODE_ENV'] !== 'test' ||
-      process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true'
-    ) {
-      throw new Error('Unsafe E2E cleanup configuration');
-    }
-    assertSafeE2EDatabaseUrl(url);
-    if (!prisma) return;
-    await clearE2EData(prisma);
   });
 
   afterAll(async () => {
     try {
       if (app) await app.close();
     } finally {
+      await database.stop();
       if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
@@ -326,10 +333,17 @@ describe('Application documents E2E', () => {
         ],
       })
       .expect(409);
-    expect(await prisma.applicationDocumentRequest.count()).toBe(3);
+    expect(
+      await prisma.applicationDocumentRequest.count({
+        where: { applicationId },
+      }),
+    ).toBe(3);
     expect(
       await prisma.applicationActivity.count({
-        where: { type: ApplicationActivityType.DOCUMENT_REQUESTED },
+        where: {
+          applicationId,
+          type: ApplicationActivityType.DOCUMENT_REQUESTED,
+        },
       }),
     ).toBe(3);
     expect(JSON.stringify(response.body)).not.toMatch(
@@ -347,7 +361,11 @@ describe('Application documents E2E', () => {
       .post(path('provider'))
       .send({ requests: [{ type: 'OTHER', customLabel }] })
       .expect(409);
-    expect(await prisma.applicationDocumentRequest.count()).toBe(1);
+    expect(
+      await prisma.applicationDocumentRequest.count({
+        where: { applicationId },
+      }),
+    ).toBe(1);
   });
 
   it.each([
@@ -361,7 +379,11 @@ describe('Application documents E2E', () => {
       .post(path('provider'))
       .send({ requests: [input] })
       .expect(400);
-    expect(await prisma.applicationDocumentRequest.count()).toBe(0);
+    expect(
+      await prisma.applicationDocumentRequest.count({
+        where: { applicationId },
+      }),
+    ).toBe(0);
   });
 
   it('enforces roles, ownership, cross-application scope and WAITING anonymity before upload', async () => {
@@ -476,13 +498,17 @@ describe('Application documents E2E', () => {
     const download = jest
       .spyOn(storage, 'download')
       .mockImplementation(() => Promise.resolve(new StreamableFile(pdf)));
+    const affectedApplications = [applicationId, secondApplication.id];
     const beforeRequests = await prisma.applicationDocumentRequest.findMany({
+      where: { applicationId: { in: affectedApplications } },
       orderBy: { id: 'asc' },
     });
     const beforeFiles = await prisma.applicationDocumentFile.findMany({
+      where: { request: { applicationId: { in: affectedApplications } } },
       orderBy: { id: 'asc' },
     });
     const beforeActivities = await prisma.applicationActivity.findMany({
+      where: { applicationId: { in: affectedApplications } },
       orderBy: { id: 'asc' },
     });
     await provider.agent
@@ -514,14 +540,21 @@ describe('Application documents E2E', () => {
     expect(put).toHaveBeenCalledTimes(1);
     expect(
       await prisma.applicationDocumentRequest.findMany({
+        where: { applicationId: { in: affectedApplications } },
         orderBy: { id: 'asc' },
       }),
     ).toEqual(beforeRequests);
     expect(
-      await prisma.applicationDocumentFile.findMany({ orderBy: { id: 'asc' } }),
+      await prisma.applicationDocumentFile.findMany({
+        where: { request: { applicationId: { in: affectedApplications } } },
+        orderBy: { id: 'asc' },
+      }),
     ).toEqual(beforeFiles);
     expect(
-      await prisma.applicationActivity.findMany({ orderBy: { id: 'asc' } }),
+      await prisma.applicationActivity.findMany({
+        where: { applicationId: { in: affectedApplications } },
+        orderBy: { id: 'asc' },
+      }),
     ).toEqual(beforeActivities);
     await provider.agent
       .get(
@@ -580,7 +613,11 @@ describe('Application documents E2E', () => {
         contentType: 'application/pdf',
       })
       .expect(400);
-    expect(await prisma.applicationDocumentFile.count()).toBe(0);
+    expect(
+      await prisma.applicationDocumentFile.count({
+        where: { request: { applicationId } },
+      }),
+    ).toBe(0);
   });
 
   it('keeps uploads PROCESSING and inaccessible until clean finalization, with no filename in activity', async () => {
@@ -589,7 +626,10 @@ describe('Application documents E2E', () => {
     expect(file.state).toBe(ApplicationDocumentState.PROCESSING);
     expect(
       await prisma.applicationActivity.count({
-        where: { type: ApplicationActivityType.DOCUMENT_UPLOADED },
+        where: {
+          applicationId,
+          type: ApplicationActivityType.DOCUMENT_UPLOADED,
+        },
       }),
     ).toBe(0);
     await provider.agent
@@ -597,7 +637,7 @@ describe('Application documents E2E', () => {
       .expect(404);
     await finalize(file);
     const activity = await prisma.applicationActivity.findFirstOrThrow({
-      where: { type: ApplicationActivityType.DOCUMENT_UPLOADED },
+      where: { applicationId, type: ApplicationActivityType.DOCUMENT_UPLOADED },
     });
     expect(activity.payload).toEqual({ requestId, documentType: 'SCHUFA' });
     expect(activity.actorUserId).toBeNull();
@@ -630,7 +670,10 @@ describe('Application documents E2E', () => {
       .expect(201);
     expect(
       await prisma.applicationActivity.count({
-        where: { type: ApplicationActivityType.DOCUMENT_REVIEWED },
+        where: {
+          applicationId,
+          type: ApplicationActivityType.DOCUMENT_REVIEWED,
+        },
       }),
     ).toBe(1);
   });
@@ -659,15 +702,24 @@ describe('Application documents E2E', () => {
     expect(uploads.map((response) => response.status).sort()).toEqual([
       201, 409,
     ]);
-    const file = await prisma.applicationDocumentFile.findFirstOrThrow();
+    const file = await prisma.applicationDocumentFile.findFirstOrThrow({
+      where: { request: { applicationId } },
+    });
     jest
       .spyOn(app.get(ApplicationDocumentStorageService), 'evidence')
       .mockResolvedValue('CLEAN');
     await Promise.all([finalize(file), finalize(file), finalize(file)]);
-    expect(await prisma.applicationDocumentFile.count()).toBe(1);
+    expect(
+      await prisma.applicationDocumentFile.count({
+        where: { request: { applicationId } },
+      }),
+    ).toBe(1);
     expect(
       await prisma.applicationActivity.count({
-        where: { type: ApplicationActivityType.DOCUMENT_UPLOADED },
+        where: {
+          applicationId,
+          type: ApplicationActivityType.DOCUMENT_UPLOADED,
+        },
       }),
     ).toBe(1);
   });
@@ -683,7 +735,9 @@ describe('Application documents E2E', () => {
       'fulfilled',
       'rejected',
     ]);
-    const first = await prisma.applicationDocumentRequest.findFirstOrThrow();
+    const first = await prisma.applicationDocumentRequest.findFirstOrThrow({
+      where: { applicationId },
+    });
     const file = await upload(first.id);
     await finalize(file);
     const replacements = await Promise.allSettled([
@@ -694,7 +748,11 @@ describe('Application documents E2E', () => {
       'fulfilled',
       'rejected',
     ]);
-    expect(await prisma.applicationDocumentRequest.count()).toBe(2);
+    expect(
+      await prisma.applicationDocumentRequest.count({
+        where: { applicationId },
+      }),
+    ).toBe(2);
   });
 
   it('rejects replacement before a received document exists', async () => {
@@ -778,7 +836,10 @@ describe('Application documents E2E', () => {
     ).toBe('PROCESSING');
     expect(
       await prisma.applicationActivity.count({
-        where: { type: ApplicationActivityType.DOCUMENT_UPLOADED },
+        where: {
+          applicationId,
+          type: ApplicationActivityType.DOCUMENT_UPLOADED,
+        },
       }),
     ).toBe(1);
   });
@@ -806,7 +867,10 @@ describe('Application documents E2E', () => {
       ).toBe('FAILED');
       expect(
         await prisma.applicationActivity.count({
-          where: { type: ApplicationActivityType.DOCUMENT_UPLOADED },
+          where: {
+            applicationId,
+            type: ApplicationActivityType.DOCUMENT_UPLOADED,
+          },
         }),
       ).toBe(0);
       await applicant.agent
@@ -1056,7 +1120,11 @@ describe('Application documents E2E', () => {
         where: { applicationId },
       }),
     ).toBe(1);
-    expect(await prisma.applicationDocumentFile.count()).toBe(2);
+    expect(
+      await prisma.applicationDocumentFile.count({
+        where: { id: { in: [file.id, second.id] } },
+      }),
+    ).toBe(2);
   });
 
   it('rolls back availability and audit atomically when activity persistence fails', async () => {
@@ -1074,7 +1142,10 @@ describe('Application documents E2E', () => {
     ).toBe('PROCESSING');
     expect(
       await prisma.applicationActivity.count({
-        where: { type: ApplicationActivityType.DOCUMENT_UPLOADED },
+        where: {
+          applicationId,
+          type: ApplicationActivityType.DOCUMENT_UPLOADED,
+        },
       }),
     ).toBe(0);
     await finalize(file);
@@ -1099,7 +1170,9 @@ describe('Application documents E2E', () => {
         contentType: 'application/pdf',
       })
       .expect(503);
-    const failed = await prisma.applicationDocumentFile.findFirstOrThrow();
+    const failed = await prisma.applicationDocumentFile.findFirstOrThrow({
+      where: { request: { applicationId } },
+    });
     expect(failed.state).toBe('FAILED');
     const success = await upload(requestId);
     await finalize(success);
@@ -1110,7 +1183,11 @@ describe('Application documents E2E', () => {
         contentType: 'application/pdf',
       })
       .expect(409);
-    expect(await prisma.applicationDocumentFile.count()).toBe(2);
+    expect(
+      await prisma.applicationDocumentFile.count({
+        where: { request: { applicationId } },
+      }),
+    ).toBe(2);
   });
 
   describe('Document request cancellation and replacement rules', () => {
@@ -1128,12 +1205,18 @@ describe('Application documents E2E', () => {
       );
       expect(
         await prisma.applicationActivity.count({
-          where: { type: ApplicationActivityType.DOCUMENT_REQUEST_CANCELLED },
+          where: {
+            applicationId,
+            type: ApplicationActivityType.DOCUMENT_REQUEST_CANCELLED,
+          },
         }),
       ).toBe(1);
       expect(
         await prisma.applicationActivity.count({
-          where: { type: ApplicationActivityType.DOCUMENT_REQUESTED },
+          where: {
+            applicationId,
+            type: ApplicationActivityType.DOCUMENT_REQUESTED,
+          },
         }),
       ).toBe(1);
       const workspace = await provider.agent
@@ -1241,7 +1324,7 @@ describe('Application documents E2E', () => {
       ]);
       expect(
         await prisma.applicationDocumentRequest.count({
-          where: { closedAt: null },
+          where: { applicationId, closedAt: null },
         }),
       ).toBe(0);
     });
@@ -1253,7 +1336,9 @@ describe('Application documents E2E', () => {
         .post(path('provider', `/document-requests/${requestId}/replacements`))
         .send({})
         .expect(409);
-      const file = await prisma.applicationDocumentFile.findFirstOrThrow();
+      const file = await prisma.applicationDocumentFile.findFirstOrThrow({
+        where: { request: { applicationId } },
+      });
       await finalize(file);
       await provider.agent
         .post(path('provider', `/document-requests/${requestId}/replacements`))

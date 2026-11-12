@@ -6,6 +6,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { randomUUID } from 'node:crypto';
+import { Server } from 'node:http';
 import { Test } from '@nestjs/testing';
 import request, { type Response } from 'supertest';
 import type { UploadApiResponse } from 'cloudinary';
@@ -402,6 +403,9 @@ describe('Backend API E2E', () => {
     installE2eSessionMiddleware(app);
 
     await app.init();
+    // Own the server lifecycle so concurrent SuperTest requests do not each
+    // register startup listeners on an implicitly started server.
+    await app.listen(0, '127.0.0.1');
     prisma = app.get(PrismaService);
     await clearDatabase();
   });
@@ -438,6 +442,26 @@ describe('Backend API E2E', () => {
     const body = responseBody(response);
     expect(body).toMatchObject({ status: 'ok' });
     expect(typeof body['timestamp']).toBe('string');
+  });
+
+  it('keeps server listeners stable across concurrent requests', async () => {
+    const server = getServer();
+    if (!(server instanceof Server)) {
+      throw new Error('Expected the application HTTP server.');
+    }
+    const events = ['listening', 'error', 'close'] as const;
+    const counts = () => events.map((event) => server.listenerCount(event));
+    const before = counts();
+
+    expect(server.listening).toBe(true);
+    await Promise.all(
+      Array.from({ length: 12 }, () =>
+        request(server).get('/api/v1/health').expect(200),
+      ),
+    );
+
+    expect(server.listening).toBe(true);
+    expect(counts()).toEqual(before);
   });
 
   it('returns readiness when PostgreSQL is reachable', async () => {

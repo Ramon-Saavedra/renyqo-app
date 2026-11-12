@@ -163,6 +163,50 @@ Listing lifecycle transitions are guarded. A caller without current workspace/li
 
 Provider detail/mutation DTOs expose only their explicit presentation, requirement, lifecycle timestamp and workspace/creator/responsibility/revision fields. Internal `assignmentSequence`, criteria revision/evidence and raw Prisma fields are excluded. Portfolio responses additionally expose `displayOrder` and `activeApplicationsCount`.
 
+## Listing responsibility and transfer requests
+
+All routes below require a current authenticated User/session, an ACTIVE membership in an ACTIVE workspace and explicit `x-workspace-id`. The header is only a selector; current server-side authority and same-workspace eligibility are revalidated. Responsibility does not grant authority independently of membership/User status.
+
+| Method | Path | Authority |
+| --- | --- | --- |
+| `PATCH` | `/api/v1/provider/listings/:id/responsibility` | OWNER direct reassignment to an eligible ACTIVE same-workspace member |
+| `POST` | `/api/v1/provider/listings/:id/transfer-requests` | Current responsible ACTIVE AGENT requests an eligible ACTIVE same-workspace AGENT |
+| `POST` | `/api/v1/provider/listing-transfer-requests/:id/approve` | OWNER approves and applies responsibility atomically |
+| `POST` | `/api/v1/provider/listing-transfer-requests/:id/reject` | OWNER rejects without changing responsibility |
+| `POST` | `/api/v1/provider/listing-transfer-requests/:id/cancel` | Source AGENT cancels its pending request |
+
+Reassignment accepts `{ targetMembershipId, expectedListingRevision, commandId }`: member and command IDs are UUIDs; the expected revision is an optimistic precondition against the public Listing `revision`. Transfer creation accepts those inputs plus an ISO-8601 `expiresAt`. The three decision routes need no body. The caller-supplied command ID supports request retry identity; it is not a response field. Target acceptance is not required. No implicit cross-workspace reassignment is supported.
+
+Responsibility reassignment returns HTTP `200` with exactly:
+
+```json
+{
+  "listingId": "uuid",
+  "workspaceId": "uuid",
+  "responsibleMembershipId": "uuid",
+  "revision": 2
+}
+```
+
+Assigning the already responsible member with a current revision returns the same shape without advancing revision or creating assignment evidence. Authorization and revision checks still apply to a no-op.
+
+Transfer creation and approve/reject/cancel return HTTP `201` with exactly:
+
+```json
+{
+  "id": "uuid",
+  "listingId": "uuid",
+  "workspaceId": "uuid",
+  "status": "REQUESTED",
+  "sourceMembershipId": "uuid",
+  "targetMembershipId": "uuid",
+  "expiresAt": "2027-01-01T12:00:00.000Z",
+  "createdAt": "2027-01-01T11:00:00.000Z"
+}
+```
+
+Statuses are uppercase `REQUESTED`, `APPROVED`, `REJECTED`, `CANCELLED` or `EXPIRED`; timestamps are ISO-8601 UTC strings. An identical pending creation retry returns the same business response and request identity. Terminal requests cannot complete twice. Expired/stale authority or resource bindings cannot be approved. Responses expose no SQL field names, assignment sequence, stored authority/member epochs, command/correlation IDs or other internal evidence. Existing not-found/forbidden rules and explicit workspace selection apply to every action.
+
 ## AI-Assisted Listing Extraction
 
 Authenticated Providers can request suggestions from free text, a PDF/Exposé, or an audio recording. These endpoints only return a partial, backend-validated prefill; they never create, update, or publish a listing.

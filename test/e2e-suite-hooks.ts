@@ -17,6 +17,8 @@ function skipSharedSuiteFinalizer(testPath: string): boolean {
   if (testPath.endsWith('verification-requirements.e2e-spec.ts')) return true;
   if (testPath.endsWith('application-runtime.e2e-spec.ts')) return true;
   if (testPath.endsWith('application-runtime-api.e2e-spec.ts')) return true;
+  if (testPath.endsWith('application-documents.e2e-spec.ts')) return true;
+  if (testPath.endsWith('listing-assignment-http.e2e-spec.ts')) return true;
   if (testPath.endsWith('workspace-discovery.e2e-spec.ts')) return true;
   if (testPath.endsWith('outbox-foundation.e2e-spec.ts')) return true;
   if (testPath.endsWith('realtime-outbox.e2e-spec.ts')) return true;
