@@ -1,14 +1,10 @@
 import { clearE2EData } from './e2e-cleanup';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { jest } from '@jest/globals';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
-import type { EnvironmentVariables } from '../src/config/env.validation';
 import type { ListingAssistanceFile } from '../src/listing-assistance/listing-assistance-upload.constants';
 import type {
   AiProvider,
@@ -21,10 +17,10 @@ import {
   assertSafeE2EDatabaseUrl,
   getE2EDatabaseName,
 } from './e2e-database-safety';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
 
 type RequestTarget = Parameters<typeof request>[0];
 type RequestAgent = ReturnType<typeof request.agent>;
-type PgSessionStore = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 type RegisterPayload = {
   name: string;
@@ -64,7 +60,6 @@ validWave.writeUInt32LE(2, 40);
 
 let app: INestApplication | undefined;
 let prisma: PrismaService | undefined;
-let sessionStore: PgSessionStore | undefined;
 let providerStub: OpenAiProviderStub | undefined;
 let emailSequence = 0;
 
@@ -228,10 +223,15 @@ async function registeredAgent(
   role: 'applicant' | 'provider',
 ): Promise<RequestAgent> {
   const agent = request.agent(getServer());
-  await agent
+  const response = await agent
     .post('/api/v1/auth/register')
     .send(registrationPayload(role))
     .expect(201);
+  if (role === 'provider') {
+    const id = (response.body as { id?: string }).id;
+    if (!id) throw new Error('Expected provider id');
+    await bindProviderWorkspaceHeader(getPrisma(), id, agent);
+  }
   return agent;
 }
 
@@ -293,25 +293,7 @@ describe('Listing assistance API E2E', () => {
       }),
     );
 
-    const config = app.get(ConfigService<EnvironmentVariables, true>);
-    const PgSessionStore = connectPgSimple(session);
-    sessionStore = new PgSessionStore({
-      conString: config.getOrThrow<string>('DATABASE_URL'),
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store: sessionStore,
-        secret: config.getOrThrow<string>('SESSION_SECRET'),
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { httpOnly: true, secure: false, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     await app.init();
     prisma = app.get(PrismaService);
     await clearDatabase();
@@ -325,10 +307,8 @@ describe('Listing assistance API E2E', () => {
   afterAll(async () => {
     if (prisma) await clearDatabase();
     if (app) await app.close();
-    sessionStore?.close();
     app = undefined;
     prisma = undefined;
-    sessionStore = undefined;
     providerStub = undefined;
   });
 

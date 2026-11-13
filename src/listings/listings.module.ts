@@ -1,3 +1,4 @@
+import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
 import { Module } from '@nestjs/common';
 import { ApplicantListingSummariesModule } from '../applicant-listing-summaries/applicant-listing-summaries.module';
 import { ApplicationsModule } from '../applications/applications.module';
@@ -14,9 +15,13 @@ import { ListingsService } from './listings.service';
 import { ListingOrderingService } from './listing-ordering.service';
 import { ListingInputRules } from './listing-input-rules';
 import { ListingResponseMapper } from './listing-response.mapper';
+import { ListingCreation } from './listing-creation';
+import { ListingConsumerAccessModule } from './listing-consumer-access.module';
 
 @Module({
   imports: [
+    ListingConsumerAccessModule,
+    ProviderAuthorizationModule,
     ListingImagesModule,
     EligibilityModule,
     ApplicationsModule,
@@ -32,6 +37,7 @@ import { ListingResponseMapper } from './listing-response.mapper';
     ListingOrderingService,
     ListingInputRules,
     ListingResponseMapper,
+    ListingCreation,
   ],
   exports: [ListingsService],
 })

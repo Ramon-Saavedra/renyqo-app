@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
 import { Prisma } from '../generated/prisma/client';
 import { ApplicationWorkspaceQueryService } from './application-workspace-query.service';
 import type {
@@ -40,112 +41,99 @@ type RepresentativeCounts = {
 export class ApplicantApplicationOverviewQueryService {
   constructor(private readonly workspace: ApplicationWorkspaceQueryService) {}
 
-  overview(
-    userId: string,
+  async overview(
+    authority: HumanAuthority,
     query: ApplicantApplicationOverviewQuery,
   ): Promise<ApplicantApplicationOverviewPageDto> {
+    await this.workspace.listingAccess.assertActor(authority, 'applicant');
     const group: ApplicantApplicationOverviewGroup = query.group ?? 'ALL';
     const cursor = decodeReadModelCursor(query.cursor, 'applications');
-    const representatives = applicantRepresentativesCte(userId);
+    const representatives = applicantRepresentativesCte(authority.userId);
     const groupFilter = applicantOverviewGroupFilter(group);
     const cursorBoundary = cursor
-      ? Prisma.sql`AND (
-          "createdAt" < ${cursor.value}::timestamptz
-          OR (
-            "createdAt" = ${cursor.value}::timestamptz
-            AND id < ${cursor.id}::uuid
-          )
-        )`
+      ? Prisma.sql`AND ("createdAt"<${cursor.value}::timestamptz OR ("createdAt"=${cursor.value}::timestamptz AND id<${cursor.id}::uuid))`
       : Prisma.empty;
-    return this.workspace.prisma.$transaction(
-      async (tx) => {
-        const asOf = this.workspace.clock.now();
-        const [countsRow] = await tx.$queryRaw<RepresentativeCounts[]>`
-          WITH ${representatives}
-          SELECT
-            COUNT(*)::int AS all,
-            COUNT(*) FILTER (WHERE status = 'active')::int AS active,
-            COUNT(*) FILTER (WHERE status = 'waiting')::int AS waiting,
-            COUNT(*) FILTER (
-              WHERE status IN ('accepted', 'rejected', 'withdrawn')
-            )::int AS done
-          FROM representatives
-        `;
-        const counts = countsRow ?? { all: 0, active: 0, waiting: 0, done: 0 };
-        const totalCount = counts[applicantOverviewGroupCountKey(group)];
-        const representativePage = await tx.$queryRaw<RepresentativeRow[]>`
-          WITH ${representatives}
-          SELECT id, "createdAt", status
-          FROM representatives
-          WHERE ${groupFilter}
-          ${cursorBoundary}
-          ORDER BY "createdAt" DESC, id DESC
-          LIMIT ${query.limit + 1}
-        `;
-        const pageRepresentatives = representativePage.slice(0, query.limit);
-        const rows = pageRepresentatives.length
-          ? await tx.application.findMany({
-              where: { id: { in: pageRepresentatives.map((row) => row.id) } },
-              select: readModelApplicationSelect,
-            })
-          : [];
-        const rowsById = new Map(rows.map((row) => [row.id, row]));
-        const page = pageRepresentatives.map((row) => {
-          const application = rowsById.get(row.id);
-          if (!application) throw new Error('Missing application row');
-          return application;
-        });
-        const sections = await this.workspace.compose(
-          tx,
-          page,
+    const asOf = this.workspace.clock.now();
+    const { counts, representativePage } =
+      await this.workspace.prisma.$transaction(
+        async (tx) => {
+          const [countsRow] = await tx.$queryRaw<
+            RepresentativeCounts[]
+          >`WITH ${representatives}
+        SELECT COUNT(*)::int AS all,COUNT(*) FILTER(WHERE status='active')::int AS active,
+        COUNT(*) FILTER(WHERE status='waiting')::int AS waiting,
+        COUNT(*) FILTER(WHERE status IN('accepted','rejected','withdrawn'))::int AS done FROM representatives`;
+          const representativePage = await tx.$queryRaw<
+            RepresentativeRow[]
+          >`WITH ${representatives}
+        SELECT id,"createdAt",status FROM representatives WHERE ${groupFilter} ${cursorBoundary}
+        ORDER BY "createdAt" DESC,id DESC LIMIT ${query.limit + 1}`;
+          return {
+            counts: countsRow ?? { all: 0, active: 0, waiting: 0, done: 0 },
+            representativePage,
+          };
+        },
+        { isolationLevel: 'RepeatableRead' },
+      );
+    const page = representativePage.slice(0, query.limit);
+    const items: ApplicantApplicationCardDto[] = [];
+    for (const ref of page)
+      items.push(
+        await this.workspace.listingAccess.read(
+          authority,
           'applicant',
-          asOf,
-        );
-        const images = await this.workspace.coverImages(
-          tx,
-          page.map((row) => row.listingId),
-        );
-        const items = page.map((row) => {
-          const summary = sections.get(row.id);
-          if (!summary) throw new Error('Missing application summary');
-          return new ApplicantApplicationCardDto(
-            row,
-            new CompactListingDto(
-              row.listing,
-              images.get(row.listingId) ?? null,
-            ),
-            summary.compactAttention,
-            summary.conversation,
-            summary.documents.counts,
-            summary.viewing,
-          );
-        });
-        const last = pageRepresentatives.at(-1);
-        const hasMore = representativePage.length > query.limit;
-        return new ApplicantApplicationOverviewPageDto(
-          asOf,
-          items,
-          new ReadModelPaginationDto(
-            query.limit,
-            hasMore,
-            hasMore && last
-              ? encodeReadModelCursor({
-                  kind: 'applications',
-                  id: last.id,
-                  value: last.createdAt.toISOString(),
-                })
-              : null,
-          ),
-          totalCount,
-          new ApplicantApplicationOverviewCountsDto(
-            counts.all,
-            counts.active,
-            counts.waiting,
-            counts.done,
-          ),
-        );
-      },
-      { isolationLevel: 'RepeatableRead' },
+          ref.id,
+          async () => {},
+          async (tx) => {
+            const row = await tx.application.findUniqueOrThrow({
+              where: { id: ref.id, applicantId: authority.userId },
+              select: readModelApplicationSelect,
+            });
+            const summary = (
+              await this.workspace.compose(tx, [row], 'applicant', asOf)
+            ).get(row.id);
+            if (!summary) throw new Error('Missing application summary');
+            const images = await this.workspace.coverImages(tx, [
+              row.listingId,
+            ]);
+            return new ApplicantApplicationCardDto(
+              row,
+              new CompactListingDto(
+                row.listing,
+                images.get(row.listingId) ?? null,
+              ),
+              summary.compactAttention,
+              summary.conversation,
+              summary.documents.counts,
+              summary.viewing,
+            );
+          },
+        ),
+      );
+    await this.workspace.listingAccess.assertActor(authority, 'applicant');
+    const last = page.at(-1);
+    const hasMore = representativePage.length > query.limit;
+    return new ApplicantApplicationOverviewPageDto(
+      asOf,
+      items,
+      new ReadModelPaginationDto(
+        query.limit,
+        hasMore,
+        hasMore && last
+          ? encodeReadModelCursor({
+              kind: 'applications',
+              id: last.id,
+              value: last.createdAt.toISOString(),
+            })
+          : null,
+      ),
+      counts[applicantOverviewGroupCountKey(group)],
+      new ApplicantApplicationOverviewCountsDto(
+        counts.all,
+        counts.active,
+        counts.waiting,
+        counts.done,
+      ),
     );
   }
 }

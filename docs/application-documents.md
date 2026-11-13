@@ -1,5 +1,7 @@
 # Application documents
 
+Provider operational routes require explicit `x-workspace-id` selection and current ACTIVE workspace/membership authority. OWNER may access workspace listings; AGENT requires current Listing responsibility. Discover selectors with `GET /api/v1/provider/workspaces`; neither a session alone nor a global provider User ID establishes Listing ownership. Applicant access remains bound to the authenticated applicant/resource relationship.
+
 ## Domain and lifecycle
 
 Requirements belong to an application and a logical subject. Identity is `(applicationId, subjectId, definitionKey)`. Subject kinds are APPLICANT and HOUSEHOLD_MEMBER; stable keys, not display labels, determine identity. The same document type can be requested for different subjects. One OPEN requirement per identity prevents accidental duplicates. Existing types and normalized OTHER-label definitions remain supported.
@@ -37,7 +39,7 @@ Legacy POST/PATCH document-request mutations retain existing array/object respon
 
 ## Authorization and HTTP API
 
-All routes are prefixed by `/api/v1`. Session authentication, active-user role guards and existing CSRF protection apply. Every route is application-scoped. Provider access requires listing ownership and a visible application; `WAITING` always returns 404 to the provider, including restored applications with existing history. Applicant access requires ownership of the application. Internal actor IDs, profile fields, original filenames, storage keys, checksums, S3 versions and URLs are excluded from responses.
+All routes are prefixed by `/api/v1`. Session authentication, active-user role guards and existing CSRF protection apply. Every route is application-scoped. Provider access requires current workspace/listing participation and a visible application; `WAITING` always returns 404 to the provider, including restored applications with existing history. Applicant access requires ownership of the application. Internal actor IDs, profile fields, original filenames, storage keys, checksums, S3 versions and URLs are excluded from responses.
 
 | Audience           | Method | Application-relative route                  | Purpose                                                                                        |
 | ------------------ | ------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -54,7 +56,7 @@ Audience bases are `provider/applications/:applicationId/` and `applicant/applic
 
 Upload ownership and an outstanding request are checked before multipart buffering, then checked again under listing/application locks when reserving an attempt. MIME declarations, magic-number detection, size, empty content and PDF/image boundaries are validated. Original filenames are discarded; downloads use a server-chosen extension and attachment disposition.
 
-Mutations require an `ACTIVE` application and a `PUBLISHED` or `PAUSED` listing. `REJECTED`, `WITHDRAWN`, `ACCEPTED`, `RENTED`, archived/draft listings and `WAITING` disable requests, uploads, replacements, cancellations and reviews. Existing clean documents remain readable by authorized users in terminal states. Restoring to `ACTIVE` resumes outstanding requests; `WAITING` keeps provider history hidden and uploads disabled. Re-application uses a new application ID with independent requests. Creating a request conflicts only when another current request exists for the same logical key; historical superseded or cancelled rounds do not block a later new request for the same type or normalized `OTHER` label.
+Mutations require an `ACTIVE` application and a `PUBLISHED` or `PAUSED` listing. `REJECTED`, `WITHDRAWN`, `ACCEPTED`, `RENTED`, retired/draft listings and `WAITING` disable requests, uploads, replacements, cancellations and reviews. Existing clean documents remain readable by authorized users in terminal states. Restoring to `ACTIVE` resumes outstanding requests; `WAITING` keeps provider history hidden and uploads disabled. Re-application uses a new application ID with independent requests. Creating a request conflicts only when another current request exists for the same logical key; historical superseded or cancelled rounds do not block a later new request for the same type or normalized `OTHER` label.
 
 ## Scan verdict delivery and finalization
 

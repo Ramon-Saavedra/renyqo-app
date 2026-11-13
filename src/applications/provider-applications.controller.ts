@@ -1,3 +1,6 @@
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import {
   Controller,
   Get,
@@ -11,9 +14,6 @@ import {
 } from '@nestjs/common';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ProviderActiveApplicationAttentionEnricher } from '../application-attention/provider-active-application-attention.enricher';
 import { ApplicationsService } from './applications.service';
 import { ApplicationResponseDto } from './dto/application-response.dto';
@@ -21,7 +21,7 @@ import { ProviderActiveApplicationResponseDto } from './dto/provider-active-appl
 import { ProviderExitedApplicationsResponseDto } from './dto/provider-exited-application-response.dto';
 import { WaitingCountResponseDto } from './dto/waiting-count-response.dto';
 
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 @Controller('provider')
 export class ProviderApplicationsController {
   constructor(
@@ -30,11 +30,9 @@ export class ProviderApplicationsController {
   ) {}
 
   @Get('applications')
-  async findAll(
-    @CurrentUser() user: SafeUser,
-  ): Promise<ApplicationResponseDto[]> {
+  async findAll(@Req() request: Request): Promise<ApplicationResponseDto[]> {
     const applications = await this.applicationsService.findAllByProvider(
-      user.id,
+      providerActorFromRequest(request),
     );
     return applications.map(
       (application) => new ApplicationResponseDto(application),
@@ -44,11 +42,11 @@ export class ProviderApplicationsController {
   @Get('listings/:id/applications')
   async findByListing(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ApplicationResponseDto[]> {
     const applications = await this.applicationsService.findAllByListing(
       listingId,
-      user.id,
+      providerActorFromRequest(request),
     );
     return applications.map(
       (application) => new ApplicationResponseDto(application),
@@ -58,14 +56,14 @@ export class ProviderApplicationsController {
   @Get('listings/:id/active-applications')
   async findActiveByListing(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ProviderActiveApplicationResponseDto[]> {
     const applications = await this.applicationsService.findActiveByListing(
       listingId,
-      user.id,
+      providerActorFromRequest(request),
     );
     const attention = await this.activeAttention.forApplications(
-      user.id,
+      providerActorFromRequest(request),
       applications.map((application) => application.id),
     );
     return applications.map((application) => {
@@ -78,11 +76,11 @@ export class ProviderApplicationsController {
   @Get('listings/:id/exited-applications')
   async findExitedByListing(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ProviderExitedApplicationsResponseDto> {
     const result = await this.applicationsService.findExitedByListing(
       listingId,
-      user.id,
+      providerActorFromRequest(request),
     );
     return new ProviderExitedApplicationsResponseDto(result);
   }
@@ -90,12 +88,12 @@ export class ProviderApplicationsController {
   @Get('listings/:id/waiting-count')
   async findWaitingCount(
     @Param('id', new ParseUUIDPipe({ version: '4' })) listingId: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<WaitingCountResponseDto> {
     const waitingCount =
       await this.applicationsService.findWaitingCountByListing(
         listingId,
-        user.id,
+        providerActorFromRequest(request),
       );
     return new WaitingCountResponseDto(waitingCount);
   }
@@ -104,11 +102,11 @@ export class ProviderApplicationsController {
   @HttpCode(HttpStatus.OK)
   async reject(
     @Param('id', new ParseUUIDPipe({ version: '4' })) applicationId: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ApplicationResponseDto> {
     const application = await this.applicationsService.reject(
       applicationId,
-      user.id,
+      providerActorFromRequest(request),
     );
     return new ApplicationResponseDto(application);
   }
@@ -117,11 +115,11 @@ export class ProviderApplicationsController {
   @HttpCode(HttpStatus.OK)
   async restore(
     @Param('id', new ParseUUIDPipe({ version: '4' })) applicationId: string,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ApplicationResponseDto> {
     const application = await this.applicationsService.restore(
       applicationId,
-      user.id,
+      providerActorFromRequest(request),
     );
     return new ApplicationResponseDto(application);
   }

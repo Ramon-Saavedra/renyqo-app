@@ -65,7 +65,7 @@ export class OutboxDispatcherService implements OnModuleInit, OnModuleDestroy {
       });
     } finally {
       this.pollInFlight = false;
-      this.schedulePoll(this.config.pollIntervalMs);
+      if (!this.stopped) this.schedulePoll(this.config.pollIntervalMs);
     }
   }
 

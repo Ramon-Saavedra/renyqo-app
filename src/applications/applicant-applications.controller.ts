@@ -1,9 +1,11 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import type { SafeUser } from '../users/types/safe-user.type';
+
 import { ApplicationsService } from './applications.service';
 import { ApplicantApplicationResponseDto } from './dto/applicant-application-response.dto';
 
@@ -14,10 +16,12 @@ export class ApplicantApplicationsController {
 
   @Get()
   async findAll(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ): Promise<ApplicantApplicationResponseDto[]> {
     const applications =
-      await this.applicationsService.findAllByApplicantWithListing(user.id);
+      await this.applicationsService.findAllByApplicantWithListing(
+        sessionAuthorityFromRequest(request),
+      );
     return applications.map(
       (application) => new ApplicantApplicationResponseDto(application),
     );

@@ -1,15 +1,10 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
   UnprocessableEntityException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
-import type { UploadApiResponse } from 'cloudinary';
-import type { EnvironmentVariables } from '../config/env.validation';
 import type { Listing } from '../generated/prisma/client';
 import {
   ApplicationActivityActorType,
@@ -22,9 +17,11 @@ import {
 import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { ApplicationActivityService } from '../applications/application-activity.service';
 import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
-import { CloudinaryService } from '../listing-images/cloudinary.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
+import {
+  ProviderListingAccess,
+  providerListingWhere,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
 import { ListingOrderingService } from './listing-ordering.service';
 import type { CreateListingDto } from './dto/create-listing.dto';
 import { ListingResponseDto } from './dto/listing-response.dto';
@@ -40,7 +37,6 @@ import { ListingInputRules } from './listing-input-rules';
 import { ListingResponseMapper } from './listing-response.mapper';
 import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
 import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
-import { CriteriaRevisionSource } from '../generated/prisma/enums';
 
 const PUBLISH_REQUIRED_FIELDS = [
   'title',
@@ -65,16 +61,12 @@ const PUBLISH_CONFLICT = 'This listing cannot be published';
 const DRAFT_CONFLICT = 'This listing cannot be moved to draft';
 const PAUSE_CONFLICT = 'This listing cannot be paused';
 const RESUME_CONFLICT = 'This listing cannot be resumed';
-const ARCHIVE_CONFLICT = 'This listing cannot be archived';
+const RETIRE_CONFLICT = 'This listing cannot be retired';
 
 @Injectable()
 export class ListingsService {
-  private readonly logger = new Logger(ListingsService.name);
-
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly cloudinaryService: CloudinaryService,
-    private readonly config: ConfigService<EnvironmentVariables, true>,
+    private readonly access: ProviderListingAccess,
     private readonly listingOrderingService: ListingOrderingService,
     private readonly listingInputRules: ListingInputRules,
     private readonly listingResponseMapper: ListingResponseMapper,
@@ -85,88 +77,75 @@ export class ListingsService {
     private readonly assessments: ApplicationEligibilityAssessmentService,
   ) {}
 
-  async create(
-    providerId: string,
-    dto: CreateListingDto,
-    file?: Express.Multer.File,
+  create(
+    _actor: ProviderActor,
+    _dto: CreateListingDto,
+    _file?: Express.Multer.File,
   ): Promise<Listing> {
-    if (!this.listingInputRules.hasMeaningfulDraftData(dto) && !file) {
-      throw new BadRequestException(
-        'Draft must include at least one listing field',
-      );
-    }
-
-    if (file) {
-      return this.createWithImage(providerId, dto, file);
-    }
-
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      const listing = await tx.listing.create({
-        data: {
-          ...this.listingInputRules.buildCreateData(providerId, dto),
-          displayOrder: await this.listingOrderingService.getNextDisplayOrder(
-            tx,
-            providerId,
-          ),
-        },
-      });
-      await this.criteriaRevisions.current(
-        tx,
-        listing,
-        providerId,
-        CriteriaRevisionSource.NATIVE,
-      );
-      return listing;
-    });
+    void _dto;
+    void _file;
+    return this.access.read(_actor, 'listing.create', undefined, () =>
+      Promise.reject(
+        new ServiceUnavailableException(
+          'Listing creation requires entitlement/quota integration',
+        ),
+      ),
+    );
   }
 
   async findAllByProvider(
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<ListingWithActiveApplicationsCount[]> {
-    return this.prisma.listing.findMany({
-      where: { providerId },
-      orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
-      include: {
-        _count: {
-          select: {
-            applications: {
-              where: { status: ApplicationStatus.ACTIVE },
+    return this.access.read(
+      actor,
+      'listing.read',
+      undefined,
+      async (tx, context) =>
+        tx.listing.findMany({
+          where: {
+            ...providerListingWhere(context),
+            status: { not: 'RETIRED' },
+          },
+          orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
+          include: {
+            _count: {
+              select: {
+                applications: { where: { status: ApplicationStatus.ACTIVE } },
+              },
             },
           },
-        },
-      },
-    });
+        }),
+    );
   }
 
-  async findOneByProvider(id: string, providerId: string): Promise<Listing> {
-    const listing = await this.prisma.listing.findFirst({
-      where: { id, providerId },
-    });
-    if (!listing) throw new NotFoundException('Listing not found');
-    return listing;
+  findOneByProvider(id: string, actor: ProviderActor): Promise<Listing> {
+    return this.access.read(actor, 'listing.read', id, (tx) =>
+      tx.listing.findUniqueOrThrow({
+        where: { id, workspaceId: actor.workspaceId },
+      }),
+    );
   }
 
-  async findOneDetailByProvider(
+  findOneDetailByProvider(
     id: string,
-    providerId: string,
+    actor: ProviderActor,
   ): Promise<ListingWithImages> {
-    const listing = await this.prisma.listing.findFirst({
-      where: { id, providerId },
-      include: { images: { orderBy: { position: 'asc' } } },
-    });
-    if (!listing) throw new NotFoundException('Listing not found');
-    return listing;
+    return this.access.read(actor, 'listing.read', id, (tx) =>
+      tx.listing.findUniqueOrThrow({
+        where: { id, workspaceId: actor.workspaceId },
+        include: { images: { orderBy: { position: 'asc' } } },
+      }),
+    );
   }
 
   async update(
     id: string,
-    providerId: string,
+    actor: ProviderActor,
     dto: UpdateListingDto,
   ): Promise<Listing> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await tx.$queryRaw`SELECT id FROM listings WHERE id=${id}::uuid AND provider_id=${providerId}::uuid FOR UPDATE`;
+    return this.access.mutate(actor, 'listing.write', id, async (tx) => {
       const listing = await tx.listing.findFirst({
-        where: { id, providerId },
+        where: { id, workspaceId: actor.workspaceId },
       });
       if (!listing) throw new NotFoundException('Listing not found');
 
@@ -178,14 +157,14 @@ export class ListingsService {
         tx,
         listing,
         updated,
-        providerId,
+        actor.authority.userId,
       );
       if (revision) {
         await this.assessments.reassessListing(
           tx,
           updated,
           revision,
-          providerId,
+          actor.authority.userId,
         );
         await this.activityService.lifecycleChangedForListingWithinTransaction(
           tx,
@@ -199,14 +178,14 @@ export class ListingsService {
 
   async updatePosition(
     id: string,
-    providerId: string,
+    actor: ProviderActor,
     dto: UpdateListingPositionDto,
   ): Promise<Listing> {
-    return this.listingOrderingService.move(id, providerId, dto.position);
+    return this.listingOrderingService.move(id, actor, dto.position);
   }
 
-  async publish(id: string, providerId: string): Promise<Listing> {
-    const listing = await this.findOneByProvider(id, providerId);
+  async publish(id: string, actor: ProviderActor): Promise<Listing> {
+    const listing = await this.findOneByProvider(id, actor);
 
     if (listing.status !== ListingStatus.DRAFT) {
       throw new ConflictException(PUBLISH_CONFLICT);
@@ -225,7 +204,7 @@ export class ListingsService {
 
     return this.commitListingStatus(
       listing,
-      providerId,
+      actor,
       [ListingStatus.DRAFT],
       PUBLISH_CONFLICT,
       {
@@ -235,56 +214,61 @@ export class ListingsService {
     );
   }
 
-  async moveToDraft(id: string, providerId: string): Promise<Listing> {
+  async moveToDraft(id: string, actor: ProviderActor): Promise<Listing> {
     return this.transitionListing(
       id,
-      providerId,
+      actor,
       [ListingStatus.PUBLISHED, ListingStatus.PAUSED],
       DRAFT_CONFLICT,
       { status: ListingStatus.DRAFT },
     );
   }
 
-  async pause(id: string, providerId: string): Promise<Listing> {
+  async pause(id: string, actor: ProviderActor): Promise<Listing> {
     return this.transitionListing(
       id,
-      providerId,
+      actor,
       [ListingStatus.PUBLISHED],
       PAUSE_CONFLICT,
       { status: ListingStatus.PAUSED },
     );
   }
 
-  async resume(id: string, providerId: string): Promise<Listing> {
+  async resume(id: string, actor: ProviderActor): Promise<Listing> {
     return this.transitionListing(
       id,
-      providerId,
+      actor,
       [ListingStatus.PAUSED],
       RESUME_CONFLICT,
       { status: ListingStatus.PUBLISHED },
     );
   }
 
-  async archive(id: string, providerId: string): Promise<Listing> {
+  async retire(id: string, actor: ProviderActor): Promise<Listing> {
     return this.transitionListing(
       id,
-      providerId,
-      [ListingStatus.DRAFT, ListingStatus.PUBLISHED, ListingStatus.PAUSED],
-      ARCHIVE_CONFLICT,
-      { status: ListingStatus.ARCHIVED },
+      actor,
+      [
+        ListingStatus.DRAFT,
+        ListingStatus.PUBLISHED,
+        ListingStatus.PAUSED,
+        ListingStatus.RENTED,
+      ],
+      RETIRE_CONFLICT,
+      { status: ListingStatus.RETIRED },
     );
   }
 
   async rentListing(
     id: string,
-    providerId: string,
+    actor: ProviderActor,
     dto: RentListingDto,
   ): Promise<Listing> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
+    return this.access.mutate(actor, 'listing.write', id, async (tx) => {
       await tx.$queryRaw`SELECT id FROM "listings" WHERE id = ${id} FOR UPDATE`;
 
       const listing = await tx.listing.findFirst({
-        where: { id, providerId },
+        where: { id, workspaceId: actor.workspaceId },
       });
 
       if (!listing) {
@@ -316,7 +300,7 @@ export class ListingsService {
         tx,
         id,
         'LISTING_RENTED',
-        providerId,
+        actor.authority.userId,
         dto.selectedApplicationId,
       );
       const nonSelectedApplications = await tx.application.findMany({
@@ -349,7 +333,7 @@ export class ListingsService {
           nonSelectedApplications.map((application) => ({
             applicationId: application.id,
             type: ApplicationActivityType.APPLICATION_REJECTED,
-            actorUserId: providerId,
+            actorUserId: actor.authority.userId,
             actorType: ApplicationActivityActorType.PROVIDER,
             visibility:
               application.status === ApplicationStatus.ACTIVE
@@ -372,7 +356,7 @@ export class ListingsService {
       await this.activityService.appendWithinTransaction(tx, {
         applicationId: dto.selectedApplicationId,
         type: ApplicationActivityType.APPLICATION_ACCEPTED,
-        actorUserId: providerId,
+        actorUserId: actor.authority.userId,
         actorType: ApplicationActivityActorType.PROVIDER,
         visibility: ApplicationActivityVisibility.BOTH,
         metadata: {
@@ -394,8 +378,12 @@ export class ListingsService {
     });
   }
 
-  async countByProvider(providerId: string): Promise<number> {
-    return this.prisma.listing.count({ where: { providerId } });
+  async countByProvider(actor: ProviderActor): Promise<number> {
+    return this.access.read(actor, 'listing.count', undefined, (tx, context) =>
+      tx.listing.count({
+        where: { ...providerListingWhere(context), status: { not: 'RETIRED' } },
+      }),
+    );
   }
 
   toListingResponse(
@@ -422,70 +410,17 @@ export class ListingsService {
     );
   }
 
-  private async createWithImage(
-    providerId: string,
-    dto: CreateListingDto,
-    file: Express.Multer.File,
-  ): Promise<Listing> {
-    const listingId = randomUUID();
-    const uploaded = await this.uploadListingImage(listingId, file);
-
-    try {
-      return await runSerializableTransaction(this.prisma, async (tx) => {
-        const listing = await tx.listing.create({
-          data: {
-            id: listingId,
-            ...this.listingInputRules.buildCreateData(providerId, dto),
-            displayOrder: await this.listingOrderingService.getNextDisplayOrder(
-              tx,
-              providerId,
-            ),
-            photos: [uploaded.secure_url],
-          },
-        });
-
-        await tx.listingImage.create({
-          data: {
-            listingId,
-            publicId: uploaded.public_id,
-            secureUrl: uploaded.secure_url,
-            position: 0,
-            isCover: true,
-          },
-        });
-        await this.criteriaRevisions.current(
-          tx,
-          listing,
-          providerId,
-          CriteriaRevisionSource.NATIVE,
-        );
-        return listing;
-      });
-    } catch (err) {
-      await this.deleteUploadedAssetAfterFailure(uploaded.public_id);
-      throw err;
-    }
-  }
-
-  private uploadListingImage(
-    listingId: string,
-    file: Express.Multer.File,
-  ): Promise<UploadApiResponse> {
-    const folder = `${this.config.get('CLOUDINARY_FOLDER')}/listings/${listingId}`;
-    return this.cloudinaryService.uploadBuffer(file.buffer, folder);
-  }
-
   private async transitionListing(
     id: string,
-    providerId: string,
+    actor: ProviderActor,
     allowedStatuses: readonly ListingStatus[],
     conflictMessage: string,
     data: ListingStatusWrite,
   ): Promise<Listing> {
-    const listing = await this.findOneByProvider(id, providerId);
+    const listing = await this.findOneByProvider(id, actor);
     return this.commitListingStatus(
       listing,
-      providerId,
+      actor,
       allowedStatuses,
       conflictMessage,
       data,
@@ -494,7 +429,7 @@ export class ListingsService {
 
   private async commitListingStatus(
     listing: Listing,
-    providerId: string,
+    actor: ProviderActor,
     allowedStatuses: readonly ListingStatus[],
     conflictMessage: string,
     data: ListingStatusWrite,
@@ -503,70 +438,67 @@ export class ListingsService {
       throw new ConflictException(conflictMessage);
     }
 
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await tx.$queryRaw`SELECT id FROM listings WHERE id=${listing.id}::uuid FOR UPDATE`;
-      const updated = await tx.listing.updateMany({
-        where: {
-          id: listing.id,
-          providerId,
-          status: listing.status,
-          ...(data.publishedAt !== undefined ? { publishedAt: null } : {}),
-        },
-        data,
-      });
-
-      if (updated.count !== 1) {
-        const current = await tx.listing.findFirst({
-          where: { id: listing.id, providerId },
+    return this.access.mutate(
+      actor,
+      'listing.write',
+      listing.id,
+      async (tx) => {
+        const updated = await tx.listing.updateMany({
+          where: {
+            id: listing.id,
+            workspaceId: actor.workspaceId,
+            revision: listing.revision,
+            status: listing.status,
+            ...(data.publishedAt !== undefined ? { publishedAt: null } : {}),
+          },
+          data,
         });
-        if (!current) {
-          throw new NotFoundException('Listing not found');
-        }
-        throw new ConflictException(conflictMessage);
-      }
 
-      if (
-        data.status === ListingStatus.ARCHIVED ||
-        data.status === ListingStatus.DRAFT
-      )
-        await this.viewingLifecycle.closeListingWithinTransaction(
+        if (updated.count !== 1) {
+          const current = await tx.listing.findFirst({
+            where: { id: listing.id, workspaceId: actor.workspaceId },
+          });
+          if (!current) {
+            throw new NotFoundException('Listing not found');
+          }
+          throw new ConflictException(conflictMessage);
+        }
+
+        if (
+          data.status === ListingStatus.RETIRED ||
+          data.status === ListingStatus.DRAFT
+        )
+          await this.viewingLifecycle.closeListingWithinTransaction(
+            tx,
+            listing.id,
+            data.status === ListingStatus.RETIRED
+              ? 'LISTING_RETIRED'
+              : 'LISTING_UNPUBLISHED',
+            actor.authority.userId,
+          );
+        if (data.status === ListingStatus.RETIRED)
+          await this.listingOrderingService.compactWithinTransaction(
+            tx,
+            actor.workspaceId,
+          );
+        const result = await tx.listing.findFirst({
+          where: { id: listing.id, workspaceId: actor.workspaceId },
+          include: { images: { orderBy: { position: 'asc' } } },
+        });
+        if (!result) throw new NotFoundException('Listing not found');
+        if (data.status === ListingStatus.PUBLISHED) {
+          await this.applicationLifecycle.reconcileWaitingWithinTransaction(
+            tx,
+            result,
+          );
+        }
+        await this.activityService.lifecycleChangedForListingWithinTransaction(
           tx,
           listing.id,
-          data.status === ListingStatus.ARCHIVED
-            ? 'LISTING_ARCHIVED'
-            : 'LISTING_UNPUBLISHED',
-          providerId,
+          new Date(),
         );
-      const result = await tx.listing.findFirst({
-        where: { id: listing.id, providerId },
-        include: { images: { orderBy: { position: 'asc' } } },
-      });
-      if (!result) throw new NotFoundException('Listing not found');
-      if (data.status === ListingStatus.PUBLISHED) {
-        await this.applicationLifecycle.reconcileWaitingWithinTransaction(
-          tx,
-          result,
-        );
-      }
-      await this.activityService.lifecycleChangedForListingWithinTransaction(
-        tx,
-        listing.id,
-        new Date(),
-      );
-      return result;
-    });
-  }
-
-  private async deleteUploadedAssetAfterFailure(
-    publicId: string,
-  ): Promise<void> {
-    try {
-      await this.cloudinaryService.deleteByPublicId(publicId);
-    } catch (err) {
-      this.logger.error(
-        'Failed to delete Cloudinary asset after database failure',
-        err instanceof Error ? err.stack : undefined,
-      );
-    }
+        return result;
+      },
+    );
   }
 }

@@ -25,6 +25,7 @@ import { AuthRevocationService } from '../src/auth/session/auth-revocation.servi
 import { RealtimeConnectionsService } from '../src/realtime/realtime-connections.service';
 import { io, type Socket } from 'socket.io-client';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import { prismaServiceWithSharedPool } from './e2e-prisma-override';
 
 function deferred() {
   let release!: () => void;
@@ -110,7 +111,7 @@ describe('Session persistence across password-reset revocation (isolated Postgre
     });
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
-      .useValue(prisma)
+      .useValue(prismaServiceWithSharedPool(prisma, pool, schema))
       .overrideProvider(ConfigService)
       .useValue(config)
       .compile();

@@ -8,9 +8,7 @@ import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test, type TestingModule } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaModule } from '../src/prisma/prisma.module';
@@ -29,9 +27,10 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import {
   ApplicationStatus,
   ConversationSide,
-  ListingStatus,
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import { createPublishedListingForProvider } from './e2e-workspace-listing';
+import { bindProviderWorkspaceHeader } from './e2e-provider-context';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
@@ -45,7 +44,6 @@ function body(response: Response): Record<string, unknown> {
 
 describe('Outbox foundation E2E', () => {
   let app: INestApplication;
-  let sessionStore: InstanceType<ReturnType<typeof connectPgSimple>>;
   let prisma: PrismaService;
   let server: RequestTarget;
   let certificate: Buffer;
@@ -74,6 +72,9 @@ describe('Outbox foundation E2E', () => {
       .expect(201);
     const id = body(response)['id'];
     if (typeof id !== 'string') throw new Error('Expected user id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
     return { agent, id };
   }
 
@@ -145,25 +146,7 @@ describe('Outbox foundation E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    const store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    sessionStore = store;
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     await app.init();
     const target: unknown = app.getHttpServer();
@@ -175,15 +158,14 @@ describe('Outbox foundation E2E', () => {
     await prisma.outboxEvent.deleteMany();
     provider = await register('provider');
     applicant = await register('applicant');
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         title: 'Outbox listing',
-        publishedAt: new Date(),
       },
-    });
+    );
     const application = await prisma.application.create({
       data: {
         listingId: listing.id,
@@ -201,11 +183,8 @@ describe('Outbox foundation E2E', () => {
 
   afterAll(async () => {
     if (app) {
-      app.get(OutboxRetentionService).onModuleDestroy();
-      await app.get(OutboxDispatcherService).onModuleDestroy();
       await app.close();
     }
-    if (sessionStore) await Promise.resolve(sessionStore.close());
     if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
   });
 
@@ -252,10 +231,14 @@ describe('Outbox foundation E2E', () => {
     const types = (
       await prisma.outboxEvent.findMany({ where: { applicationId } })
     ).map((row) => row.type);
-    expect(types).toEqual([
-      ConversationOutboxEventType.MESSAGE_CREATED,
-      ConversationOutboxEventType.READ_ADVANCED,
-    ]);
+    // This query has no ORDER BY: assert the exact events and multiplicity,
+    // independently of PostgreSQL's physical row order.
+    expect([...types].sort()).toEqual(
+      [
+        ConversationOutboxEventType.MESSAGE_CREATED,
+        ConversationOutboxEventType.READ_ADVANCED,
+      ].sort(),
+    );
   });
 
   it('records read.advanced with reader side and cutoff', async () => {
@@ -417,9 +400,12 @@ describe('Outbox dispatcher publish E2E', () => {
   });
 
   afterAll(async () => {
-    module.get(OutboxRetentionService).onModuleDestroy();
-    await module.get(OutboxDispatcherService).onModuleDestroy();
     await module.close();
+    try {
+      await clearE2EData(prisma);
+    } catch {
+      /* companion graph may already be torn down */
+    }
   });
 
   it('dispatches at-least-once and tolerates redelivery after publish', async () => {

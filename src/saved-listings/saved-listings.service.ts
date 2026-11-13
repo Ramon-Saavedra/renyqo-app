@@ -1,8 +1,9 @@
+import { publicListingSource } from '../published-listings/public-listing-source';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
 import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { ApplicantListingSummaryService } from '../applicant-listing-summaries/applicant-listing-summary.service';
-import { APPLICANT_LISTING_SUMMARY_LISTING_SELECT } from '../applicant-listing-summaries/applicant-listing-summary-listing.select';
-import type { Prisma } from '../generated/prisma/client';
 import { ApplicantListingsPageDto } from '../listings/dto/applicant-listings-page.dto';
 import { PublishedListingsService } from '../published-listings/published-listings.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -84,6 +85,7 @@ export class SavedListingsService {
     private readonly prisma: PrismaService,
     private readonly publishedListingsService: PublishedListingsService,
     private readonly applicantListingSummaryService: ApplicantListingSummaryService,
+    private readonly access: ApplicantListingAccess,
   ) {}
 
   async save(
@@ -134,30 +136,49 @@ export class SavedListingsService {
     applicant: SafeUser,
     query: SavedListingsQueryDto,
     res?: { setHeader(name: string, value: string): void },
+    authority?: HumanAuthority,
   ): Promise<ApplicantListingsPageDto> {
+    if (!authority || authority.userId !== applicant.id)
+      throw new BadRequestException('Applicant session authority required');
+    await this.access.assertPrincipal(authority);
     const take = Math.min(
       query.limit ?? SAVED_LISTINGS_PAGE_SIZE_DEFAULT,
       SAVED_LISTINGS_PAGE_SIZE_MAX,
     );
 
-    const baseWhere = this.buildSavedListingsWhere(applicant.id, query.cursor);
-
-    const [total, savedListings] = await this.prisma.$transaction([
-      this.prisma.savedListing.count({ where: baseWhere }),
-      this.prisma.savedListing.findMany({
-        where: baseWhere,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: take + 1,
-        select: {
-          id: true,
-          listingId: true,
-          createdAt: true,
-          listing: {
-            select: APPLICANT_LISTING_SUMMARY_LISTING_SELECT,
-          },
-        },
-      }),
-    ]);
+    const cursor = query.cursor ? decodeSavedListingCursor(query.cursor) : null;
+    if (query.cursor && !cursor)
+      throw new BadRequestException('Invalid cursor');
+    const cursorDate = cursor ? new Date(cursor.savedAt) : null;
+    const cursorId = cursor?.id ?? null;
+    const [total, savedListings] = await this.prisma.$transaction(
+      async (tx) => {
+        const [count] = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*) AS count FROM saved_listings s JOIN public_listing_projections p ON p.id=s.listing_id
+        WHERE s.applicant_id=${applicant.id}::uuid`;
+        const refs = await tx.$queryRaw<
+          { id: string; listing_id: string; created_at: Date }[]
+        >`
+        SELECT s.id,s.listing_id,s.created_at FROM saved_listings s JOIN public_listing_projections p ON p.id=s.listing_id
+        WHERE s.applicant_id=${applicant.id}::uuid AND (${cursorDate}::timestamp IS NULL OR s.created_at<${cursorDate}::timestamp
+          OR (s.created_at=${cursorDate}::timestamp AND s.id<${cursorId}::uuid))
+        ORDER BY s.created_at DESC,s.id DESC LIMIT ${take + 1}`;
+        const projections = await tx.publicListingProjection.findMany({
+          where: { id: { in: refs.map((r) => r.listing_id) } },
+        });
+        const byId = new Map(projections.map((p) => [p.id, p]));
+        return [
+          Number(count.count),
+          refs.map((r) => ({
+            id: r.id,
+            listingId: r.listing_id,
+            createdAt: r.created_at,
+            listing: publicListingSource(byId.get(r.listing_id)!),
+          })),
+        ] as const;
+      },
+      { isolationLevel: 'RepeatableRead' },
+    );
 
     const hasMore = savedListings.length > take;
     const pageRows = hasMore ? savedListings.slice(0, take) : savedListings;
@@ -168,7 +189,7 @@ export class SavedListingsService {
     const summaries = await this.applicantListingSummaryService.buildSummaries(
       applicant,
       listings,
-      { isSavedByListingId },
+      { isSavedByListingId, authority },
     );
 
     const nextCursor =
@@ -181,6 +202,7 @@ export class SavedListingsService {
       res.setHeader('Cache-Control', 'private, no-store, must-revalidate');
     }
 
+    await this.access.assertPrincipal(authority);
     return new ApplicantListingsPageDto(summaries, nextCursor, total);
   }
 
@@ -218,37 +240,5 @@ export class SavedListingsService {
     });
 
     return savedListing !== null;
-  }
-
-  private buildSavedListingsWhere(
-    applicantId: string,
-    cursor: string | undefined,
-  ): Prisma.SavedListingWhereInput {
-    const conditions: Prisma.SavedListingWhereInput[] = [
-      { applicantId },
-      { listing: this.publishedListingsService.getPublicAccessWhere() },
-    ];
-
-    if (cursor !== undefined) {
-      const decoded = decodeSavedListingCursor(cursor);
-
-      if (!decoded) {
-        throw new BadRequestException('Invalid cursor');
-      }
-
-      const savedAt = new Date(decoded.savedAt);
-
-      conditions.push({
-        OR: [
-          { createdAt: { lt: savedAt } },
-          {
-            createdAt: savedAt,
-            id: { lt: decoded.id },
-          },
-        ],
-      });
-    }
-
-    return { AND: conditions };
   }
 }

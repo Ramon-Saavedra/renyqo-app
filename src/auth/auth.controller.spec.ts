@@ -47,6 +47,7 @@ type MockRequest = {
   sessionID: string;
   session: {
     destroy: jest.MockedFunction<(cb: (err: Error | null) => void) => void>;
+    save: jest.MockedFunction<(cb: (err: Error | null) => void) => void>;
     regenerate: jest.MockedFunction<(cb: (err: Error | null) => void) => void>;
   };
   login: jest.MockedFunction<
@@ -58,6 +59,7 @@ const makeReq = (loginError?: Error): MockRequest => ({
   sessionID: 'final-sid',
   session: {
     destroy: jest.fn((cb: (err: Error | null) => void) => cb(null)),
+    save: jest.fn((cb: (err: Error | null) => void) => cb(null)),
     regenerate: jest.fn((cb: (err: Error | null) => void) => {
       cb(loginError ?? null);
     }),

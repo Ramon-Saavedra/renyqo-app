@@ -8,9 +8,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import type { SafeUser } from '../users/types/safe-user.type';
+
 import { ApplicationViewingService } from './application-viewing.service';
 import { ApplicationViewingOutcomeService } from './application-viewing-outcome.service';
 import { ApplicationViewingQueryService } from './application-viewing-query.service';
@@ -34,54 +36,59 @@ export class ApplicantViewingsController {
   @Get() list(
     @Param() params: ViewingApplicationParamsDto,
     @Query() query: ViewingQueryDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.queries.list(params.applicationId, user.id, 'applicant', query);
+    return this.queries.list(
+      params.applicationId,
+      sessionAuthorityFromRequest(request),
+      'applicant',
+      query,
+    );
   }
   @Get(':viewingId') detail(
     @Param() params: ViewingParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.queries.detail(
       params.applicationId,
       params.viewingId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
     );
   }
   @Patch(':viewingId/accept') accept(
     @Param() params: ViewingParamsDto,
     @Body() _dto: ViewingActionDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.viewings.respond(
       params.applicationId,
       params.viewingId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'accept',
     );
   }
   @Patch(':viewingId/decline') decline(
     @Param() params: ViewingParamsDto,
     @Body() _dto: ViewingActionDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.viewings.respond(
       params.applicationId,
       params.viewingId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'decline',
     );
   }
   @Patch(':viewingId/request-another-time') requestChange(
     @Param() params: ViewingParamsDto,
     @Body() dto: RequestViewingChangeDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.viewings.respond(
       params.applicationId,
       params.viewingId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'request-change',
       dto,
     );
@@ -89,12 +96,12 @@ export class ApplicantViewingsController {
   @Patch(':viewingId/interest') interest(
     @Param() params: ViewingParamsDto,
     @Body() dto: SubmitViewingInterestDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.outcomes.interest(
       params.applicationId,
       params.viewingId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       dto.interest,
       dto.confirmWithdrawal,
     );

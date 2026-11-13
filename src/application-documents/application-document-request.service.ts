@@ -1,4 +1,10 @@
 import {
+  ApplicationListingAccess,
+  actorUserId as actorIdentity,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
+import type { ProviderActor } from '../provider-authorization/provider-listing-access';
+import {
   verificationIdentity,
   loadVerificationIdentities,
   type VerificationIdentity,
@@ -32,16 +38,24 @@ import {
 export class ApplicationDocumentRequestService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly listingBoundary: ApplicationListingAccess,
     private readonly access: ApplicationDocumentAccessService,
     private readonly requirements: VerificationRequirementService,
   ) {}
 
   list(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     audience: DocumentAudience,
   ): Promise<DocumentRequestResponseDto[]> {
-    return this.prisma.$transaction(
+    const userId = actorIdentity(actor);
+    return this.listingBoundary.read(
+      actor,
+      audience,
+      applicationId,
+      async (tx) => {
+        await this.access.authorize(tx, applicationId, userId, audience);
+      },
       async (tx) => {
         const application = await this.access.authorize(
           tx,
@@ -66,53 +80,63 @@ export class ApplicationDocumentRequestService {
           ),
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
   async create(
     applicationId: string,
-    userId: string,
+    actor: ProviderActor,
     inputs: DocumentRequestInputDto[],
   ): Promise<DocumentRequestResponseDto[]> {
-    const result = await this.requirements.execute(applicationId, userId, {
+    const result = await this.requirements.execute(applicationId, actor, {
       operation: 'REQUEST',
       items: inputs,
     });
     return this.projectResult(
       applicationId,
-      userId,
+      actor,
       result.requirements.map((r) => r.id),
     );
   }
   async cancel(
     applicationId: string,
     requestId: string,
-    userId: string,
+    actor: ProviderActor,
   ): Promise<DocumentRequestResponseDto> {
-    await this.requirements.execute(applicationId, userId, {
+    await this.requirements.execute(applicationId, actor, {
       operation: 'CANCEL',
       requestId,
     });
-    return (await this.projectResult(applicationId, userId, [requestId]))[0];
+    return (await this.projectResult(applicationId, actor, [requestId]))[0];
   }
   async replace(
     applicationId: string,
     requestId: string,
-    userId: string,
+    actor: ProviderActor,
   ): Promise<DocumentRequestResponseDto> {
-    const result = await this.requirements.execute(applicationId, userId, {
+    const result = await this.requirements.execute(applicationId, actor, {
       operation: 'REPLACE',
       requestId,
     });
     return (
-      await this.projectResult(applicationId, userId, [
+      await this.projectResult(applicationId, actor, [
         result.requirements[1].id,
       ])
     )[0];
   }
-  private projectResult(applicationId: string, userId: string, ids: string[]) {
-    return this.prisma.$transaction(
+  private projectResult(
+    applicationId: string,
+    actor: ProviderActor,
+    ids: string[],
+  ) {
+    const userId = actor.authority.userId;
+    return this.listingBoundary.read(
+      actor,
+      'provider',
+      applicationId,
+      async (tx) => {
+        await this.access.authorize(tx, applicationId, userId, 'provider');
+      },
       async (tx) => {
         const application = await this.access.authorize(
           tx,
@@ -134,7 +158,6 @@ export class ApplicationDocumentRequestService {
           return this.toDto(row, false, mutable);
         });
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 

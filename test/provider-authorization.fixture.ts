@@ -31,12 +31,13 @@ class ObservedLocks extends AuthorityLockRepository {
   override async global(
     tx: Prisma.TransactionClient,
     authority: HumanAuthority,
+    participantUserIds: readonly string[] = [],
   ) {
     const [row] = await tx.$queryRaw<
       { pid: number }[]
     >`SELECT pg_backend_pid() AS pid`;
     this.observer?.(row.pid);
-    await super.global(tx, authority);
+    await super.global(tx, authority, participantUserIds);
   }
 }
 

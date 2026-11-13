@@ -1,4 +1,6 @@
 import { OutboxModule } from '../outbox/outbox.module';
+import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { Module } from '@nestjs/common';
 import { ApplicationConsiderationService } from './application-consideration.service';
@@ -26,6 +28,8 @@ import { ApplicantApplicationActionThrottlerGuard } from './guards/applicant-app
 
 @Module({
   imports: [
+    ProviderAuthorizationModule,
+    ListingConsumerAccessModule,
     NotificationsModule,
     OutboxModule,
     ApplicationViewingReadModule,

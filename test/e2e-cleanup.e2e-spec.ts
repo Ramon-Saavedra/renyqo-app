@@ -7,6 +7,16 @@ describe('Central E2E cleanup safety', () => {
     process.env = { ...original };
   });
 
+  it('starts each suite with canonical worker defaults before application boot', () => {
+    expect(process.env).toMatchObject({
+      NODE_ENV: 'test',
+      DATABASE_URL: process.env['E2E_DATABASE_URL'],
+      OUTBOX_DISPATCH_ENABLED: 'false',
+      REALTIME_ENABLED: 'false',
+      VIEWING_EXPIRY_ENABLED: 'false',
+    });
+  });
+
   it.each([
     { NODE_ENV: 'production' },
     { E2E_DATABASE_ALLOW_RESET: 'false' },

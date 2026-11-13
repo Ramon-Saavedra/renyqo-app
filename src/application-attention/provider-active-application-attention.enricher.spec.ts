@@ -1,3 +1,4 @@
+import { unitProvider } from '../../test/unit-workspace-authority';
 import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ApplicationAttentionQueryService } from './application-attention-query.service';
@@ -54,10 +55,10 @@ describe('ProviderActiveApplicationAttentionEnricher', () => {
 
     const result = await module
       .get(ProviderActiveApplicationAttentionEnricher)
-      .forApplications('provider', ['first', 'second', 'first']);
+      .forApplications(unitProvider('provider'), ['first', 'second', 'first']);
 
     expect(batch).toHaveBeenCalledTimes(1);
-    expect(batch).toHaveBeenCalledWith('provider', 'provider', [
+    expect(batch).toHaveBeenCalledWith(unitProvider('provider'), 'provider', [
       'first',
       'second',
     ]);
@@ -81,7 +82,7 @@ describe('ProviderActiveApplicationAttentionEnricher', () => {
     await expect(
       module
         .get(ProviderActiveApplicationAttentionEnricher)
-        .forApplications('provider', []),
+        .forApplications(unitProvider('provider'), []),
     ).resolves.toEqual(new Map());
     expect(batch).not.toHaveBeenCalled();
   });
@@ -102,7 +103,7 @@ describe('ProviderActiveApplicationAttentionEnricher', () => {
     await expect(
       module
         .get(ProviderActiveApplicationAttentionEnricher)
-        .forApplications('provider', ['waiting-application']),
+        .forApplications(unitProvider('provider'), ['waiting-application']),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

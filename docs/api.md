@@ -56,7 +56,9 @@ Password recovery uses Amazon SES. `POST /api/v1/auth/forgot-password` always re
 
 | Method | Path                          | Auth    | Description                        |
 | ------ | ----------------------------- | ------- | ---------------------------------- |
-| `GET`  | `/api/v1/me/onboarding-state` | Session | Return role-based onboarding state |
+| `GET`  | `/api/v1/me/onboarding-state` | Session | Return role-based onboarding state (explicit workspace for provider counts) |
+
+For a provider without `x-workspace-id`, onboarding returns `{ "role": "provider", "nextStep": "select_workspace" }`; discover memberships through `GET /api/v1/provider/workspaces` and select explicitly, even for a single PERSONAL workspace. With a valid explicit selection, onboarding returns the selected authorized portfolio count state (`hasCreatedFirstListing`, `create_first_listing` / `dashboard`). No first workspace is inferred. Applicant onboarding remains `browse_listings`.
 
 ## Public Listing Discovery
 
@@ -113,35 +115,38 @@ Detail response (`ApplicantListingDetailDto`) includes `district`, `isNew`, `pro
 
 Personalized responses (any request carrying a valid applicant session) use `Vary: Cookie` and `Cache-Control: private, no-store, must-revalidate` to prevent shared-cache leakage of applicant-specific data.
 
-DRAFT, PAUSED, ARCHIVED and RENTED listings are not accessible through these endpoints.
+DRAFT, PAUSED, RETIRED and RENTED listings are not accessible through these endpoints.
 
 ## Provider Listings
 
-Provider endpoints require an authenticated provider session and enforce listing ownership.
+Provider operational endpoints require an authenticated active User/session, an ACTIVE membership in an ACTIVE workspace, and an explicit `x-workspace-id` header. The header is only a selector; server-side membership and current listing participation establish authority. OWNER accesses the workspace portfolio; AGENT access is limited to listings currently assigned to that membership. A global provider User ID is not Listing ownership.
+
+`GET /api/v1/provider/workspaces` requires authentication but no workspace header. It returns a deterministically workspace-ID-ordered array of `{ workspaceId, membershipId, role: "OWNER" | "AGENT", kind: "PERSONAL" | "ORGANIZATION" }` for only the session user's ACTIVE memberships in ACTIVE workspaces. Zero memberships returns `[]`; suspended/removed memberships, closing/closed workspaces and foreign members are omitted. These facts support explicit selection, not reusable authorization grants. Every operational request revalidates authority.
 
 | Method  | Path                                     | Auth     | Description                                               |
 | ------- | ---------------------------------------- | -------- | --------------------------------------------------------- |
-| `POST`  | `/api/v1/provider/listings`              | Provider | Create a draft listing, optionally with its first image   |
-| `GET`   | `/api/v1/provider/listings`              | Provider | Get all owned listings with `activeApplicationsCount`     |
-| `GET`   | `/api/v1/provider/listings/:id`          | Provider | Get one owned listing                                     |
-| `PATCH` | `/api/v1/provider/listings/:id`          | Provider | Update an owned listing                                   |
-| `PATCH` | `/api/v1/provider/listings/:id/position` | Provider | Move an owned listing to a position in the provider order |
-| `PATCH` | `/api/v1/provider/listings/:id/publish`  | Provider | Publish an owned draft                                    |
+| `GET`   | `/api/v1/provider/workspaces`            | Session  | Discover own ACTIVE membership/workspace selectors       |
+| `POST`  | `/api/v1/provider/listings`              | Provider | Unavailable: 503 until quota/entitlement integration   |
+| `GET`   | `/api/v1/provider/listings`              | Provider | Get the authorized non-RETIRED workspace portfolio     |
+| `GET`   | `/api/v1/provider/listings/:id`          | Provider | Get one authorized workspace listing                                     |
+| `PATCH` | `/api/v1/provider/listings/:id`          | Provider | Update an authorized workspace listing                                   |
+| `PATCH` | `/api/v1/provider/listings/:id/position` | Provider | Move an authorized workspace listing to a position in the workspace order |
+| `PATCH` | `/api/v1/provider/listings/:id/publish`  | Provider | Publish an authorized draft                                    |
 | `PATCH` | `/api/v1/provider/listings/:id/draft`    | Provider | Move a published or paused listing back to draft          |
-| `PATCH` | `/api/v1/provider/listings/:id/pause`    | Provider | Pause an owned published listing                          |
-| `PATCH` | `/api/v1/provider/listings/:id/resume`   | Provider | Resume an owned paused listing                            |
-| `PATCH` | `/api/v1/provider/listings/:id/archive`  | Provider | Archive an owned draft, published, or paused listing      |
+| `PATCH` | `/api/v1/provider/listings/:id/pause`    | Provider | Pause an authorized published listing                          |
+| `PATCH` | `/api/v1/provider/listings/:id/resume`   | Provider | Resume an authorized paused listing                            |
+| `PATCH` | `/api/v1/provider/listings/:id/retire`  | Provider | Retire an authorized draft, published, paused, or rented listing      |
 | `PATCH` | `/api/v1/provider/listings/:id/rent`     | Provider | Mark a published or paused listing as rented              |
 
 `GET /api/v1/provider/listings/:id/active-applications` is documented under [Applications](#applications).
 
-`GET /api/v1/provider/listings` returns every listing owned by the authenticated provider, ordered by `displayOrder` ascending and then `id` ascending. Each item includes its `displayOrder` and `activeApplicationsCount`: the authoritative number of applications with status `ACTIVE` for that listing (expected domain `0`–`5`). WAITING and other non-ACTIVE statuses are not counted. The response does not expose applicant identities, profiles, or raw Prisma `_count` objects. After a successful position update or listing creation, that provider's `displayOrder` values are the contiguous ranks `1..N`.
+`GET /api/v1/provider/listings` returns authorized non-RETIRED listings in the explicitly selected workspace, ordered by `displayOrder` ascending and then `id` ascending. Each item includes its `displayOrder` and `activeApplicationsCount`: the authoritative number of applications with status `ACTIVE` for that listing (expected domain `0`–`5`). WAITING and other non-ACTIVE statuses are not counted. The response does not expose applicant identities, profiles, or raw Prisma `_count` objects. After a successful position update or listing creation, the workspace's active `displayOrder` values are the contiguous ranks `1..N`.
 
-`PATCH /api/v1/provider/listings/:id/position` accepts `{ "position": 1 }`. `position` is the visible rank of that listing among the provider's listings, from `1` through the provider's total listing count. It is not a raw `displayOrder` assignment. The move rewrites that provider's `displayOrder` values to the contiguous ranks `1..N` in one serializable transaction, and the response returns the moved listing. A move that leaves the listing at its current visible rank still compacts any gaps. New listings append at the visible end of the provider order.
+`PATCH /api/v1/provider/listings/:id/position` accepts `{ "position": 1 }`. `position` is the visible rank of that listing among the workspace's non-RETIRED listings, from `1` through its non-RETIRED listing count. It is not a raw `displayOrder` assignment. The move rewrites the workspace's active `displayOrder` values to the contiguous ranks `1..N` in one serializable transaction, and the response returns the moved listing. A move that leaves the listing at its current visible rank still compacts any gaps. Ordering changes require OWNER. New listings append at the visible end of workspace order. RETIRED listings have null `displayOrder`, release their active position and are excluded from the operational portfolio; retirement compacts the remaining ranks transactionally.
 
 Required property fields to publish: `street`, `zip`, `city`, `livingArea`, `rooms`, `bedrooms`, `coldRent`, `availableFrom`. A final `title` is also required; the frontend sends either its Provider override or its deterministic auto-title.
 
-Listing lifecycle transitions are guarded. A caller who does not own the listing receives `404`. Any other source state receives `409`. Publish still returns `422` with `missingFields` when a draft is incomplete.
+Listing lifecycle transitions are guarded. A caller without current workspace/listing authority receives `404`. Any other source state receives `409`. Publish still returns `422` with `missingFields` when a draft is incomplete.
 
 | Action  | Allowed sources                | Effect on `publishedAt`                                      |
 | ------- | ------------------------------ | ------------------------------------------------------------ |
@@ -149,23 +154,58 @@ Listing lifecycle transitions are guarded. A caller who does not own the listing
 | Draft   | `PUBLISHED`, `PAUSED`          | Preserved                                                    |
 | Pause   | `PUBLISHED`                    | Preserved                                                    |
 | Resume  | `PAUSED`                       | Preserved                                                    |
-| Archive | `DRAFT`, `PUBLISHED`, `PAUSED` | Preserved                                                    |
+| Retire | `DRAFT`, `PUBLISHED`, `PAUSED`, `RENTED` | Preserved                                                    |
 | Rent    | `PUBLISHED`, `PAUSED`          | Preserved                                                    |
 
-`ARCHIVED` and `RENTED` are terminal. Repeating an action, including a second archive, returns `409`. Pause hides the listing from applicant discovery and blocks new applications. Existing applications, conversations, documents, and viewings stay in place and follow their current state rules. Resume returns the same listing to `PUBLISHED` without refreshing `publishedAt`.
+`RETIRED` is irreversible; `RENTED` permits only retirement. Repeating an action, including a second retirement, returns `409`. Pause hides the listing from applicant discovery and blocks new applications. Existing applications, conversations, documents, and viewings stay in place and follow their current state rules. Resume returns the same listing to `PUBLISHED` without refreshing `publishedAt`.
 
-`POST /api/v1/provider/listings` accepts either `application/json` for listing data only, or `multipart/form-data` with the same listing fields and an optional `file` field. When `file` is provided, the API uploads the image to Cloudinary, creates the listing, stores image metadata in `listing_images`, and keeps the listing `photos` array in sync for existing consumers.
+`POST /api/v1/provider/listings` intentionally returns `503` after workspace authorization until quota/entitlement integration. The internal structural creation seam is not a public creation bypass.
 
-Example with first image:
+Provider detail/mutation DTOs expose only their explicit presentation, requirement, lifecycle timestamp and workspace/creator/responsibility/revision fields. Internal `assignmentSequence`, criteria revision/evidence and raw Prisma fields are excluded. Portfolio responses additionally expose `displayOrder` and `activeApplicationsCount`.
 
-```bash
-curl -X POST http://localhost:3000/api/v1/provider/listings \
-  -H "Cookie: sid=<session-cookie>" \
-  -F "objectType=apartment" \
-  -F "city=Berlin" \
-  -F "zip=10115" \
-  -F "file=@/path/to/photo.jpg"
+## Listing responsibility and transfer requests
+
+All routes below require a current authenticated User/session, an ACTIVE membership in an ACTIVE workspace and explicit `x-workspace-id`. The header is only a selector; current server-side authority and same-workspace eligibility are revalidated. Responsibility does not grant authority independently of membership/User status.
+
+| Method | Path | Authority |
+| --- | --- | --- |
+| `PATCH` | `/api/v1/provider/listings/:id/responsibility` | OWNER direct reassignment to an eligible ACTIVE same-workspace member |
+| `POST` | `/api/v1/provider/listings/:id/transfer-requests` | Current responsible ACTIVE AGENT requests an eligible ACTIVE same-workspace AGENT |
+| `POST` | `/api/v1/provider/listing-transfer-requests/:id/approve` | OWNER approves and applies responsibility atomically |
+| `POST` | `/api/v1/provider/listing-transfer-requests/:id/reject` | OWNER rejects without changing responsibility |
+| `POST` | `/api/v1/provider/listing-transfer-requests/:id/cancel` | Source AGENT cancels its pending request |
+
+Reassignment accepts `{ targetMembershipId, expectedListingRevision, commandId }`: member and command IDs are UUIDs; the expected revision is an optimistic precondition against the public Listing `revision`. Transfer creation accepts those inputs plus an ISO-8601 `expiresAt`. The three decision routes need no body. The caller-supplied command ID supports request retry identity; it is not a response field. Target acceptance is not required. No implicit cross-workspace reassignment is supported.
+
+Responsibility reassignment returns HTTP `200` with exactly:
+
+```json
+{
+  "listingId": "uuid",
+  "workspaceId": "uuid",
+  "responsibleMembershipId": "uuid",
+  "revision": 2
+}
 ```
+
+Assigning the already responsible member with a current revision returns the same shape without advancing revision or creating assignment evidence. Authorization and revision checks still apply to a no-op.
+
+Transfer creation and approve/reject/cancel return HTTP `201` with exactly:
+
+```json
+{
+  "id": "uuid",
+  "listingId": "uuid",
+  "workspaceId": "uuid",
+  "status": "REQUESTED",
+  "sourceMembershipId": "uuid",
+  "targetMembershipId": "uuid",
+  "expiresAt": "2027-01-01T12:00:00.000Z",
+  "createdAt": "2027-01-01T11:00:00.000Z"
+}
+```
+
+Statuses are uppercase `REQUESTED`, `APPROVED`, `REJECTED`, `CANCELLED` or `EXPIRED`; timestamps are ISO-8601 UTC strings. An identical pending creation retry returns the same business response and request identity. Terminal requests cannot complete twice. Expired/stale authority or resource bindings cannot be approved. Responses expose no SQL field names, assignment sequence, stored authority/member epochs, command/correlation IDs or other internal evidence. Existing not-found/forbidden rules and explicit workspace selection apply to every action.
 
 ## AI-Assisted Listing Extraction
 
@@ -212,10 +252,10 @@ In development, the API can start without Cloudinary credentials. Uploading imag
 
 | Method   | Path                                                   | Auth     | Description                                     |
 | -------- | ------------------------------------------------------ | -------- | ----------------------------------------------- |
-| `POST`   | `/api/v1/provider/listings/:listingId/images`          | Provider | Upload an additional image for an owned listing |
-| `GET`    | `/api/v1/provider/listings/:listingId/images`          | Provider | Get the images of an owned listing              |
-| `PATCH`  | `/api/v1/provider/listings/:listingId/images/order`    | Provider | Reorder the images of an owned listing          |
-| `DELETE` | `/api/v1/provider/listings/:listingId/images/:imageId` | Provider | Delete one image of an owned listing            |
+| `POST`   | `/api/v1/provider/listings/:listingId/images`          | Provider | Upload an additional image for an authorized workspace listing |
+| `GET`    | `/api/v1/provider/listings/:listingId/images`          | Provider | Get the images of an authorized workspace listing              |
+| `PATCH`  | `/api/v1/provider/listings/:listingId/images/order`    | Provider | Reorder the images of an authorized workspace listing          |
+| `DELETE` | `/api/v1/provider/listings/:listingId/images/:imageId` | Provider | Delete one image of an authorized workspace listing            |
 
 Request format:
 
@@ -229,6 +269,7 @@ Example:
 ```bash
 curl -X POST http://localhost:3000/api/v1/provider/listings/<listing-id>/images \
   -H "Cookie: sid=<session-cookie>" \
+  -H "x-workspace-id: <workspace-id>" \
   -F "file=@/path/to/photo.jpg"
 ```
 
@@ -276,16 +317,16 @@ After every delete or reorder, the image at `position` `0` becomes the only cove
 | `GET`    | `/api/v1/applicant/applications`                    | Applicant | Get applications submitted by the current applicant                 |
 | `DELETE` | `/api/v1/applicant/applications/:id`                | Applicant | Withdraw one owned application                                      |
 | `GET`    | `/api/v1/provider/applications`                     | Provider  | Get applications across provider listings                           |
-| `GET`    | `/api/v1/provider/listings/:id/applications`        | Provider  | Get applications for an owned listing                               |
+| `GET`    | `/api/v1/provider/listings/:id/applications`        | Provider  | Get applications for an authorized workspace listing                               |
 | `GET`    | `/api/v1/provider/listings/:id/active-applications` | Provider  | Get ACTIVE applications with provider-safe applicant summaries      |
 | `GET`    | `/api/v1/provider/listings/:id/exited-applications` | Provider  | Get REJECTED and WITHDRAWN applications that were previously ACTIVE |
-| `GET`    | `/api/v1/provider/listings/:id/waiting-count`       | Provider  | Get the waiting application count for an owned listing              |
+| `GET`    | `/api/v1/provider/listings/:id/waiting-count`       | Provider  | Get the waiting application count for an authorized workspace listing              |
 | `PATCH`  | `/api/v1/provider/applications/:id/reject`          | Provider  | Reject one owned ACTIVE application                                 |
 | `PATCH`  | `/api/v1/provider/applications/:id/restore`         | Provider  | Restore one owned REJECTED + NOT_SELECTED application               |
 
-`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an owned listing, ordered internally by `activeAt` ascending with `id` ascending as the deterministic tie-breaker. Legacy `ACTIVE` applications with a missing `activeAt` are backfilled from `createdAt` by migration; non-`ACTIVE` applications are not backfilled. Each item contains only `id`, `listingId`, `status`, `activeAt`, and a nested `applicant` summary with `name`, nullable `peopleCount`, and the nullable Phase 1 `introduction`. The introduction is trimmed plain text with a maximum of 250 characters; legacy profiles may return `null` until the applicant updates their profile. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, `queueOrder`, password hashes, or unrelated user fields.
+`GET /api/v1/provider/listings/:id/active-applications` returns at most five `ACTIVE` applications for an authorized workspace listing, ordered internally by `activeAt` ascending with `id` ascending as the deterministic tie-breaker. Legacy `ACTIVE` applications with a missing `activeAt` are backfilled from `createdAt` by migration; non-`ACTIVE` applications are not backfilled. Each item contains only `id`, `listingId`, `status`, `activeAt`, and a nested `applicant` summary with `name`, nullable `peopleCount`, and the nullable Phase 1 `introduction`. The introduction is trimmed plain text with a maximum of 250 characters; legacy profiles may return `null` until the applicant updates their profile. It never includes `WAITING` applications, applicant identifiers, email, household income, income proof, SCHUFA, household breakdowns, pets, smoking, rejection metadata, `queueOrder`, password hashes, or unrelated user fields.
 
-`GET /api/v1/provider/listings/:id/exited-applications` returns currently exited applicants for an owned listing. It shares the recent-exit projection with provider application and listing overviews. Any current `ACTIVE` or `WAITING` attempt excludes that applicant/listing pair. The newest attempt is selected by `createdAt` descending then `id` descending before terminal filtering; only `REJECTED` or `WITHDRAWN` attempts with verified previous ACTIVE participation for that listing qualify. Older attempts never reappear. Never-active applicants remain hidden. Existing lifecycle activities and provider events establish the latest exit and prior ACTIVE entry, including restoration to WAITING followed by withdrawal. Status-specific row dates provide fallback only when transition history is absent; incomplete or contradictory history is omitted. The response is `{ items: ProviderExitedApplicationResponseDto[], totalCount: number }`. Counts represent qualifying applicant/listing pairs; at most five cards are selected afterward, ordered by projected `exitedAt` descending then application ID descending. Each item contains `id`, `listingId`, `applicantName`, nullable `peopleCount` and `introduction`, `status`, `publicReason`, `activeAt`, `exitedAt`, and authoritative `canRestore`. `activeAt` is the latest verified ACTIVE entry for the pair before this exit. Withdrawn and system-rejected items are non-restorable. Provider `NOT_SELECTED` restoration additionally requires current eligibility, a published listing and the existing 60-second throttle; the mutation still revalidates transactionally. Reads use RepeatableRead snapshots. The endpoint never exposes applicant identifiers, email, income, eligibility facts, document availability, queue position, secrets, or unrelated profile fields. Application history and all capacity/queue rules remain unchanged.
+`GET /api/v1/provider/listings/:id/exited-applications` returns currently exited applicants for an authorized workspace listing. It shares the recent-exit projection with provider application and listing overviews. Any current `ACTIVE` or `WAITING` attempt excludes that applicant/listing pair. The newest attempt is selected by `createdAt` descending then `id` descending before terminal filtering; only `REJECTED` or `WITHDRAWN` attempts with verified previous ACTIVE participation for that listing qualify. Older attempts never reappear. Never-active applicants remain hidden. Existing lifecycle activities and provider events establish the latest exit and prior ACTIVE entry, including restoration to WAITING followed by withdrawal. Status-specific row dates provide fallback only when transition history is absent; incomplete or contradictory history is omitted. The response is `{ items: ProviderExitedApplicationResponseDto[], totalCount: number }`. Counts represent qualifying applicant/listing pairs; at most five cards are selected afterward, ordered by projected `exitedAt` descending then application ID descending. Each item contains `id`, `listingId`, `applicantName`, nullable `peopleCount` and `introduction`, `status`, `publicReason`, `activeAt`, `exitedAt`, and authoritative `canRestore`. `activeAt` is the latest verified ACTIVE entry for the pair before this exit. Withdrawn and system-rejected items are non-restorable. Provider `NOT_SELECTED` restoration additionally requires current eligibility, a published listing and the existing 60-second throttle; the mutation still revalidates transactionally. Reads use RepeatableRead snapshots. The endpoint never exposes applicant identifiers, email, income, eligibility facts, document availability, queue position, secrets, or unrelated profile fields. Application history and all capacity/queue rules remain unchanged.
 
 `GET /api/v1/listings/:id/eligibility` is read-only, takes no body, and returns `{ canApply, result, evaluatedAt }`. `result` is `MATCH`, `NO_MATCH`, `MATCH_WITH_OBSERVATIONS` or `INSUFFICIENT_INFORMATION`; `canApply` is true only for the two matching results. It describes profile prequalification, not permission to submit regardless of admission history. Applicant responses omit internal reasons, warnings, checks, evaluated facts and private thresholds. An eligibility-blocked apply returns HTTP 422 with `message: "Applicant is not eligible for this listing"`, `code: "APPLICANT_NOT_ELIGIBLE"`, `canApply: false`, `result` and `evaluatedAt`. Provider-authorized restoration errors retain their existing detailed contract.
 
@@ -310,7 +351,7 @@ Authenticated active applicants can save listings and report published listings.
 
 Saving requires a publicly available published listing. Unsaving is idempotent and does not require the listing to remain published. `PUT` and `DELETE` return `{ saved: boolean, savedAt: string | null }`.
 
-`GET /api/v1/applicant/saved-listings` returns the authenticated active applicant's saved listings as the same applicant-safe summary contract used by discovery (`items`, `nextCursor`, `total`). Results include only published listings; saved rows for paused, archived or rented listings remain persisted but are omitted from the response. Items are ordered by newest save first. Every returned item has `isSaved: true`. Cursor pagination uses `limit` (default `20`, max `50`) and optional `cursor`.
+`GET /api/v1/applicant/saved-listings` returns the authenticated active applicant's saved listings as the same applicant-safe summary contract used by discovery (`items`, `nextCursor`, `total`). Results include only published listings; saved rows for paused, retired or rented listings remain persisted but are omitted from the response. Items are ordered by newest save first. Every returned item has `isSaved: true`. Cursor pagination uses `limit` (default `20`, max `50`) and optional `cursor`.
 
 `POST /api/v1/applicant/listings/:listingId/report` accepts `reason` (`MISLEADING_INFO`, `SCAM_OR_FRAUD`, `DISCRIMINATION`, `INAPPROPRIATE_CONTENT`, `DUPLICATE_OR_SPAM`, `OTHER`) and optional `detail` (max 500 characters, trimmed; empty becomes `null`). `OTHER` requires a non-empty `detail`. One report per applicant and listing; duplicates return `409`. The response exposes only `id`, `listingId`, `reason` and `createdAt`.
 
@@ -371,7 +412,7 @@ Bodies are trimmed and limited to 1–4000 characters. Angle brackets and contro
 
 Mark-as-read updates only unread incoming messages through the supplied positive sequence. A cutoff beyond the latest message is HTTP 400. Repeating a cutoff is idempotent. A closed conversation returns `markedCount: 0`. The cutoff prevents a read acknowledgement from marking messages that arrive after the client-observed sequence.
 
-Unauthorized sessions receive HTTP 401, wrong roles HTTP 403, and ownership failures/hidden WAITING applications HTTP 404. Permission-disabled or inactive-process sends receive HTTP 409. Provider reads require an owned listing and an application that is ACTIVE or was previously active; WAITING always returns HTTP 404, including restored WAITING applications with old conversation history. Applicants can read only their own application history.
+Unauthorized sessions receive HTTP 401, wrong roles HTTP 403, and ownership failures/hidden WAITING applications HTTP 404. Permission-disabled or inactive-process sends receive HTTP 409. Provider reads require an authorized workspace listing and an application that is ACTIVE or was previously active; WAITING always returns HTTP 404, including restored WAITING applications with old conversation history. Applicants can read only their own application history.
 
 If a provider message creates the conversation, creation, `CONVERSATION_OPENED`, and `MESSAGE_SENT` commit atomically. Enabling replies may create an empty conversation first. Later messages each record `MESSAGE_SENT`. Activity payloads contain no message bodies. Neither uploads nor notifications are part of this phase.
 

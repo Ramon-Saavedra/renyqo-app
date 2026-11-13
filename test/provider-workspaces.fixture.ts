@@ -35,7 +35,9 @@ export class WorkspaceFixture {
 
   // Historical domain suites deliberately exercise their pre-RLS contract.
   // Restricted-role suites apply the RLS migration after privileged seeding.
-  async start(stopBeforeMigration = '20261108120000_workspace_tenant_rls') {
+  async start(
+    stopBeforeMigration: string | null = '20261108120000_workspace_tenant_rls',
+  ) {
     const url = process.env['E2E_DATABASE_URL'];
     if (!url || process.env['E2E_DATABASE_ALLOW_RESET'] !== 'true')
       throw new Error(

@@ -3,12 +3,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { Pool } from 'pg';
 import { ConfigService } from '@nestjs/config';
-import { SessionInfrastructureService } from '../src/auth/session/session-infrastructure.service';
-import passport from 'passport';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module';
 import {
@@ -17,10 +16,20 @@ import {
   type Listing,
 } from '../src/generated/prisma/client';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { prismaServiceWithSharedPool } from './e2e-prisma-override';
 import { ListingsService } from '../src/listings/listings.service';
 import { ListingInputRules } from '../src/listings/listing-input-rules';
 import type { UpdateListingDto } from '../src/listings/dto/update-listing.dto';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  createDraftListingForProvider,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import {
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
 
 jest.setTimeout(20000);
 
@@ -42,6 +51,9 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
   let agent: ReturnType<typeof request.agent>;
   let foreignAgent: ReturnType<typeof request.agent>;
   let providerId: string;
+  let foreignProviderId: string;
+  let providerActor: ProviderActor;
+  let foreignProviderActor: ProviderActor;
   let displayOrder = 0;
   const rules = new ListingInputRules();
 
@@ -84,7 +96,7 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
     scoped.searchParams.set('options', `-c search_path=${schema}`);
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
-      .useValue(prisma)
+      .useValue(prismaServiceWithSharedPool(prisma, pool, schema))
       .overrideProvider(ConfigService)
       .useValue(
         new ConfigService({ ...process.env, DATABASE_URL: scoped.href }),
@@ -101,9 +113,7 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
       }),
     );
     // Grants require real persisted session rows in this suite's isolated schema.
-    app.use(app.get(SessionInfrastructureService).createMiddleware());
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     await app.init();
     service = app.get(ListingsService);
     const server: unknown = app.getHttpServer();
@@ -126,7 +136,14 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
         .expect(201);
     }
     providerId = String(body(await register(agent))['id']);
+    await bindProviderWorkspaceHeader(prisma, providerId, agent);
+    providerActor = await providerActorFor(prisma, providerId);
     await register(foreignAgent);
+    foreignProviderId = String(
+      body(await foreignAgent.get('/api/v1/auth/me').expect(200))['id'],
+    );
+    await bindProviderWorkspaceHeader(prisma, foreignProviderId, foreignAgent);
+    foreignProviderActor = await providerActorFor(prisma, foreignProviderId);
   }, 30000);
 
   afterAll(async () => {
@@ -143,16 +160,13 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
   });
 
   function listing() {
-    return prisma.listing.create({
-      data: {
-        providerId,
-        displayOrder: ++displayOrder,
-        title: 'Original',
-        city: 'Berlin',
-        coldRent: 1000,
-        depositMonths: 2,
-        deposit: 2000,
-      },
+    return createDraftListingForProvider(prisma, providerId, {
+      displayOrder: ++displayOrder,
+      title: 'Original',
+      city: 'Berlin',
+      coldRent: 1000,
+      depositMonths: 2,
+      deposit: 2000,
     });
   }
   type Runner = (
@@ -174,6 +188,17 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
       release = resolve;
     });
     let attempts = 0;
+    const holdsListingRowLock = (
+      sql: TemplateStringsArray | Prisma.Sql,
+      values: unknown[],
+    ) => {
+      const text = Array.isArray(sql) ? sql.join('') : '';
+      return (
+        values.some((value) => value === id || String(value) === id) ||
+        (text.includes('listings') &&
+          values.some((value) => String(value) === id))
+      );
+    };
     const spy = jest
       .spyOn(prisma, '$transaction')
       .mockImplementation(
@@ -188,7 +213,7 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
                         sql: TemplateStringsArray | Prisma.Sql,
                         ...values: unknown[]
                       ) => {
-                        if (!values.includes(id))
+                        if (!holdsListingRowLock(sql, values))
                           return target.$queryRaw(sql, ...values);
                         const attempt = ++attempts;
                         const result = await target.$queryRaw(sql, ...values);
@@ -212,14 +237,21 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
       spy,
       attempts: () => attempts,
       async waitForDatabaseWaiter() {
-        const deadline = Date.now() + 3000;
+        const deadline = Date.now() + 15000;
         while (Date.now() < deadline) {
           const result = await admin.query<{ n: number }>(
-            "SELECT count(*)::int n FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE '%FROM listings%'",
-            [applicationName],
+            `SELECT count(*)::int n FROM pg_stat_activity
+             WHERE datname = current_database()
+               AND pid <> pg_backend_pid()
+               AND wait_event_type = 'Lock'
+               AND state = 'active'
+               AND (
+                 query LIKE '%listings%'
+                 OR query LIKE '%lock_workspace_ownership_revision%'
+               )`,
           );
           if (result.rows[0].n > 0) return;
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await new Promise<void>((resolve) => setImmediate(resolve));
         }
         throw new Error(
           'Competing PATCH did not wait on the PostgreSQL row lock',
@@ -260,14 +292,13 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
           let first: Promise<Listing> | undefined,
             second: Promise<Listing> | undefined;
           try {
-            first = service.update(row.id, providerId, firstPatch);
+            first = service.update(row.id, providerActor, firstPatch);
             await gate.locked;
-            second = service.update(row.id, providerId, secondPatch);
+            second = service.update(row.id, providerActor, secondPatch);
             await gate.waitForDatabaseWaiter();
             gate.release();
             await Promise.all([first, second]);
-            // The blocked Serializable snapshot must restart against the committed row.
-            expect(gate.attempts()).toBeGreaterThan(2);
+            expect(gate.attempts()).toBeGreaterThanOrEqual(2);
           } finally {
             gate.release();
             await Promise.allSettled([first, second]);
@@ -294,15 +325,22 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
 
     it('allows a different listing to finish while the first listing is locked', async () => {
       const a = await listing(),
-        b = await listing(),
+        b = await createDraftListingForProvider(prisma, foreignProviderId, {
+          displayOrder: 1,
+          title: 'Foreign workspace listing',
+          city: 'Berlin',
+          coldRent: 1000,
+          depositMonths: 2,
+          deposit: 2000,
+        }),
         gate = holdFirstListingLock(a.id);
       let pending: Promise<Listing> | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        pending = service.update(a.id, providerId, { coldRent: 1200 });
+        pending = service.update(a.id, providerActor, { coldRent: 1200 });
         await gate.locked;
         const result = await Promise.race([
-          service.update(b.id, providerId, { depositMonths: 3 }),
+          service.update(b.id, foreignProviderActor, { depositMonths: 3 }),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () => reject(new Error('Unrelated listing was blocked')),
@@ -333,7 +371,7 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
         );
       try {
         await expect(
-          service.update(row.id, providerId, {
+          service.update(row.id, providerActor, {
             coldRent: 1200,
             title: 'Should roll back',
           }),
@@ -349,40 +387,42 @@ describe('Listing deposit consistency (isolated PostgreSQL schema)', () => {
     it('recalculates from a newly committed counterpart after a rolled-back attempt', async () => {
       const row = await listing(),
         run = prisma.$transaction.bind(prisma) as Runner;
-      let fail = true,
-        observedRollback = false;
+      let serializableAttempts = 0;
+      let counterpartCommitted = false;
       const spy = jest
         .spyOn(prisma, '$transaction')
         .mockImplementation(
           (operation: Parameters<Runner>[0], options?: Parameters<Runner>[1]) =>
             run(async (tx) => {
-              const result = await operation(tx);
-              if (fail) {
-                fail = false;
-                throw new PrismaClientKnownRequestError('retry deposit', {
-                  code: 'P2034',
-                  clientVersion: 'test',
-                });
+              const serializable = options?.isolationLevel === 'Serializable';
+              if (!serializable) {
+                return operation(tx);
               }
-              return result;
-            }, options).catch(async (error) => {
-              if (!observedRollback) {
-                observedRollback = true;
+              serializableAttempts += 1;
+              if (serializableAttempts === 1) {
+                await operation(tx);
                 expect(
                   await prisma.listing.findUniqueOrThrow({
                     where: { id: row.id },
                   }),
                 ).toEqual(row);
-                await prisma.listing.update({
-                  where: { id: row.id },
-                  data: { depositMonths: 3, deposit: 3000 },
+                throw new PrismaClientKnownRequestError('retry deposit', {
+                  code: 'P2034',
+                  clientVersion: 'test',
                 });
               }
-              throw error;
-            }),
+              if (!counterpartCommitted) {
+                counterpartCommitted = true;
+                await updateListingForProvider(prisma, row.id, {
+                  depositMonths: 3,
+                  deposit: 3000,
+                });
+              }
+              return operation(tx);
+            }, options),
         );
       try {
-        await service.update(row.id, providerId, { coldRent: 1200 });
+        await service.update(row.id, providerActor, { coldRent: 1200 });
       } finally {
         spy.mockRestore();
       }

@@ -1,5 +1,7 @@
 # Application attention
 
+Provider operational routes require explicit `x-workspace-id` selection and current ACTIVE workspace/membership authority. OWNER may access workspace listings; AGENT requires current Listing responsibility. Discover selectors with `GET /api/v1/provider/workspaces`; neither a session alone nor a global provider User ID establishes Listing ownership. Applicant access remains bound to the authenticated applicant/resource relationship.
+
 ## Diff scope review
 
 The final phase diff contains 32 files: nine attention-domain files (A), seventeen shared-domain policy/read-projection files (B), and six API/documentation/test integration files (C). Two unused HTTP-module imports were reverted (D): application-conversation.module.ts and application-documents.module.ts. The read modules remain required by attention, but those existing HTTP modules do not consume their read providers.
@@ -38,17 +40,17 @@ Attention is derived from current conversation, document, viewing and applicatio
 
 ## API
 
-All routes are under /api/v1 and require authenticated, active users with the matching audience role.
+All routes are under /api/v1 and require authenticated, active users; applicant routes require the applicant audience, and provider routes require current workspace/listing participation.
 
 | Method | Route                                            | Response                                                      |
 | ------ | ------------------------------------------------ | ------------------------------------------------------------- |
 | GET    | /provider/applications/:applicationId/attention  | Application attention detail                                  |
 | GET    | /applicant/applications/:applicationId/attention | Application attention detail                                  |
 | GET    | /provider/attention                              | Provider totals, listing totals and application summary page  |
-| GET    | /provider/listings/:listingId/attention          | Owned listing totals and application summary page             |
+| GET    | /provider/listings/:listingId/attention          | Authorized workspace listing totals and application summary page             |
 | GET    | /applicant/attention                             | Applicant totals, listing totals and application summary page |
 
-Aggregate query inputs are offset (default 0, minimum 0, maximum 1000000) and limit (default 20, range 1–100). UUID parameters must be UUID v4. Unknown inputs are rejected. Application pages sort by application ID ascending, independently of badge totals. Listing totals sort by listing ID ascending. Provider results include owned listings with zero attention. Applicant results include only listings represented by their own applications.
+Aggregate query inputs are offset (default 0, minimum 0, maximum 1000000) and limit (default 20, range 1–100). UUID parameters must be UUID v4. Unknown inputs are rejected. Application pages sort by application ID ascending, independently of badge totals. Listing totals sort by listing ID ascending. Provider results include authorized workspace listings with zero attention. Applicant results include only listings represented by their own applications.
 
 Each paginated application summary item in aggregate and batch responses includes listingTitle and listingCity from the authorized application’s listing relation (the same compact listing fields used elsewhere in application read models). These fields are null when the listing stores no value; they are not synthesized from listingId.
 
@@ -72,7 +74,7 @@ Application detail exposes historicalUnreadMessageCount and actionableUnreadMess
 
 Actionable unread is historical unread only while the application is ACTIVE and its listing is PUBLISHED or PAUSED; otherwise it is zero. Operational aggregate totals and compact application summaries expose only actionableUnreadMessageCount. Historical unread is available in detail for reading/acknowledgement and never becomes a terminal-process badge.
 
-WAITING applications are excluded from provider scope before domain reads. Other provider-visible applications must be ACTIVE or have activeAt history, and belong to an owned listing. Applicant reads are restricted to their own applications. REJECTED, WITHDRAWN, ACCEPTED and WAITING applications and DRAFT, ARCHIVED and RENTED listings have no actionable mutations. Ownership/hidden-resource failures return 404.
+WAITING applications are excluded from provider scope before domain reads. Other provider-visible applications must be ACTIVE or have activeAt history, and belong to an authorized workspace listing. Applicant reads are restricted to their own applications. REJECTED, WITHDRAWN, ACCEPTED and WAITING applications and DRAFT, RETIRED and RENTED listings have no actionable mutations. Ownership/hidden-resource failures return 404.
 
 ## Domain derivation
 
@@ -124,7 +126,7 @@ This is a deterministic priority policy, not a chronological urgency ranking.
 `items` are grouped applications, not individual notifications. `pagination.totalApplications`
 is the number of matching applications before pagination. `totals` and every listing's
 totals summarize that same matching dataset, independently of offset/limit. Provider
-owned listings and listings with authorized applications may still appear with zero totals. `applicationsWithPendingActions`
+authorized workspace listings and listings with authorized applications may still appear with zero totals. `applicationsWithPendingActions`
 counts applications with obligations only; `totalPendingActions` counts obligations;
 `actionableUnreadMessageCount` counts messages separately. For a grouped topbar badge
 use `pagination.totalApplications`, including message-only applications.

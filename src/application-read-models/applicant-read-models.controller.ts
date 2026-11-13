@@ -1,8 +1,10 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
 import { ApplicantOnlyGuard } from '../common/guards/applicant-only.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { SafeUser } from '../users/types/safe-user.type';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
+
 import { ApplicantApplicationOverviewQueryService } from './applicant-application-overview-query.service';
 import { ApplicationWorkspaceQueryService } from './application-workspace-query.service';
 import { ApplicationHistoryQueryService } from './application-history-query.service';
@@ -24,32 +26,32 @@ export class ApplicantReadModelsController {
 
   @Get('overview')
   overview(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Query() query: ApplicantApplicationOverviewQueryDto,
   ) {
-    return this.overviews.overview(user.id, query);
+    return this.overviews.overview(sessionAuthorityFromRequest(request), query);
   }
 
   @Get(':applicationId/workspace')
   workspace(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Param() params: ReadModelApplicationParamsDto,
   ) {
     return this.workspaces.workspace(
       params.applicationId,
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
     );
   }
 
   @Get(':applicationId/activity')
   activity(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Param() params: ReadModelApplicationParamsDto,
     @Query() query: ReadModelPageQueryDto,
   ) {
     return this.history.activity(
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
       params.applicationId,
       query,
@@ -58,12 +60,12 @@ export class ApplicantReadModelsController {
 
   @Get(':applicationId/document-history')
   documents(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Param() params: ReadModelApplicationParamsDto,
     @Query() query: ReadModelPageQueryDto,
   ) {
     return this.history.documents(
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
       params.applicationId,
       query,
@@ -72,12 +74,12 @@ export class ApplicantReadModelsController {
 
   @Get(':applicationId/document-requests/:requestId/files')
   files(
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
     @Param() params: ReadModelRequestParamsDto,
     @Query() query: ReadModelPageQueryDto,
   ) {
     return this.history.files(
-      user.id,
+      sessionAuthorityFromRequest(request),
       'applicant',
       params.applicationId,
       params.requestId,

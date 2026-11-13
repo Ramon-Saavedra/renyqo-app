@@ -2,6 +2,8 @@
 
 This phase adds read composition. Lifecycle, conversation, document, viewing and attention domains remain authoritative. No frontend changes, workflow redesign, persisted summaries, caches, materialized views or migrations are introduced.
 
+Provider operational routes require explicit `x-workspace-id` selection and current ACTIVE workspace/membership authority. OWNER may access workspace listings; AGENT requires current Listing responsibility. Discover selectors with `GET /api/v1/provider/workspaces`; neither a session alone nor a global provider User ID establishes Listing ownership. Applicant access remains bound to the authenticated applicant/resource relationship.
+
 ## Endpoints
 
 All routes below are authenticated GET requests under `/api/v1`. Provider and applicant role guards apply to their respective routes.
@@ -39,13 +41,13 @@ Query parameters are `cursor` and `limit` on every paginated collection. Applica
 
 Applicant overview ordering uses the representative application's submission time (`createdAt`). There is no applicant quality ranking. Each response has its own consistent snapshot; cursors do not freeze the database across subsequent requests. Moving listing positions or new records can affect later pages.
 
-For each owned listing, applicant overview selects exactly one application row: if the listing has an `ACTIVE` or `WAITING` attempt, that attempt is shown; otherwise the latest closed attempt (`ACCEPTED`, `REJECTED` or `WITHDRAWN`) by `createdAt DESC, id DESC`. Older attempts for the same listing remain stored for provider history and are not deleted. The `group` filter applies after this collapse. Pagination, `totalCount`, `hasMore` and cursors describe the collapsed, filtered set only.
+For each listing represented by the applicant's own applications, applicant overview selects exactly one application row: if the listing has an `ACTIVE` or `WAITING` attempt, that attempt is shown; otherwise the latest closed attempt (`ACCEPTED`, `REJECTED` or `WITHDRAWN`) by `createdAt DESC, id DESC`. Older attempts for the same listing remain stored for provider history and are not deleted. The `group` filter applies after this collapse. Pagination, `totalCount`, `hasMore` and cursors describe the collapsed, filtered set only.
 
 ## Compact contracts
 
 Listing identity contains `id`, `title`, `city`, `coldRent`, `status` and `imageUrl`. Applicant cards and both provider dashboard summaries select one cover image, with fallback to the earliest position and an ID tie-breaker. They do not retrieve every image. `imageUrl` contains the stored browser-accessible `secureUrl`, never the Cloudinary `publicId` or a storage key; it is explicitly `null` when the listing has no photos.
 
-For “Meine Objekte”, use `items[i].listing.imageUrl` from `GET /api/v1/provider/listings/overview`. For “Ausgewähltes Objekt”, use `listing.imageUrl` from `GET /api/v1/provider/listings/:listingId/application-overview`. Both retain provider ownership checks and their existing response shape. Example listing identity: `{ "id": "11111111-1111-4111-8111-111111111111", "title": "Zimmer in Nordhorn", "city": "Nordhorn", "coldRent": 500, "status": "PUBLISHED", "imageUrl": "https://res.cloudinary.com/example/image/upload/cover.jpg" }`. Render a placeholder when `imageUrl` is null. Refresh both queries after changing the main photo. The provider frontend is not in this repository, so its actual request/mapping cannot be verified here.
+For “Meine Objekte”, use `items[i].listing.imageUrl` from `GET /api/v1/provider/listings/overview`. For “Ausgewähltes Objekt”, use `listing.imageUrl` from `GET /api/v1/provider/listings/:listingId/application-overview`. Both retain current workspace/listing participation checks and their existing response shape. Example listing identity: `{ "id": "11111111-1111-4111-8111-111111111111", "title": "Zimmer in Nordhorn", "city": "Nordhorn", "coldRent": 500, "status": "PUBLISHED", "imageUrl": "https://res.cloudinary.com/example/image/upload/cover.jpg" }`. Render a placeholder when `imageUrl` is null. Refresh both queries after changing the main photo. The provider frontend is not in this repository, so its actual request/mapping cannot be verified here.
 
 Previously both provider constructors omitted the image argument and therefore always serialized the DTO default `null`. Both now use the same batched image selector as applicant cards and workspaces, within the authorized read transaction. This does not change the legacy `/provider/listings` or `/provider/listings/:id` contracts: the legacy detail response exposes `images[].secureUrl` with `isCover`; its `photos` field is not the compact dashboard image field.
 
@@ -77,9 +79,9 @@ Existing message, document-content and viewing-history endpoints remain separate
 
 ## Privacy and compatibility
 
-Provider identity reads require owned listings and the shared provider visibility rule: ACTIVE applications or non-WAITING applications that were previously active. WAITING and never-active exited applications are excluded from identity rows, attention, unread and domain-existence projections. The anonymous WAITING count is the only permitted exception and is scoped to owned listings.
+Provider identity reads require authorized workspace listings and the shared provider visibility rule: ACTIVE applications or non-WAITING applications that were previously active. WAITING and never-active exited applications are excluded from identity rows, attention, unread and domain-existence projections. The anonymous WAITING count is the only permitted exception and is scoped to owned listings.
 
-Recent exits have a bounded preview exception for the latest terminal attempt of an applicant previously ACTIVE for that same owned listing, established through retained rows or lifecycle history. This includes a later WAITING withdrawal after restoration or a fresh attempt. It does not grant provider access to that attempt's workspace, activities, documents or conversations, and it never exposes a current WAITING identity or an applicant who was never ACTIVE. Missing/contradictory history is omitted.
+Recent exits have a bounded preview exception for the latest terminal attempt of an applicant previously ACTIVE for that same authorized workspace listing, established through retained rows or lifecycle history. This includes a later WAITING withdrawal after restoration or a fresh attempt. It does not grant provider access to that attempt's workspace, activities, documents or conversations, and it never exposes a current WAITING identity or an applicant who was never ACTIVE. Missing/contradictory history is omitted.
 
 Applicants read only their own applications. Unauthorized/hidden applications and foreign document requests return 404. Activity visibility filtering happens before pagination and counting. Terminal history remains readable under the existing audience rules, with operational capabilities disabled where domain rules require it.
 

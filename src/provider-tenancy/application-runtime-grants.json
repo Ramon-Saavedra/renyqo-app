@@ -1,0 +1,41 @@
+{
+  "SELECT,INSERT,UPDATE": [
+    "users",
+    "password_reset_tokens",
+    "applications",
+    "application_viewings",
+    "viewing_workflows",
+    "viewing_proposals",
+    "viewing_appointments",
+    "application_consideration_positions",
+    "application_no_show_consequences",
+    "notifications",
+    "application_conversations",
+    "application_messages",
+    "application_document_requests",
+    "application_document_files",
+    "applicant_profiles",
+    "outbox_events",
+    "viewing_command_receipts",
+    "application_eligibility_assessments",
+    "application_verification_subjects",
+    "verification_command_receipts"
+  ],
+  "SELECT,INSERT": [
+    "application_viewing_outcomes",
+    "application_viewing_interests",
+    "listing_events",
+    "application_activities",
+    "listing_reports",
+    "listing_criteria_revisions",
+    "application_eligibility_checks",
+    "verification_decisions"
+  ],
+  "SELECT,INSERT,UPDATE,DELETE": [
+    "user_sessions",
+    "session_auth_grants",
+    "saved_listings",
+    "listing_images"
+  ],
+  "DELETE": ["outbox_events"]
+}

@@ -1,3 +1,6 @@
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { providerActorFromRequest } from '../provider-authorization/provider-listing-access';
 import { ViewingWorkflowHistoryQueryService } from './viewing-workflow-history-query.service';
 import { ViewingQueryDto } from './dto/viewing-input.dto';
 import {
@@ -11,9 +14,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { ProviderOnlyGuard } from '../common/guards/provider-only.guard';
-import type { SafeUser } from '../users/types/safe-user.type';
 import { ViewingApplicationParamsDto } from './dto/viewing-input.dto';
 import {
   WorkflowCommandDto,
@@ -29,7 +29,7 @@ import {
   WorkflowOutcomeDto,
 } from './dto/workflow-command.dto';
 
-@UseGuards(AuthenticatedGuard, ProviderOnlyGuard)
+@UseGuards(AuthenticatedGuard)
 @Controller('provider/applications/:applicationId/viewing-workflow')
 export class ProviderViewingWorkflowController {
   constructor(
@@ -39,22 +39,22 @@ export class ProviderViewingWorkflowController {
   @Get('proposals') proposals(
     @Param() params: ViewingApplicationParamsDto,
     @Query() query: ViewingQueryDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.history.proposals(
       params.applicationId,
-      user.id,
+      providerActorFromRequest(request),
       'provider',
       query,
     );
   }
   @Get('proposals/:proposalId') proposal(
     @Param() params: WorkflowProposalParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
     return this.history.proposals(
       params.applicationId,
-      user.id,
+      providerActorFromRequest(request),
       'provider',
       new ViewingQueryDto(),
       params.proposalId,
@@ -65,120 +65,169 @@ export class ProviderViewingWorkflowController {
   consideration(
     @Param() params: WorkflowAppointmentParamsDto,
     @Body() body: WorkflowConsiderationDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'consideration',
-      appointmentId: params.appointmentId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'consideration',
+        appointmentId: params.appointmentId,
+        body,
+      },
+    );
   }
   @Post('appointments/:appointmentId/outcome')
   @HttpCode(200)
   outcome(
     @Param() params: WorkflowAppointmentParamsDto,
     @Body() body: WorkflowOutcomeDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'outcome',
-      appointmentId: params.appointmentId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'outcome',
+        appointmentId: params.appointmentId,
+        body,
+      },
+    );
   }
   @Get() snapshot(
     @Param() params: ViewingApplicationParamsDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.snapshot(params.applicationId, user.id, 'provider');
+    return this.commands.snapshot(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+    );
   }
   @Post('reconcile')
   @HttpCode(200)
   reconcile(
     @Param() params: ViewingApplicationParamsDto,
     @Body() body: WorkflowCommandDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'reconcile',
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'reconcile',
+        body,
+      },
+    );
   }
   @Post('invitations')
   @HttpCode(200)
   invite(
     @Param() params: ViewingApplicationParamsDto,
     @Body() body: WorkflowScheduleDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'invite',
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'invite',
+        body,
+      },
+    );
   }
   @Post('proposals/:proposalId/accept')
   @HttpCode(200)
   accept(
     @Param() params: WorkflowProposalParamsDto,
     @Body() body: WorkflowCommandDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'accept',
-      proposalId: params.proposalId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'accept',
+        proposalId: params.proposalId,
+        body,
+      },
+    );
   }
   @Post('proposals/:proposalId/reject')
   @HttpCode(200)
   reject(
     @Param() params: WorkflowProposalParamsDto,
     @Body() body: WorkflowCommandDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'reject',
-      proposalId: params.proposalId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'reject',
+        proposalId: params.proposalId,
+        body,
+      },
+    );
   }
   @Post('proposals/:proposalId/counterproposal')
   @HttpCode(200)
   counterproposal(
     @Param() params: WorkflowProposalParamsDto,
     @Body() body: WorkflowScheduleDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'counterproposal',
-      proposalId: params.proposalId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'counterproposal',
+        proposalId: params.proposalId,
+        body,
+      },
+    );
   }
   @Post('appointments/:appointmentId/replacement')
   @HttpCode(200)
   replacement(
     @Param() params: WorkflowAppointmentParamsDto,
     @Body() body: WorkflowScheduleDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'replacement',
-      appointmentId: params.appointmentId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'replacement',
+        appointmentId: params.appointmentId,
+        body,
+      },
+    );
   }
   @Post(':workflowId/close')
   @HttpCode(200)
   close(
     @Param() params: WorkflowCloseParamsDto,
     @Body() body: WorkflowCloseDto,
-    @CurrentUser() user: SafeUser,
+    @Req() request: Request,
   ) {
-    return this.commands.execute(params.applicationId, user.id, 'provider', {
-      action: 'close',
-      workflowId: params.workflowId,
-      body,
-    });
+    return this.commands.execute(
+      params.applicationId,
+      providerActorFromRequest(request),
+      'provider',
+      {
+        action: 'close',
+        workflowId: params.workflowId,
+        body,
+      },
+    );
   }
 }

@@ -1,3 +1,4 @@
+import { unitRequest } from '../../test/unit-workspace-authority';
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -113,7 +114,10 @@ describe('ApplicantProfileController', () => {
         householdNetIncome: 4000,
       });
 
-      const result = await controller.updateProfile(makeApplicantUser(), dto);
+      const result = await controller.updateProfile(
+        unitRequest(makeApplicantUser()),
+        dto,
+      );
 
       expect(result).toBeInstanceOf(ApplicantProfileResponseDto);
       expect(result.householdNetIncome).toBe(4000);
@@ -123,9 +127,12 @@ describe('ApplicantProfileController', () => {
       const profile = makeProfile();
       applicantProfileService.upsert.mockResolvedValue(profile);
 
-      const result = await controller.updateProfile(makeApplicantUser(), {
-        householdNetIncome: 4000,
-      });
+      const result = await controller.updateProfile(
+        unitRequest(makeApplicantUser()),
+        {
+          householdNetIncome: 4000,
+        },
+      );
       expect(result).not.toHaveProperty('id');
       expect(result).not.toHaveProperty('applicantId');
     });

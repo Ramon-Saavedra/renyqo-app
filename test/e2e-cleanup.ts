@@ -1,11 +1,26 @@
 import type { PrismaClient } from '../src/generated/prisma/client';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
 
-/** Test-only reset of the complete FK graph, including immutable history.
- * TRUNCATE does not invoke row DELETE triggers; no production constraint is disabled.
- * Suites using this helper must run serially against a disposable E2E database.
- */
-export async function clearE2EData(prisma: PrismaClient): Promise<void> {
+const SHARED_EMPTY_CHECKS: readonly (keyof PrismaClient)[] = [
+  'application',
+  'applicationEligibilityAssessment',
+  'applicationEligibilityCheck',
+  'applicationConversation',
+  'applicationDocumentFile',
+  'applicationDocumentRequest',
+  'applicationViewing',
+  'listing',
+  'listingCriteriaRevision',
+  'notification',
+  'outboxEvent',
+  'sessionAuthGrant',
+  'user',
+  'userSession',
+  'workspaceMembership',
+  'providerWorkspace',
+] as const;
+
+function assertCleanupAllowed(): string {
   const expected = process.env['E2E_DATABASE_URL'];
   const active = process.env['DATABASE_URL'];
   if (
@@ -19,6 +34,60 @@ export async function clearE2EData(prisma: PrismaClient): Promise<void> {
     );
   }
   assertSafeE2EDatabaseUrl(expected);
+  return expected;
+}
+
+async function terminatePeerBackends(
+  tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0],
+  mode: 'idle' | 'all',
+) {
+  if (mode === 'all') {
+    await tx.$executeRaw`
+      SELECT pg_terminate_backend(a.pid)
+      FROM pg_stat_activity a
+      WHERE a.datname = current_database()
+        AND a.pid <> pg_backend_pid()
+        AND a.backend_type = 'client backend'`;
+    return;
+  }
+  await tx.$executeRaw`
+    SELECT pg_terminate_backend(a.pid)
+    FROM pg_stat_activity a
+    WHERE a.datname = current_database()
+      AND a.pid <> pg_backend_pid()
+      AND a.backend_type = 'client backend'
+      AND (
+        a.state = 'idle in transaction'
+        OR (
+          a.wait_event_type = 'Lock'
+          AND a.query ILIKE '%TRUNCATE%'
+        )
+      )`;
+}
+
+/** Proves the active search_path schema has no shared E2E domain rows left. */
+export async function assertE2EDatabaseEmpty(
+  prisma: PrismaClient,
+): Promise<void> {
+  assertCleanupAllowed();
+  const violations: string[] = [];
+  for (const model of SHARED_EMPTY_CHECKS) {
+    const count = await (
+      prisma[model] as { count(this: void): Promise<number> }
+    ).count();
+    if (count !== 0) violations.push(`${String(model)}=${count}`);
+  }
+  if (violations.length) {
+    throw new Error(`E2E cleanup incomplete: ${violations.join(', ')}`);
+  }
+}
+
+/** Test-only reset of the complete FK graph, including immutable history.
+ * TRUNCATE does not invoke row DELETE triggers; no production constraint is disabled.
+ * Suites using this helper must run serially against a disposable E2E database.
+ */
+export async function clearE2EData(prisma: PrismaClient): Promise<void> {
+  const expected = assertCleanupAllowed();
   const database = decodeURIComponent(new URL(expected).pathname.slice(1));
   const quote = (identifier: string) => `"${identifier.replaceAll('"', '""')}"`;
   const retryable = (error: unknown): boolean => {
@@ -38,6 +107,7 @@ export async function clearE2EData(prisma: PrismaClient): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
       await prisma.$transaction(async (tx) => {
+        if (attempt > 0) await terminatePeerBackends(tx, 'idle');
         const [target] = await tx.$queryRaw<
           { database: string; schema: string }[]
         >`SELECT current_database() AS database, current_schema() AS schema`;
@@ -57,8 +127,41 @@ export async function clearE2EData(prisma: PrismaClient): Promise<void> {
     } catch (error) {
       // A failed concurrency assertion may leave a competing request finishing.
       // Rollback and retry only PostgreSQL lock/serialization conflicts, never constraints.
-      if (attempt >= 2 || !retryable(error)) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+      if (attempt >= 9 || !retryable(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * 2 ** attempt));
+    }
+  }
+}
+
+export async function drainE2EPeerBackends(
+  prisma: PrismaClient,
+): Promise<void> {
+  assertCleanupAllowed();
+  await prisma.$transaction(async (tx) => terminatePeerBackends(tx, 'all'));
+}
+
+/** Runs after shared-DB suite files when nested apps may leave peer pool connections open. */
+export async function finalizeSharedE2ESuite(
+  prisma: PrismaClient,
+): Promise<void> {
+  const expected = assertCleanupAllowed();
+  const database = decodeURIComponent(new URL(expected).pathname.slice(1));
+  await prisma.$transaction(async (tx) => {
+    const [target] = await tx.$queryRaw<
+      { database: string; schema: string }[]
+    >`SELECT current_database() AS database, current_schema() AS schema`;
+    if (target?.database !== database || target?.schema !== 'public') return;
+    await terminatePeerBackends(tx, 'all');
+  });
+  await clearE2EData(prisma);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await assertE2EDatabaseEmpty(prisma);
+      return;
+    } catch (error) {
+      if (attempt === 4) throw error;
+      await prisma.$transaction(async (tx) => terminatePeerBackends(tx, 'all'));
+      await clearE2EData(prisma);
     }
   }
 }

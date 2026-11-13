@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import type { AuthorizationContext } from '../provider-authorization/domain/authorization.types';
+import { providerListingWhere } from '../provider-authorization/provider-listing-access';
 import type { Prisma } from '../generated/prisma/client';
 import {
   ApplicationRejectionReason,
@@ -38,7 +40,7 @@ export class ProviderRecentExitsQueryService {
 
   async select(
     tx: Prisma.TransactionClient,
-    providerId: string,
+    context: AuthorizationContext,
     listingIds: readonly string[],
   ): Promise<ReadonlyMap<string, ProviderRecentExitSelection>> {
     const groups = new Map<string, ProviderRecentExitSelection>(
@@ -51,7 +53,8 @@ export class ProviderRecentExitsQueryService {
       WITH scoped AS (
         SELECT a.* FROM applications a
         JOIN listings l ON l.id = a.listing_id
-        WHERE l.provider_id = ${providerId}::uuid
+        WHERE l.workspace_id = ${context.workspaceId}::uuid
+          AND (${context.role}::text='OWNER' OR (l.responsible_membership_id=${context.membershipId}::uuid AND l.status<>'retired'))
           AND a.listing_id = ANY(${[...listingIds]}::uuid[])
       ), latest AS (
         SELECT DISTINCT ON (listing_id, applicant_id) * FROM scoped
@@ -136,7 +139,7 @@ export class ProviderRecentExitsQueryService {
 
   async cards(
     tx: Prisma.TransactionClient,
-    providerId: string,
+    context: AuthorizationContext,
     projections: readonly ProviderRecentExitProjection[],
     asOf: Date,
   ): Promise<ProviderRecentExitCardRecord[]> {
@@ -144,7 +147,7 @@ export class ProviderRecentExitsQueryService {
     const applications = await tx.application.findMany({
       where: {
         id: { in: projections.map((row) => row.id) },
-        listing: { providerId },
+        listing: providerListingWhere(context),
       },
       select: {
         id: true,

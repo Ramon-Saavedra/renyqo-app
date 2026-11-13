@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ListingConsumerAccessModule } from '../listings/listing-consumer-access.module';
 
 import { ApplicantListingSummariesModule } from '../applicant-listing-summaries/applicant-listing-summaries.module';
 import { PublishedListingsModule } from '../published-listings/published-listings.module';
@@ -7,6 +8,7 @@ import { SavedListingsService } from './saved-listings.service';
 
 @Module({
   imports: [
+    ListingConsumerAccessModule,
     PrismaModule,
     PublishedListingsModule,
     ApplicantListingSummariesModule,

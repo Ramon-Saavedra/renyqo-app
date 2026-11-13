@@ -22,6 +22,8 @@ import { EligibilityService } from '../eligibility/eligibility.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SafeUser } from '../users/types/safe-user.type';
 import type { ApplicantListingSummaryBuildSource } from './applicant-listing-summary-listing.select';
+import { ApplicantListingAccess } from '../listings/applicant-listing-access';
+import { unitSession } from '../../test/unit-workspace-authority';
 import { ApplicantListingSummaryService } from './applicant-listing-summary.service';
 
 const APPLICANT_ID = '00000000-0000-4000-8000-000000000099';
@@ -94,6 +96,8 @@ describe('newest blocking application selection', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
+      {} as never,
     );
     const batch = jest.fn().mockResolvedValue({
       items: [
@@ -138,6 +142,10 @@ describe('newest blocking application selection', () => {
           useValue: { batch },
         },
         {
+          provide: ApplicantListingAccess,
+          useValue: { assertPrincipal: () => Promise.resolve() },
+        },
+        {
           provide: EligibilityService,
           useValue: {
             isProfileComplete: jest.fn().mockReturnValue(false),
@@ -157,6 +165,7 @@ describe('newest blocking application selection', () => {
       .get(ApplicantListingSummaryService)
       .buildSummaries(applicantUser, [listing], {
         isSavedByListingId: new Set(),
+        authority: unitSession(APPLICANT_ID),
       });
 
     expect(findMany).toHaveBeenCalledTimes(1);
@@ -171,7 +180,7 @@ describe('newest blocking application selection', () => {
       HIGHER_APPLICATION_ID,
     );
     expect(batch).toHaveBeenCalledTimes(1);
-    expect(batch).toHaveBeenCalledWith(APPLICANT_ID, 'applicant', [
+    expect(batch).toHaveBeenCalledWith(unitSession(APPLICANT_ID), 'applicant', [
       HIGHER_APPLICATION_ID,
     ]);
   });

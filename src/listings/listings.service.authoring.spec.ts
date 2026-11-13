@@ -1,9 +1,15 @@
+import {
+  unitProviderOperations,
+  UNIT_WORKSPACE_ID,
+  UNIT_MEMBERSHIP_ID,
+} from '../../test/unit-workspace-authority';
+import { ProviderListingAccess } from '../provider-authorization/provider-listing-access';
+import { unitProvider } from '../../test/unit-workspace-authority';
 import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
 import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
 import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { ViewingLifecycleService } from '../applications/viewing-lifecycle.service';
 import { BadRequestException } from '@nestjs/common';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -27,7 +33,6 @@ import { ListingsService } from './listings.service';
 import { ListingOrderingService } from './listing-ordering.service';
 import { ListingInputRules } from './listing-input-rules';
 import { ListingResponseMapper } from './listing-response.mapper';
-import type { CreateListingDto } from './dto/create-listing.dto';
 
 const PROVIDER_ID = '00000000-0000-4000-8000-000000000001';
 const LISTING_ID = '00000000-0000-4000-8000-000000000002';
@@ -71,22 +76,6 @@ type PrismaMock = ListingsTransactionMock & {
   };
 };
 
-type ListingCreateArgs = {
-  data: {
-    id?: string;
-    providerId?: string;
-    objectType?: ObjectType;
-    city?: string;
-    zip?: string;
-    coldRent?: number;
-    deposit?: number;
-    depositMonths?: number;
-    title?: string;
-    shortDescription?: string;
-    photos?: string[];
-  };
-};
-
 type ListingUpdateArgs = {
   data: {
     coldRent?: number;
@@ -96,19 +85,14 @@ type ListingUpdateArgs = {
   };
 };
 
-type ListingImageCreateArgs = {
-  data: {
-    listingId: string;
-    publicId: string;
-    secureUrl: string;
-    position: number;
-    isCover: boolean;
-  };
-};
-
 const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   id: LISTING_ID,
-  providerId: PROVIDER_ID,
+  workspaceId: UNIT_WORKSPACE_ID,
+  createdByMembershipId: UNIT_MEMBERSHIP_ID,
+  responsibleMembershipId: UNIT_MEMBERSHIP_ID,
+  revision: 1,
+  assignmentSequence: 1,
+  retiredAt: null,
   status: ListingStatus.DRAFT,
   city: 'Berlin',
   zip: '10115',
@@ -142,19 +126,6 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   ...overrides,
 });
 
-const makeRawListingImage = (
-  overrides: Partial<ListingImage> = {},
-): ListingImage => ({
-  id: '00000000-0000-4000-8000-000000000020',
-  listingId: LISTING_ID,
-  publicId: `${CLOUDINARY_FOLDER}/listings/${LISTING_ID}/abc123`,
-  secureUrl: 'https://res.cloudinary.com/test/image/upload/abc123.jpg',
-  position: 0,
-  isCover: true,
-  createdAt: new Date('2024-01-01'),
-  ...overrides,
-});
-
 type ListingUploadFile = NonNullable<Parameters<ListingsService['create']>[2]>;
 
 const makeMulterFile = (): ListingUploadFile => ({
@@ -169,12 +140,6 @@ const makeMulterFile = (): ListingUploadFile => ({
   filename: '',
   path: '',
 });
-
-const makeUploadResult = (): UploadApiResponse =>
-  ({
-    public_id: `${CLOUDINARY_FOLDER}/listings/${LISTING_ID}/abc`,
-    secure_url: 'https://res.cloudinary.com/test/image/upload/abc.jpg',
-  }) as UploadApiResponse;
 
 describe('ListingsService', () => {
   let service: ListingsService;
@@ -255,6 +220,18 @@ describe('ListingsService', () => {
         },
         ListingsService,
         {
+          provide: ProviderListingAccess,
+          useValue: unitProviderOperations(
+            prismaMock,
+            async <R>(produce: (tx: typeof prismaMock) => Promise<R>) =>
+              (await prismaMock.$transaction(
+                produce as unknown as Parameters<
+                  typeof prismaMock.$transaction
+                >[0],
+              )) as R,
+          ),
+        },
+        {
           provide: ApplicationActivityService,
           useValue: { appendWithinTransaction: jest.fn() },
         },
@@ -283,256 +260,23 @@ describe('ListingsService', () => {
   });
 
   describe('create', () => {
-    it('creates a listing with providerId and dto data', async () => {
-      const listing = makeRawListing();
-      prismaMock.listing.create.mockResolvedValue(listing);
-
-      const dto: CreateListingDto = {
-        objectType: ObjectType.APARTMENT,
-        city: 'Berlin',
-        zip: '10115',
-      };
-
-      const result = await service.create(PROVIDER_ID, dto);
-
-      expect(prismaMock.listing.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            providerId: PROVIDER_ID,
-            city: 'Berlin',
-            zip: '10115',
-          }),
-        }),
-      );
-      expect(cloudinaryMock.uploadBuffer).not.toHaveBeenCalled();
-      expect(prismaMock.$transaction).toHaveBeenCalled();
-      expect(result).toEqual(listing);
-    });
-
-    it('creates a partial draft with a single meaningful field', async () => {
-      const listing = makeRawListing({
-        city: null,
-        zip: null,
-        objectType: null,
-        title: 'Draft title',
-      });
-      const dto: CreateListingDto = { title: 'Draft title' };
-      prismaMock.listing.create.mockResolvedValue(listing);
-
-      const result = await service.create(PROVIDER_ID, dto);
-
-      expect(prismaMock.listing.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            providerId: PROVIDER_ID,
-            title: 'Draft title',
-          }),
-        }),
-      );
-      expect(result).toEqual(listing);
-    });
-
-    it('rejects an empty draft without a file', async () => {
-      await expect(service.create(PROVIDER_ID, {})).rejects.toThrow(
-        BadRequestException,
-      );
-      expect(prismaMock.listing.create).not.toHaveBeenCalled();
-    });
-
-    it('calculates the default deposit as two cold rent months', async () => {
-      const listing = makeRawListing({
-        coldRent: 1200,
-        deposit: 2400,
-        depositMonths: 2,
-      });
-      const dto: CreateListingDto = { coldRent: 1200 };
-      prismaMock.listing.create.mockResolvedValue(listing);
-
-      await service.create(PROVIDER_ID, dto);
-
-      const listingCreateArgs = prismaMock.listing.create.mock
-        .calls[0][0] as ListingCreateArgs;
-
-      expect(listingCreateArgs.data).toEqual(
-        expect.objectContaining({
-          coldRent: 1200,
-          deposit: 2400,
-          depositMonths: 2,
-        }),
-      );
-    });
-
-    it('calculates deposit from selected deposit months', async () => {
-      const listing = makeRawListing({
-        coldRent: 1200,
-        deposit: 3600,
-        depositMonths: 3,
-      });
-      const dto: CreateListingDto = { coldRent: 1200, depositMonths: 3 };
-      prismaMock.listing.create.mockResolvedValue(listing);
-
-      await service.create(PROVIDER_ID, dto);
-
-      const listingCreateArgs = prismaMock.listing.create.mock
-        .calls[0][0] as ListingCreateArgs;
-
-      expect(listingCreateArgs.data).toEqual(
-        expect.objectContaining({
-          coldRent: 1200,
-          deposit: 3600,
-          depositMonths: 3,
-        }),
-      );
-    });
-
-    it('rejects a provided deposit that does not match cold rent months', async () => {
-      const dto: CreateListingDto = {
-        coldRent: 1200,
-        depositMonths: 2,
-        deposit: 3600,
-      };
-
-      await expect(service.create(PROVIDER_ID, dto)).rejects.toThrow(
-        BadRequestException,
-      );
-      expect(prismaMock.listing.create).not.toHaveBeenCalled();
-    });
-
-    it('rejects a deposit without cold rent', async () => {
-      const dto: CreateListingDto = { deposit: 2400 };
-
-      await expect(service.create(PROVIDER_ID, dto)).rejects.toThrow(
-        BadRequestException,
-      );
-      expect(prismaMock.listing.create).not.toHaveBeenCalled();
-    });
-
-    it('omits null and empty string values when creating a draft', async () => {
-      const listing = makeRawListing({
-        city: null,
-        zip: null,
-        objectType: null,
-        title: 'Draft title',
-        shortDescription: null,
-        petsPolicy: null,
-      });
-      const dto: CreateListingDto = {
-        title: 'Draft title',
-        zip: '',
-        shortDescription: '',
-        petsPolicy: null,
-      };
-      prismaMock.listing.create.mockResolvedValue(listing);
-
-      await service.create(PROVIDER_ID, dto);
-
-      const listingCreateArgs = prismaMock.listing.create.mock
-        .calls[0][0] as ListingCreateArgs;
-
-      expect(listingCreateArgs.data).toEqual({
-        providerId: PROVIDER_ID,
-        title: 'Draft title',
-        displayOrder: 1,
-      });
-    });
-
-    it('allows a file-only draft', async () => {
-      const uploadResult = makeUploadResult();
-      const listing = makeRawListing({
-        id: LISTING_ID,
-        city: null,
-        zip: null,
-        objectType: null,
-        photos: [uploadResult.secure_url],
-      });
-      const image = makeRawListingImage({
-        listingId: LISTING_ID,
-        publicId: uploadResult.public_id,
-        secureUrl: uploadResult.secure_url,
-      });
-
-      cloudinaryMock.uploadBuffer.mockResolvedValue(uploadResult);
-      prismaMock.listing.create.mockResolvedValue(listing);
-      prismaMock.listingImage.create.mockResolvedValue(image);
-
-      const result = await service.create(PROVIDER_ID, {}, makeMulterFile());
-
-      expect(cloudinaryMock.uploadBuffer).toHaveBeenCalled();
-      expect(result).toEqual(listing);
-    });
-
-    it('creates a listing and first image metadata when a file is provided', async () => {
-      const uploadResult = makeUploadResult();
-      const listing = makeRawListing({
-        id: LISTING_ID,
-        photos: [uploadResult.secure_url],
-      });
-      const image = makeRawListingImage({
-        listingId: LISTING_ID,
-        publicId: uploadResult.public_id,
-        secureUrl: uploadResult.secure_url,
-      });
-      const dto: CreateListingDto = {
-        objectType: ObjectType.APARTMENT,
-        city: 'Berlin',
-        zip: '10115',
-      };
-
-      cloudinaryMock.uploadBuffer.mockResolvedValue(uploadResult);
-      prismaMock.listing.create.mockResolvedValue(listing);
-      prismaMock.listingImage.create.mockResolvedValue(image);
-
-      const result = await service.create(PROVIDER_ID, dto, makeMulterFile());
-      const listingCreateArgs = prismaMock.listing.create.mock
-        .calls[0][0] as ListingCreateArgs;
-      const imageCreateArgs = prismaMock.listingImage.create.mock
-        .calls[0][0] as ListingImageCreateArgs;
-
-      expect(cloudinaryMock.uploadBuffer).toHaveBeenCalledWith(
-        expect.any(Buffer),
-        `${CLOUDINARY_FOLDER}/listings/${listingCreateArgs.data.id}`,
-      );
-      expect(listingCreateArgs.data).toEqual(
-        expect.objectContaining({
-          providerId: PROVIDER_ID,
-          city: 'Berlin',
-          zip: '10115',
-          photos: [uploadResult.secure_url],
-        }),
-      );
-      expect(imageCreateArgs.data).toEqual({
-        listingId: listingCreateArgs.data.id,
-        publicId: uploadResult.public_id,
-        secureUrl: uploadResult.secure_url,
-        position: 0,
-        isCover: true,
-      });
-      expect(result).toEqual(listing);
-    });
-
-    it('deletes the uploaded image when database creation fails', async () => {
-      const uploadResult = makeUploadResult();
-      const dbError = new Error('database failed');
-      const dto: CreateListingDto = {
-        objectType: ObjectType.APARTMENT,
-        city: 'Berlin',
-        zip: '10115',
-      };
-
-      cloudinaryMock.uploadBuffer.mockResolvedValue(uploadResult);
-      cloudinaryMock.deleteByPublicId.mockResolvedValue(undefined);
-      prismaMock.listing.create.mockRejectedValue(dbError);
-
-      await expect(
-        service.create(PROVIDER_ID, dto, makeMulterFile()),
-      ).rejects.toThrow(dbError);
-
-      expect(cloudinaryMock.deleteByPublicId).toHaveBeenCalledWith(
-        uploadResult.public_id,
-      );
-    });
+    it.each([false, true])(
+      'fails closed before quota integration, including uploaded input: %s',
+      async (withFile) => {
+        await expect(
+          service.create(
+            unitProvider(PROVIDER_ID),
+            { city: 'Berlin' },
+            withFile ? makeMulterFile() : undefined,
+          ),
+        ).rejects.toThrow(
+          'Listing creation requires entitlement/quota integration',
+        );
+        expect(prismaMock.listing.create).not.toHaveBeenCalled();
+        expect(cloudinaryMock.uploadBuffer).not.toHaveBeenCalled();
+      },
+    );
   });
-
   describe('update', () => {
     function isolatedTransaction(row: Listing) {
       const tx = {
@@ -564,19 +308,17 @@ describe('ListingsService', () => {
       const tx = isolatedTransaction(
         makeRawListing({ coldRent: 1200, depositMonths: 3 }),
       );
-      await service.update(LISTING_ID, PROVIDER_ID, { coldRent: 1300 });
+      await service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+        coldRent: 1300,
+      });
       expect(prismaMock.$transaction).toHaveBeenCalledWith(
         expect.any(Function),
-        { isolationLevel: 'Serializable' },
-      );
-      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.listing.findFirst.mock.invocationCallOrder[0],
       );
       expect(tx.listing.findFirst.mock.invocationCallOrder[0]).toBeLessThan(
         tx.listing.update.mock.invocationCallOrder[0],
       );
       expect(tx.listing.findFirst).toHaveBeenCalledWith({
-        where: { id: LISTING_ID, providerId: PROVIDER_ID },
+        where: { id: LISTING_ID, workspaceId: UNIT_WORKSPACE_ID },
       });
       expect(tx.listing.update).toHaveBeenCalledWith({
         where: { id: LISTING_ID },
@@ -614,7 +356,7 @@ describe('ListingsService', () => {
         );
         await service.update(
           LISTING_ID,
-          PROVIDER_ID,
+          unitProvider(PROVIDER_ID),
           patch as Parameters<ListingsService['update']>[2],
         );
         expect(tx.listing.update).toHaveBeenCalledWith({
@@ -624,33 +366,17 @@ describe('ListingsService', () => {
       },
     );
 
-    it('relocks and rereads changed months on a Serializable retry', async () => {
+    it('re-reads listing state inside the workspace mutation transaction', async () => {
       const tx = isolatedTransaction(
         makeRawListing({ coldRent: 1000, depositMonths: 2 }),
       );
-      tx.listing.findFirst
-        .mockResolvedValueOnce(
-          makeRawListing({ coldRent: 1000, depositMonths: 2 }),
-        )
-        .mockResolvedValueOnce(
-          makeRawListing({ coldRent: 1000, depositMonths: 3 }),
-        );
-      tx.listing.update.mockRejectedValueOnce(
-        new PrismaClientKnownRequestError('retry', {
-          code: 'P2034',
-          clientVersion: 'test',
-        }),
-      );
-      await service.update(LISTING_ID, PROVIDER_ID, { coldRent: 1200 });
-      expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
-      expect(tx.listing.findFirst).toHaveBeenCalledTimes(2);
-      expect(tx.listing.update).toHaveBeenNthCalledWith(1, {
+      await service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+        coldRent: 1200,
+      });
+      expect(tx.listing.findFirst).toHaveBeenCalledTimes(1);
+      expect(tx.listing.update).toHaveBeenCalledWith({
         where: { id: LISTING_ID },
         data: { coldRent: 1200, depositMonths: 2, deposit: 2400 },
-      });
-      expect(tx.listing.update).toHaveBeenNthCalledWith(2, {
-        where: { id: LISTING_ID },
-        data: { coldRent: 1200, depositMonths: 3, deposit: 3600 },
       });
     });
 
@@ -659,7 +385,9 @@ describe('ListingsService', () => {
         makeRawListing({ coldRent: 1200, depositMonths: 3 }),
       );
       await expect(
-        service.update(LISTING_ID, PROVIDER_ID, { deposit: 2400 }),
+        service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+          deposit: 2400,
+        }),
       ).rejects.toThrow(BadRequestException);
       expect(tx.listing.update).not.toHaveBeenCalled();
     });
@@ -674,9 +402,13 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.listing.update.mockResolvedValue(updated);
 
-      const result = await service.update(LISTING_ID, PROVIDER_ID, {
-        coldRent: 1300,
-      });
+      const result = await service.update(
+        LISTING_ID,
+        unitProvider(PROVIDER_ID),
+        {
+          coldRent: 1300,
+        },
+      );
 
       const listingUpdateArgs = prismaMock.listing.update.mock
         .calls[0][0] as ListingUpdateArgs;
@@ -701,7 +433,9 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.listing.update.mockResolvedValue(updated);
 
-      await service.update(LISTING_ID, PROVIDER_ID, { depositMonths: 3 });
+      await service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+        depositMonths: 3,
+      });
 
       const listingUpdateArgs = prismaMock.listing.update.mock
         .calls[0][0] as ListingUpdateArgs;
@@ -720,7 +454,9 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
       prismaMock.listing.update.mockResolvedValue(updated);
 
-      await service.update(LISTING_ID, PROVIDER_ID, { depositMonths: 1 });
+      await service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+        depositMonths: 1,
+      });
 
       const listingUpdateArgs = prismaMock.listing.update.mock
         .calls[0][0] as ListingUpdateArgs;
@@ -742,7 +478,9 @@ describe('ListingsService', () => {
         }),
       );
 
-      await service.update(LISTING_ID, PROVIDER_ID, { title: 'Updated title' });
+      await service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+        title: 'Updated title',
+      });
 
       const listingUpdateArgs = prismaMock.listing.update.mock
         .calls[0][0] as ListingUpdateArgs;
@@ -771,7 +509,7 @@ describe('ListingsService', () => {
         }),
       );
 
-      await service.update(LISTING_ID, PROVIDER_ID, {
+      await service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
         minimumHouseholdNetIncome: null,
         schufaRequired: false,
         incomeProofRequired: false,
@@ -799,7 +537,9 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
 
       await expect(
-        service.update(LISTING_ID, PROVIDER_ID, { deposit: 3000 }),
+        service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+          deposit: 3000,
+        }),
       ).rejects.toThrow(BadRequestException);
       expect(prismaMock.listing.update).not.toHaveBeenCalled();
     });
@@ -809,7 +549,10 @@ describe('ListingsService', () => {
       prismaMock.listing.findFirst.mockResolvedValue(listing);
 
       await expect(
-        service.update(LISTING_ID, PROVIDER_ID, { rooms: 2, bedrooms: 5 }),
+        service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+          rooms: 2,
+          bedrooms: 5,
+        }),
       ).rejects.toThrow(BadRequestException);
       expect(prismaMock.listing.update).not.toHaveBeenCalled();
     });
@@ -824,7 +567,10 @@ describe('ListingsService', () => {
       });
 
       await expect(
-        service.update(LISTING_ID, PROVIDER_ID, { rooms: 3, bedrooms: 3 }),
+        service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+          rooms: 3,
+          bedrooms: 3,
+        }),
       ).resolves.toBeDefined();
       expect(prismaMock.listing.update).toHaveBeenCalled();
     });
@@ -839,7 +585,10 @@ describe('ListingsService', () => {
       });
 
       await expect(
-        service.update(LISTING_ID, PROVIDER_ID, { rooms: 4, bedrooms: 2 }),
+        service.update(LISTING_ID, unitProvider(PROVIDER_ID), {
+          rooms: 4,
+          bedrooms: 2,
+        }),
       ).resolves.toBeDefined();
     });
   });

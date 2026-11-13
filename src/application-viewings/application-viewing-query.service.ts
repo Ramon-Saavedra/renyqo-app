@@ -15,6 +15,11 @@ import {
 } from './application-viewing.policy';
 import { ViewingQueryDto } from './dto/viewing-input.dto';
 import {
+  ApplicationListingAccess,
+  actorUserId,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
+import {
   ViewingInterestResponseDto,
   ViewingOutcomeResponseDto,
   ViewingPageResponseDto,
@@ -28,6 +33,7 @@ export class ApplicationViewingQueryService {
     private readonly access: ApplicationViewingAccessService,
     private readonly policy: ApplicationViewingPolicy,
     private readonly clock: ViewingClock,
+    private readonly listings: ApplicationListingAccess,
   ) {}
 
   async find(
@@ -67,10 +73,15 @@ export class ApplicationViewingQueryService {
   detail(
     applicationId: string,
     viewingId: string,
-    userId: string,
+    actor: ApplicationActor,
     side: ViewingAudience,
   ): Promise<ViewingResponseDto> {
-    return this.prisma.$transaction(
+    const userId = actorUserId(actor);
+    return this.listings.read(
+      actor,
+      side,
+      applicationId,
+      async () => {},
       async (tx) => {
         const application = await this.access.authorize(
           tx,
@@ -80,17 +91,21 @@ export class ApplicationViewingQueryService {
         );
         return this.response(tx, application, side, viewingId);
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
   list(
     applicationId: string,
-    userId: string,
+    actor: ApplicationActor,
     side: ViewingAudience,
     query: ViewingQueryDto,
   ): Promise<ViewingPageResponseDto> {
-    return this.prisma.$transaction(
+    const userId = actorUserId(actor);
+    return this.listings.read(
+      actor,
+      side,
+      applicationId,
+      async () => {},
       async (tx) => {
         const application = await this.access.authorize(
           tx,
@@ -183,7 +198,6 @@ export class ApplicationViewingQueryService {
           primary,
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 

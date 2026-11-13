@@ -1,5 +1,7 @@
 # Durable bell notifications and rollout review (Phase 9)
 
+Phase 4.5.5 boundary: provider notification/realtime recipient delivery and provider inbox visibility remain disabled until team fan-out is implemented. Creator/responsible membership is never a recipient fallback. The provider-recipient entries below describe the retained historical event policy, not enabled provider delivery. Independently authorized applicant delivery remains enabled.
+
 ## Four separate concepts
 
 Current deployment/schema decisions are in [rollout finalization](viewing-workflow-rollout.md).
@@ -24,7 +26,7 @@ The source activity and notification share the domain transaction. Bulk history 
 | Application rejected, restored, withdrawn, accepted for rental, promoted ACTIVE | Authorized side(s), excluding the actor; SYSTEM can notify both visible sides       |
 | Proposal expiry                                                                 | Both currently authorized sides                                                     |
 | 48h unanswered interest timeout                                                 | Real SYSTEM `APPLICATION_REJECTED` notification, not an extra technical expiry item |
-| Listing archived/unpublished while a proposal/appointment is closed             | Applicant; only when the closure actually references a commitment                   |
+| Listing retired/unpublished while a proposal/appointment is closed             | Applicant; only when the closure actually references a commitment                   |
 
 **Explicitly excluded:** chat/messages/read receipts/reply settings; document/profile activity; initial application submission; provider UNDECIDED; generic technical workflow closures without a user-facing listing commitment; reconciliation and ordering bookkeeping; the extra RESCHEDULED history row accompanying acceptance; the decline half of an atomic counterproposal; the technical interest-declined row accompanying withdrawal; the technical interest-expired row accompanying SYSTEM rejection; INTERNAL activity; own-action receipts. DO_NOT_CONTINUE uses its real application rejection item. These history entries remain in Verlauf. A private internal `counterproposal` metadata flag suppresses the duplicate decline; it is omitted from public activity and socket payloads.
 
@@ -34,7 +36,7 @@ No-show notifications are historical attendance events, not global reputation or
 
 An inbox necessarily stores its recipient at event creation; a personal read state cannot be reconstructed from delivery-time routing alone. Creation checks role, active user status, activity audience and current application/provider visibility, excluding the acting side. Read/list/count operations independently recheck current identity, recipient role/status, application ownership and the existing provider visibility policy. WAITING is always hidden from providers; never-active hidden terminal applications also stay hidden. Terminal applications that remain visible under existing history rules keep their notification history.
 
-Hidden rows contribute neither content nor count and cannot be marked read. Mark-all likewise leaves them untouched. If visibility returns, an unread item can reappear with the same identity and read state. Restore to WAITING notifies the applicant without revealing that applicant to the provider. Removed listing ownership immediately prevents old inbox access; historical personal inboxes are not reassigned to a new owner. Suspended/deleted/changed-role recipients cannot access mismatched inbox entries. As with existing HTTP reads, authorization is evaluated against a database snapshot; future ownership-transfer features still need former-owner cache invalidation described in Phase 7.
+Hidden rows contribute neither content nor count and cannot be marked read. Mark-all likewise leaves them untouched. If visibility returns, an unread item can reappear with the same identity and read state. Restore to WAITING notifies the applicant without revealing that applicant to the provider. Historical provider inboxes are not reassigned when workspace ownership or Listing responsibility changes; provider inbox access remains disabled. Suspended/deleted/changed-role recipients cannot access mismatched inbox entries. Applicant reads revalidate current User/session and application authority within the bounded read window. Future team fan-out must enforce current workspace/member authority and revocation; it cannot reuse creator/responsibility attribution as authority.
 
 ## HTTP contract
 

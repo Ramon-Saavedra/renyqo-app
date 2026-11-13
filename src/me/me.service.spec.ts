@@ -1,4 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
+import { unitProvider } from '../../test/unit-workspace-authority';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -49,6 +50,7 @@ describe('MeService', () => {
 
       const result = await service.getOnboardingState(
         makeSafeUser(Role.PROVIDER),
+        unitProvider(USER_ID),
       );
 
       expect(result).toEqual({
@@ -63,6 +65,7 @@ describe('MeService', () => {
 
       const result = await service.getOnboardingState(
         makeSafeUser(Role.PROVIDER),
+        unitProvider(USER_ID),
       );
 
       expect(result).toEqual({
@@ -70,6 +73,13 @@ describe('MeService', () => {
         hasCreatedFirstListing: true,
         nextStep: 'dashboard',
       });
+    });
+
+    it('requires explicit workspace selection for a provider without a selector', async () => {
+      await expect(
+        service.getOnboardingState(makeSafeUser(Role.PROVIDER)),
+      ).resolves.toEqual({ role: 'provider', nextStep: 'select_workspace' });
+      expect(listingsService.countByProvider).not.toHaveBeenCalled();
     });
 
     it('returns browse_listings state for an applicant', async () => {

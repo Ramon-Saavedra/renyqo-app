@@ -1,3 +1,5 @@
+import { unitActor } from '../../test/unit-workspace-authority';
+import { ApplicationListingAccess } from '../listings/application-listing-access';
 import { ApplicationConversationAccessService } from './application-conversation-access.service';
 import { Test } from '@nestjs/testing';
 import { ApplicationActivityService } from '../applications/application-activity.service';
@@ -18,7 +20,11 @@ describe('ApplicationConversationService workflow state', () => {
     applicantId: 'applicant',
     status: ApplicationStatus.ACTIVE,
     activeAt: new Date(),
-    listing: { providerId: 'provider', status: ListingStatus.PUBLISHED },
+    listing: {
+      workspaceId: '00000000-0000-4000-8000-000000000090',
+      responsibleMembershipId: '00000000-0000-4000-8000-000000000091',
+      status: ListingStatus.PUBLISHED,
+    },
     conversation: {
       id: 'conversation',
       openedAt: new Date(),
@@ -34,7 +40,10 @@ describe('ApplicationConversationService workflow state', () => {
     createdAt: new Date(),
     readAt: null,
   };
-  const tx = { application: { findUnique: jest.fn() } };
+  const tx = {
+    application: { findUnique: jest.fn() },
+    $queryRaw: jest.fn().mockResolvedValue([{ allowed: true }]),
+  };
   const messages = {
     snapshot: jest.fn(),
     toDto: new ApplicationMessageService().toDto,
@@ -54,6 +63,34 @@ describe('ApplicationConversationService workflow state', () => {
           useValue: {
             $transaction: <T>(operation: (client: typeof tx) => Promise<T>) =>
               operation(tx),
+          },
+        },
+        {
+          provide: ApplicationListingAccess,
+          useValue: {
+            read: async (
+              _actor: unknown,
+              _side: unknown,
+              _applicationId: string,
+              policy: (client: typeof tx) => Promise<unknown>,
+              produce: (client: typeof tx) => Promise<unknown>,
+            ) => {
+              await policy(tx);
+              return produce(tx);
+            },
+            mutate: async (
+              _actor: unknown,
+              _side: unknown,
+              _applicationId: string,
+              policy: (client: typeof tx) => Promise<unknown>,
+              produce: (
+                client: typeof tx,
+                listingId: string,
+              ) => Promise<unknown>,
+            ) => {
+              await policy(tx);
+              return produce(tx, 'listing');
+            },
           },
         },
         { provide: ApplicationMessageService, useValue: messages },
@@ -86,7 +123,10 @@ describe('ApplicationConversationService workflow state', () => {
         await expect(
           service.summary(
             'application',
-            side === ConversationSide.PROVIDER ? 'provider' : 'applicant',
+            unitActor(
+              side === ConversationSide.PROVIDER ? 'provider' : 'applicant',
+              side,
+            ),
             side,
           ),
         ).resolves.toMatchObject({
@@ -104,14 +144,22 @@ describe('ApplicationConversationService workflow state', () => {
       conversation: null,
     });
     await expect(
-      service.summary('application', 'provider', ConversationSide.PROVIDER),
+      service.summary(
+        'application',
+        unitActor('provider', ConversationSide.PROVIDER),
+        ConversationSide.PROVIDER,
+      ),
     ).resolves.toMatchObject({
       hasMessages: false,
       canCurrentUserSend: true,
       applicantRepliesEnabled: false,
     });
     await expect(
-      service.summary('application', 'applicant', ConversationSide.APPLICANT),
+      service.summary(
+        'application',
+        unitActor('applicant', ConversationSide.APPLICANT),
+        ConversationSide.APPLICANT,
+      ),
     ).resolves.toMatchObject({
       canCurrentUserSend: false,
       sendBlockReason: 'APPLICANT_REPLIES_DISABLED',
@@ -124,7 +172,11 @@ describe('ApplicationConversationService workflow state', () => {
   ])('retains readable history and disables sending in %s', async (status) => {
     tx.application.findUnique.mockResolvedValue({ ...application, status });
     await expect(
-      service.summary('application', 'provider', ConversationSide.PROVIDER),
+      service.summary(
+        'application',
+        unitActor('provider', ConversationSide.PROVIDER),
+        ConversationSide.PROVIDER,
+      ),
     ).resolves.toMatchObject({
       hasMessages: true,
       canCurrentUserSend: false,
@@ -138,7 +190,11 @@ describe('ApplicationConversationService workflow state', () => {
       listing: { ...application.listing, status: ListingStatus.RENTED },
     });
     await expect(
-      service.summary('application', 'applicant', ConversationSide.APPLICANT),
+      service.summary(
+        'application',
+        unitActor('applicant', ConversationSide.APPLICANT),
+        ConversationSide.APPLICANT,
+      ),
     ).resolves.toHaveProperty('canCurrentUserSend', false);
   });
 
@@ -148,7 +204,11 @@ describe('ApplicationConversationService workflow state', () => {
       status: ApplicationStatus.WAITING,
     });
     await expect(
-      service.summary('application', 'provider', ConversationSide.PROVIDER),
+      service.summary(
+        'application',
+        unitActor('provider', ConversationSide.PROVIDER),
+        ConversationSide.PROVIDER,
+      ),
     ).rejects.toThrow('Application not found');
     expect(messages.snapshot).not.toHaveBeenCalled();
   });
@@ -160,7 +220,11 @@ describe('ApplicationConversationService workflow state', () => {
       activeAt: null,
     });
     await expect(
-      service.summary('application', 'provider', ConversationSide.PROVIDER),
+      service.summary(
+        'application',
+        unitActor('provider', ConversationSide.PROVIDER),
+        ConversationSide.PROVIDER,
+      ),
     ).rejects.toThrow('Application not found');
   });
 
@@ -168,9 +232,12 @@ describe('ApplicationConversationService workflow state', () => {
     ['outsider', ConversationSide.PROVIDER],
     ['outsider', ConversationSide.APPLICANT],
   ])('denies ownership mismatch for %s/%s', async (userId, side) => {
-    await expect(service.summary('application', userId, side)).rejects.toThrow(
-      'Application not found',
-    );
+    if (side === ConversationSide.PROVIDER) {
+      tx.$queryRaw.mockResolvedValueOnce([{ allowed: false }]);
+    }
+    await expect(
+      service.summary('application', unitActor(userId, side), side),
+    ).rejects.toThrow('Application not found');
     expect(messages.snapshot).not.toHaveBeenCalled();
   });
 });

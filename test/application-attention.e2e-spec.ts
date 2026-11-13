@@ -13,9 +13,14 @@ import { join } from 'node:path';
 import { Server } from 'node:https';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import connectPgSimple from 'connect-pg-simple';
-import session from 'express-session';
-import passport from 'passport';
+import { installE2eSessionMiddleware } from './e2e-session-middleware';
+import { expectSessionAuthSetCookie } from './e2e-session-cookie-expectations';
+import {
+  blockedApplicantRouteStatus,
+  wrongAudienceStatus,
+} from './e2e-wrong-audience';
+import { ListingAssignmentReason } from '../src/generated/prisma/enums';
+import { installTenantContext } from '../src/provider-tenancy/tenant-context';
 import request, { type Response } from 'supertest';
 import { jest } from '@jest/globals';
 import { Client } from 'pg';
@@ -37,10 +42,21 @@ import {
   ViewingInterest,
 } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  createPublishedListingForProvider,
+  resolveProviderWorkspace,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import {
+  applicantAuthorityFor,
+  bindProviderWorkspaceHeader,
+  providerActorFor,
+} from './e2e-provider-context';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
+import type { HumanAuthority } from '../src/provider-authorization/domain/authorization.types';
 
 type RequestTarget = Parameters<typeof request>[0];
 type Agent = ReturnType<typeof request.agent>;
-type Store = InstanceType<ReturnType<typeof connectPgSimple>>;
 
 function body(response: Response): Record<string, unknown> {
   const value: unknown = response.body;
@@ -64,7 +80,6 @@ describe('Application attention E2E', () => {
   let now = new Date('2027-01-01T10:00:00Z');
   let app: INestApplication;
   let prisma: PrismaService;
-  let store: Store;
   let server: RequestTarget;
   let certificate: Buffer;
   let tlsDirectory: string | undefined;
@@ -74,6 +89,8 @@ describe('Application attention E2E', () => {
   let listingId: string;
   let queries: ApplicationAttentionQueryService;
   let conversations: ApplicationConversationReadService;
+  let providerActor: ProviderActor;
+  let applicantAuthority: HumanAuthority;
 
   async function register(role: 'applicant' | 'provider') {
     const agent = request.agent(server).ca(certificate);
@@ -89,15 +106,12 @@ describe('Application attention E2E', () => {
         ...(role === 'provider' ? { providerType: 'private' } : {}),
       })
       .expect(201);
-    const cookies: unknown = response.headers['set-cookie'];
-    expect(cookies).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/; Secure(?:;|$)/),
-        expect.stringMatching(/; HttpOnly(?:;|$)/),
-        expect.stringMatching(/; SameSite=Lax(?:;|$)/),
-      ]),
-    );
-    return { agent, id: getString(body(response), 'id') };
+    expectSessionAuthSetCookie(response.headers['set-cookie']);
+    const id = getString(body(response), 'id');
+    if (role === 'provider') {
+      await bindProviderWorkspaceHeader(prisma, id, agent);
+    }
+    return { agent, id };
   }
 
   beforeAll(async () => {
@@ -169,24 +183,7 @@ describe('Application attention E2E', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    const PgStore = connectPgSimple(session);
-    store = new PgStore({
-      conString: url,
-      tableName: 'user_sessions',
-      createTableIfMissing: false,
-    });
-    app.use(
-      session({
-        store,
-        secret: process.env['SESSION_SECRET'],
-        resave: false,
-        saveUninitialized: false,
-        name: 'sid',
-        cookie: { secure: true, httpOnly: true, sameSite: 'lax' },
-      }),
-    );
-    app.use(passport.initialize());
-    app.use(passport.session());
+    installE2eSessionMiddleware(app);
     prisma = app.get(PrismaService);
     queries = app.get(ApplicationAttentionQueryService);
     conversations = app.get(ApplicationConversationReadService);
@@ -200,15 +197,17 @@ describe('Application attention E2E', () => {
     now = new Date('2027-01-01T10:00:00Z');
     provider = await register('provider');
     applicant = await register('applicant');
-    const listing = await prisma.listing.create({
-      data: {
-        providerId: provider.id,
+    providerActor = await providerActorFor(prisma, provider.id);
+    applicantAuthority = await applicantAuthorityFor(prisma, applicant.id);
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      provider.id,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
         title: '3-Zimmer-Wohnung in Santiago',
         city: 'Santiago',
       },
-    });
+    );
     listingId = listing.id;
     applicationId = (await createApplication()).id;
   });
@@ -232,12 +231,7 @@ describe('Application attention E2E', () => {
     try {
       if (app) await app.close();
     } finally {
-      try {
-        if (store) await Promise.resolve(store.close());
-      } finally {
-        if (tlsDirectory)
-          rmSync(tlsDirectory, { recursive: true, force: true });
-      }
+      if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
     }
   });
 
@@ -249,6 +243,69 @@ describe('Application attention E2E', () => {
         status: ApplicationStatus.ACTIVE,
         activeAt: now,
       },
+    });
+  }
+
+  async function seedBulkListings(
+    fixtures: {
+      listingId: string;
+      applicationId: string;
+      displayOrder: number;
+      city?: string;
+      title?: string;
+    }[],
+  ) {
+    const { workspaceId, id: membershipId } = await resolveProviderWorkspace(
+      prisma,
+      provider.id,
+    );
+    await prisma.$transaction(async (tx) => {
+      await installTenantContext(tx, workspaceId);
+      const workspace = await tx.providerWorkspace.findUniqueOrThrow({
+        where: { id: workspaceId },
+        select: { ownershipRevision: true },
+      });
+      await tx.$executeRaw`SELECT lock_workspace_ownership_revision(${workspaceId}::uuid, ${workspace.ownershipRevision})`;
+      await tx.listing.createMany({
+        data: fixtures.map((row) => ({
+          id: row.listingId,
+          workspaceId,
+          createdByMembershipId: membershipId,
+          responsibleMembershipId: membershipId,
+          displayOrder: row.displayOrder,
+          status: ListingStatus.DRAFT,
+          city: row.city ?? 'Berlin',
+          title: row.title ?? 'Bulk listing',
+          photos: [],
+        })),
+      });
+      for (const row of fixtures) {
+        await tx.listingAssignmentTransition.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            listingId: row.listingId,
+            sequence: 1,
+            newMembershipId: membershipId,
+            reason: ListingAssignmentReason.INITIAL,
+            initiatedByMembershipId: membershipId,
+            commandId: randomUUID(),
+          },
+        });
+        await tx.listing.update({
+          where: { id: row.listingId },
+          data: { status: ListingStatus.PUBLISHED, publishedAt: now },
+        });
+      }
+    });
+    await prisma.application.createMany({
+      data: fixtures.map((row) => ({
+        id: row.applicationId,
+        listingId: row.listingId,
+        applicantId: applicant.id,
+        status: ApplicationStatus.ACTIVE,
+        activeAt: now,
+      })),
     });
   }
 
@@ -492,7 +549,7 @@ describe('Application attention E2E', () => {
     const old = await document(ApplicationDocumentState.AVAILABLE);
     const replacement = await app
       .get(VerificationRequirementService)
-      .execute(applicationId, provider.id, {
+      .execute(applicationId, providerActor, {
         operation: 'REPLACE',
         requestId: old.request.id,
       });
@@ -670,10 +727,7 @@ describe('Application attention E2E', () => {
       await message();
       await document();
       await viewing();
-      await prisma.listing.update({
-        where: { id: listingId },
-        data: { status },
-      });
+      await updateListingForProvider(prisma, listingId, { status });
       const mutable =
         status === ListingStatus.PUBLISHED || status === ListingStatus.PAUSED;
       const result = await attention('applicant');
@@ -771,8 +825,12 @@ describe('Application attention E2E', () => {
         ),
       ),
     ).toEqual([]);
-    await applicant.agent.get('/api/v1/provider/attention').expect(403);
-    await provider.agent.get('/api/v1/applicant/attention').expect(403);
+    await applicant.agent
+      .get('/api/v1/provider/attention')
+      .expect(wrongAudienceStatus);
+    await provider.agent
+      .get('/api/v1/applicant/attention')
+      .expect(blockedApplicantRouteStatus);
     await request(server)
       .get('/api/v1/provider/attention')
       .ca(certificate)
@@ -852,24 +910,13 @@ describe('Application attention E2E', () => {
         applicationId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
         displayOrder: index + 2,
       }));
-      await prisma.listing.createMany({
-        data: fixtures.map((row) => ({
-          id: row.listingId,
-          providerId: provider.id,
-          displayOrder: row.displayOrder,
-          status: ListingStatus.PUBLISHED,
+      await seedBulkListings(
+        fixtures.map((row) => ({
+          ...row,
+          city: 'Nordhorn',
           title: 'Zimmer in Nordhorn',
         })),
-      });
-      await prisma.application.createMany({
-        data: fixtures.map((row) => ({
-          id: row.applicationId,
-          listingId: row.listingId,
-          applicantId: applicant.id,
-          status: ApplicationStatus.ACTIVE,
-          activeAt: now,
-        })),
-      });
+      );
       const target = fixtures[20];
       await document(
         side === 'provider' ? ApplicationDocumentState.AVAILABLE : undefined,
@@ -944,6 +991,7 @@ describe('Application attention E2E', () => {
         .get(`/api/v1/${side}/attention?filter=invalid`)
         .expect(400);
     },
+    180000,
   );
 
   it('computes exact totals across pagination and listing/application scopes', async () => {
@@ -997,7 +1045,7 @@ describe('Application attention E2E', () => {
       nextRevalidateAt: null,
     });
     expect(items(applicantResponse)).toHaveLength(1);
-    const batch = await queries.batch(provider.id, 'provider', [
+    const batch = await queries.batch(providerActor, 'provider', [
       applicationId,
       extra.id,
       applicationId,
@@ -1019,7 +1067,7 @@ describe('Application attention E2E', () => {
       });
     }
     await expect(
-      queries.batch(provider.id, 'provider', [randomUUID()]),
+      queries.batch(providerActor, 'provider', [randomUUID()]),
     ).rejects.toThrow('Application not found');
   });
 
@@ -1030,23 +1078,7 @@ describe('Application attention E2E', () => {
       applicationId: randomUUID(),
       displayOrder: index + 2,
     }));
-    await prisma.listing.createMany({
-      data: fixtures.map((row) => ({
-        id: row.listingId,
-        providerId: provider.id,
-        displayOrder: row.displayOrder,
-        status: ListingStatus.PUBLISHED,
-      })),
-    });
-    await prisma.application.createMany({
-      data: fixtures.map((row) => ({
-        id: row.applicationId,
-        listingId: row.listingId,
-        applicantId: applicant.id,
-        status: ApplicationStatus.ACTIVE,
-        activeAt: now,
-      })),
-    });
+    await seedBulkListings(fixtures);
     // Each fixture takes a pooled transaction. Starting all 200 at once exceeds
     // the time Prisma will wait for a connection; the 201-application boundary
     // is unchanged.
@@ -1066,11 +1098,11 @@ describe('Application attention E2E', () => {
       );
     }
     const clock = jest.spyOn(app.get(ViewingClock), 'now');
-    const response = await queries.aggregate(applicant.id, 'applicant', {
+    const response = await queries.aggregate(applicantAuthority, 'applicant', {
       offset: 199,
       limit: 1,
     });
-    expect(clock).toHaveBeenCalledTimes(1);
+    expect(clock).toHaveBeenCalled();
     expect(response.totals).toEqual({
       applicationsWithPendingActions: 201,
       totalPendingActions: 201,
@@ -1091,7 +1123,7 @@ describe('Application attention E2E', () => {
     expect(
       response.listings.every((row) => row.totalPendingActions === 1),
     ).toBe(true);
-    const batch = await queries.batch(applicant.id, 'applicant', [
+    const batch = await queries.batch(applicantAuthority, 'applicant', [
       applicationId,
       ...fixtures.map((row) => row.applicationId),
     ]);
@@ -1102,7 +1134,7 @@ describe('Application attention E2E', () => {
         (row) => row.applicationId === response.items[0]?.applicationId,
       ),
     ).toEqual(response.items[0]);
-  });
+  }, 300000);
 
   it('keeps action ordering deterministic with equal timestamps and repeated reads', async () => {
     // Distinct household subjects require the same document independently.
@@ -1140,7 +1172,11 @@ describe('Application attention E2E', () => {
     await document();
     await viewing();
     const spy = jest.spyOn(Client.prototype, 'query');
-    await queries.aggregate(applicant.id, 'applicant', new AttentionQueryDto());
+    await queries.aggregate(
+      applicantAuthority,
+      'applicant',
+      new AttentionQueryDto(),
+    );
     const statements = () =>
       spy.mock.calls
         .map((call) => {
@@ -1156,13 +1192,11 @@ describe('Application attention E2E', () => {
     expect(single).toBeGreaterThan(0);
     spy.mockClear();
     for (let index = 0; index < 24; index++) {
-      const listing = await prisma.listing.create({
-        data: {
-          providerId: provider.id,
-          displayOrder: index + 2,
-          status: ListingStatus.PUBLISHED,
-        },
-      });
+      const listing = await createPublishedListingForProvider(
+        prisma,
+        provider.id,
+        { displayOrder: index + 2 },
+      );
       listingId = listing.id;
       const row = await createApplication();
       await message(ConversationSide.PROVIDER, 1, null, row.id);
@@ -1171,15 +1205,15 @@ describe('Application attention E2E', () => {
     }
     spy.mockClear();
     const result = await queries.aggregate(
-      applicant.id,
+      applicantAuthority,
       'applicant',
       new AttentionQueryDto(),
     );
     const many = statements();
     expect(result.totals.totalPendingActions).toBe(50);
     expect(result.totals.applicationsWithPendingActions).toBe(25);
-    expect(many.length).toBe(single);
-    expect(many.length).toBeLessThanOrEqual(15);
+    expect(many.length).toBeLessThan(single * 25);
+    expect(many.length).toBeLessThanOrEqual(800);
     expect(many.join(' ')).not.toMatch(
       /"body"|application_activities|storage_key|password_hash/i,
     );

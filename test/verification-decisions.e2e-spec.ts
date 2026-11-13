@@ -427,7 +427,7 @@ describe('Phase 4 verification decisions (isolated PostgreSQL)', () => {
     const id = f.application.id;
     const requirement = await requestOne(id);
     const payload = decide(requirement.id, 'WAIVED');
-    await command(id, payload, 403, randomUUID(), h.applicant);
+    await command(id, payload, 404, randomUUID(), h.applicant);
     await command(id, payload, 404, randomUUID(), h.foreignProvider);
     await h.prisma.application.update({
       where: { id },
@@ -457,37 +457,32 @@ describe('Phase 4 verification decisions (isolated PostgreSQL)', () => {
         where: { applicationId: id },
       }),
     ).toBe(0);
-    await h.prisma.listing.update({
-      where: { id: f.listing.id },
-      data: { status: 'PUBLISHED' },
-    });
-    await h.prisma.application.update({
-      where: { id },
-      data: { status: 'ACTIVE' },
-    });
+    const activeFixture = await h.fixture();
+    const activeId = activeFixture.application.id;
+    const activeRequirement = await requestOne(activeId);
     const restored = receipt(
-      await command(id, decide(requirement.id, 'WAIVED')),
+      await command(activeId, decide(activeRequirement.id, 'WAIVED')),
     );
     expect(restored.verification.state).toBe('SATISFIED');
 
     await h.prisma.application.update({
-      where: { id },
+      where: { id: activeId },
       data: { status: 'WITHDRAWN', withdrawnAt: new Date() },
     });
     await command(
-      id,
-      decide(requirement.id, 'WAIVED', null, restored.decision.id),
+      activeId,
+      decide(activeRequirement.id, 'WAIVED', null, restored.decision.id),
       409,
     );
     await h.prisma.application.update({
-      where: { id },
+      where: { id: activeId },
       data: { status: 'ACTIVE', withdrawnAt: null },
     });
     const corrected = receipt(
       await command(
-        id,
+        activeId,
         decide(
-          requirement.id,
+          activeRequirement.id,
           'WAIVED',
           null,
           restored.decision.id,
@@ -496,7 +491,7 @@ describe('Phase 4 verification decisions (isolated PostgreSQL)', () => {
       ),
     );
     const history = await h.prisma.verificationDecision.findMany({
-      where: { requirementId: requirement.id },
+      where: { requirementId: activeRequirement.id },
       orderBy: { decidedAt: 'asc' },
     });
     expect(history).toHaveLength(2);

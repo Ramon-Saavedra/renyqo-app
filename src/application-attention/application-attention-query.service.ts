@@ -1,4 +1,14 @@
 import { emptyConversationFacts } from '../application-conversation/application-conversation-read.service';
+import {
+  ApplicationListingAccess,
+  actorUserId,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
+import {
+  ProviderListingAccess,
+  providerListingWhere,
+} from '../provider-authorization/provider-listing-access';
+import type { AuthorizationContext } from '../provider-authorization/domain/authorization.types';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import { ConversationSide } from '../generated/prisma/enums';
@@ -59,188 +69,196 @@ export class ApplicationAttentionQueryService {
     private readonly documents: ApplicationDocumentReadService,
     private readonly viewings: ApplicationViewingReadService,
     private readonly clock: ViewingClock,
+    private readonly listingAccess: ApplicationListingAccess,
+    private readonly providerListings: ProviderListingAccess,
   ) {}
 
   detail(
-    userId: string,
+    actor: ApplicationActor,
     audience: AttentionAudience,
     applicationId: string,
   ): Promise<ApplicationAttentionResponseDto> {
-    return this.prisma.$transaction(
-      async (tx) => {
-        const asOf = this.clock.now();
-        const applications = await tx.application.findMany({
-          where: { AND: [this.scope(userId, audience), { id: applicationId }] },
+    return this.listingAccess.read(
+      actor,
+      audience,
+      applicationId,
+      async () => {},
+      async (tx, _listingId, context) => {
+        const application = await tx.application.findFirst({
+          where: {
+            AND: [this.scope(actor, audience, context), { id: applicationId }],
+          },
           select: attentionCompositionApplicationSelect,
         });
-        if (!applications.length)
-          throw new NotFoundException('Application not found');
-        const rows = await this.deriveBatch(tx, applications, audience, asOf);
-        const response = rows.get(applicationId);
-        if (!response) throw new NotFoundException('Application not found');
-        return response;
+        if (!application) throw new NotFoundException('Application not found');
+        const result = (
+          await this.deriveBatch(tx, [application], audience, this.clock.now())
+        ).get(applicationId);
+        if (!result) throw new NotFoundException('Application not found');
+        return result;
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
-  batch(
-    userId: string,
+  async batch(
+    actor: ApplicationActor,
     audience: AttentionAudience,
     applicationIds: readonly string[],
   ): Promise<AttentionBatchResponseDto> {
-    return this.prisma.$transaction(
-      async (tx) => {
-        const asOf = this.clock.now();
-        const ids = [...new Set(applicationIds)];
-        const items: ApplicationAttentionListItemDto[] = [];
-        for (let offset = 0; offset < ids.length; offset += 200) {
-          const requested = ids.slice(offset, offset + 200);
-          const applications = await tx.application.findMany({
-            where: {
-              AND: [this.scope(userId, audience), { id: { in: requested } }],
-            },
-            select: attentionListItemApplicationSelect,
-            orderBy: { id: 'asc' },
-          });
-          if (applications.length !== requested.length)
-            throw new NotFoundException('Application not found');
-          const rows = await this.deriveBatch(tx, applications, audience, asOf);
-          for (const application of applications) {
-            const summary = rows.get(application.id);
-            if (summary) items.push(this.toListItem(application, summary));
-          }
-        }
-        items.sort((a, b) =>
-          a.applicationId < b.applicationId
-            ? -1
-            : a.applicationId > b.applicationId
-              ? 1
-              : 0,
-        );
-        return new AttentionBatchResponseDto(asOf, items);
-      },
-      { isolationLevel: 'RepeatableRead' },
-    );
+    await this.listingAccess.assertActor(actor, audience);
+    const asOf = this.clock.now();
+    const items: ApplicationAttentionListItemDto[] = [];
+    for (const id of [...new Set(applicationIds)].sort()) {
+      items.push(
+        await this.listingAccess.read(
+          actor,
+          audience,
+          id,
+          async () => {},
+          async (tx, _listingId, context) => {
+            const application = await tx.application.findFirst({
+              where: { AND: [this.scope(actor, audience, context), { id }] },
+              select: attentionListItemApplicationSelect,
+            });
+            if (!application)
+              throw new NotFoundException('Application not found');
+            const summary = (
+              await this.deriveBatch(tx, [application], audience, asOf)
+            ).get(id);
+            if (!summary) throw new NotFoundException('Application not found');
+            return this.toListItem(application, summary);
+          },
+        ),
+      );
+    }
+    await this.listingAccess.assertActor(actor, audience);
+    return new AttentionBatchResponseDto(asOf, items);
   }
 
-  aggregate(
-    userId: string,
+  async aggregate(
+    actor: ApplicationActor,
     audience: AttentionAudience,
     query: AttentionQueryDto,
     listingId?: string,
   ): Promise<AttentionAggregateResponseDto> {
-    return this.prisma.$transaction(
-      async (tx) => {
-        const asOf = this.clock.now();
-        const listings =
-          audience === 'provider'
-            ? await tx.listing.findMany({
-                where: {
-                  providerId: userId,
-                  ...(listingId ? { id: listingId } : {}),
-                },
-                select: { id: true },
-                orderBy: { id: 'asc' },
-              })
-            : [];
-        if (listingId && !listings.length)
-          throw new NotFoundException('Listing not found');
-        const listingItems = new Map<string, ApplicationAttentionListItemDto[]>(
-          listings.map((row) => [row.id, []]),
-        );
-        const all: ApplicationAttentionListItemDto[] = [];
-        let nextRevalidateAt: Date | null = null;
-        const listingRevalidations = new Map<string, Date>();
-        let cursor: string | undefined;
-        for (;;) {
-          const applications = await tx.application.findMany({
+    await this.listingAccess.assertActor(actor, audience);
+    const asOf = this.clock.now();
+    const all: ApplicationAttentionListItemDto[] = [];
+    const listingItems = new Map<string, ApplicationAttentionListItemDto[]>();
+    if (audience === 'provider') {
+      if (!('authority' in actor))
+        throw new NotFoundException('Listing not found');
+      const listings = await this.providerListings.read(
+        actor,
+        'attention.listings',
+        listingId,
+        (tx, context) =>
+          tx.listing.findMany({
             where: {
-              AND: [
-                this.scope(userId, audience),
-                listingId ? { listingId } : {},
-              ],
+              ...providerListingWhere(context),
+              ...(listingId ? { id: listingId } : {}),
             },
-            select: attentionListItemApplicationSelect,
+            select: { id: true },
             orderBy: { id: 'asc' },
-            take: 200,
-            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-          });
-          if (!applications.length) break;
-          const rows = await this.deriveBatch(tx, applications, audience, asOf);
-          for (const application of applications) {
-            const summary = rows.get(application.id);
-            if (!summary) continue;
-            const item = this.toListItem(application, summary);
-            if (!listingItems.has(application.listingId))
-              listingItems.set(application.listingId, []);
-            // Quiet applications can acquire viewing obligations as time passes.
-            // Keep their refresh boundaries even when they are not menu entries.
-            const boundary = item.nextRevalidateAt;
-            if (boundary) {
-              if (!nextRevalidateAt || boundary < nextRevalidateAt)
-                nextRevalidateAt = boundary;
-              const previous = listingRevalidations.get(application.listingId);
-              if (!previous || boundary < previous)
-                listingRevalidations.set(application.listingId, boundary);
-            }
-            if (
-              query.filter === 'actionable' &&
-              !item.hasPendingAction &&
-              item.actionableUnreadMessageCount === 0
+          }),
+      );
+      for (const listing of listings) listingItems.set(listing.id, []);
+    }
+    let cursor: string | undefined;
+    const listingRevalidations = new Map<string, Date>();
+    let nextRevalidateAt: Date | null = null;
+    for (;;) {
+      const load = async (
+        tx: Prisma.TransactionClient,
+        context?: AuthorizationContext,
+      ) =>
+        tx.application.findMany({
+          where: {
+            AND: [
+              this.scope(actor, audience, context),
+              listingId ? { listingId } : {},
+              cursor ? { id: { gt: cursor } } : {},
+            ],
+          },
+          select: { id: true },
+          orderBy: { id: 'asc' },
+          take: 200,
+        });
+      const refs =
+        audience === 'provider' && 'authority' in actor
+          ? await this.providerListings.read(
+              actor,
+              'attention.batch',
+              listingId,
+              (tx, context) => load(tx, context),
             )
-              continue;
-            all.push(item);
-            const group = listingItems.get(application.listingId) ?? [];
-            group.push(item);
-            listingItems.set(application.listingId, group);
-          }
-          if (applications.length < 200) break;
-          cursor = applications.at(-1)?.id;
+          : await load(this.prisma);
+      if (!refs.length) break;
+      const batch = await this.batch(
+        actor,
+        audience,
+        refs.map((row) => row.id),
+      );
+      for (const item of batch.items) {
+        if (!listingItems.has(item.listingId))
+          listingItems.set(item.listingId, []);
+        const boundary = item.nextRevalidateAt;
+        if (boundary) {
+          if (!nextRevalidateAt || boundary < nextRevalidateAt)
+            nextRevalidateAt = boundary;
+          const previous = listingRevalidations.get(item.listingId);
+          if (!previous || boundary < previous)
+            listingRevalidations.set(item.listingId, boundary);
         }
-        if (query.filter === 'actionable') {
-          // Obligations precede message-only attention; IDs break all ties.
-          all.sort(
-            (a, b) =>
-              Number(b.hasPendingAction) - Number(a.hasPendingAction) ||
-              b.pendingActionCount - a.pendingActionCount ||
-              b.actionableUnreadMessageCount - a.actionableUnreadMessageCount ||
-              (a.applicationId < b.applicationId
-                ? -1
-                : a.applicationId > b.applicationId
-                  ? 1
-                  : 0),
-          );
-        }
-        return new AttentionAggregateResponseDto(
-          asOf,
-          this.totals(all, nextRevalidateAt),
-          [...listingItems]
-            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-            .map(
-              ([id, items]) =>
-                new ListingAttentionTotalsDto(
-                  id,
-                  this.totals(items, listingRevalidations.get(id) ?? null),
-                ),
+        if (
+          query.filter === 'actionable' &&
+          !item.hasPendingAction &&
+          item.actionableUnreadMessageCount === 0
+        )
+          continue;
+        all.push(item);
+        listingItems.get(item.listingId)!.push(item);
+      }
+      if (refs.length < 200) break;
+      cursor = refs.at(-1)!.id;
+    }
+    if (query.filter === 'actionable')
+      all.sort(
+        (a, b) =>
+          Number(b.hasPendingAction) - Number(a.hasPendingAction) ||
+          b.pendingActionCount - a.pendingActionCount ||
+          b.actionableUnreadMessageCount - a.actionableUnreadMessageCount ||
+          a.applicationId.localeCompare(b.applicationId),
+      );
+    await this.listingAccess.assertActor(actor, audience);
+    return new AttentionAggregateResponseDto(
+      asOf,
+      this.totals(all, nextRevalidateAt),
+      [...listingItems]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(
+          ([id, items]) =>
+            new ListingAttentionTotalsDto(
+              id,
+              this.totals(items, listingRevalidations.get(id) ?? null),
             ),
-          all.slice(query.offset, query.offset + query.limit),
-          new AttentionPaginationDto(query.offset, query.limit, all.length),
-        );
-      },
-      { isolationLevel: 'RepeatableRead' },
+        ),
+      all.slice(query.offset, query.offset + query.limit),
+      new AttentionPaginationDto(query.offset, query.limit, all.length),
     );
   }
 
   private scope(
-    userId: string,
+    actor: ApplicationActor,
     audience: AttentionAudience,
+    context?: AuthorizationContext,
   ): Prisma.ApplicationWhereInput {
-    return audience === 'provider'
-      ? providerApplicationVisibility(userId)
-      : { applicantId: userId };
+    if (audience === 'provider') {
+      if (!context) throw new NotFoundException('Application not found');
+      return providerApplicationVisibility(context);
+    }
+    return { applicantId: actorUserId(actor) };
   }
-
   private async deriveBatch(
     tx: Prisma.TransactionClient,
     applications: readonly AttentionCompositionApplication[],

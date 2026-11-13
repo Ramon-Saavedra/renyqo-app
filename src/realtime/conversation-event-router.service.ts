@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { providerApplicationIsVisible } from '../applications/application-process.policy';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '../generated/prisma/enums';
 import type { ConversationRealtimeEvent } from './realtime-event';
@@ -15,15 +14,9 @@ export class ConversationEventRouter {
         application: {
           select: {
             applicantId: true,
-            applicant: { select: { role: true } },
+            applicant: { select: { role: true, status: true } },
             status: true,
             activeAt: true,
-            listing: {
-              select: {
-                providerId: true,
-                provider: { select: { role: true } },
-              },
-            },
           },
         },
       },
@@ -32,13 +25,12 @@ export class ConversationEventRouter {
     if (!conversation) return [];
     const application = conversation.application;
     const recipients: string[] = [];
-    if (application.applicant.role === Role.APPLICANT)
-      recipients.push(application.applicantId);
     if (
-      application.listing.provider.role === Role.PROVIDER &&
-      providerApplicationIsVisible(application)
+      application.applicant.role === Role.APPLICANT &&
+      application.applicant.status === 'ACTIVE'
     )
-      recipients.push(application.listing.providerId);
+      recipients.push(application.applicantId);
+    // Provider team delivery is deliberately disabled until its assigned phase.
     return recipients;
   }
 }

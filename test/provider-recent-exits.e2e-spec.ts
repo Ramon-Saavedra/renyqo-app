@@ -29,6 +29,19 @@ import {
 } from '../src/generated/prisma/enums';
 import type { Application } from '../src/generated/prisma/client';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  applicantAuthorityFor,
+  authorizationContextFor,
+  providerActorFor,
+} from './e2e-provider-context';
+import {
+  createPublishedListingForProvider,
+  ensurePersonalWorkspaceForProvider,
+  updateListingForProvider,
+} from './e2e-workspace-listing';
+import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
+import type { AuthorizationContext } from '../src/provider-authorization/domain/authorization.types';
+import type { HumanAuthority } from '../src/provider-authorization/domain/authorization.types';
 
 describe('Provider recent-exit projection E2E', () => {
   let module: TestingModule;
@@ -38,7 +51,10 @@ describe('Provider recent-exit projection E2E', () => {
   let overview: ProviderApplicationOverviewQueryService;
   let recentExits: ProviderRecentExitsQueryService;
   let providerId: string;
+  let providerActor: ProviderActor;
+  let providerContext: AuthorizationContext;
   let applicantId: string;
+  let applicantAuthority: HumanAuthority;
   let listingId: string;
   const base = new Date('2026-01-01T12:00:00Z');
 
@@ -91,16 +107,19 @@ describe('Provider recent-exit projection E2E', () => {
 
   beforeEach(async () => {
     providerId = await user(Role.PROVIDER);
+    await ensurePersonalWorkspaceForProvider(prisma, providerId);
+    providerActor = await providerActorFor(prisma, providerId);
+    providerContext = await authorizationContextFor(prisma, providerId);
     applicantId = await user();
-    const listing = await prisma.listing.create({
-      data: {
-        providerId,
+    applicantAuthority = await applicantAuthorityFor(prisma, applicantId);
+    const listing = await createPublishedListingForProvider(
+      prisma,
+      providerId,
+      {
         displayOrder: 1,
-        status: ListingStatus.PUBLISHED,
-        photos: [],
         title: 'Recent exit listing',
       },
-    });
+    );
     listingId = listing.id;
   });
 
@@ -163,11 +182,11 @@ describe('Provider recent-exit projection E2E', () => {
 
   async function exits() {
     const legacy = new ProviderExitedApplicationsResponseDto(
-      await applications.findExitedByListing(listingId, providerId),
+      await applications.findExitedByListing(listingId, providerActor),
     );
-    const modern = await overview.listing(providerId, listingId);
+    const modern = await overview.listing(providerActor, listingId);
     const listings = await overview.overview(
-      providerId,
+      providerActor,
       new ReadModelPageQueryDto(),
     );
     const summary = listings.items.find(
@@ -201,7 +220,7 @@ describe('Provider recent-exit projection E2E', () => {
     'excludes historical withdrawal while a fresh %s attempt exists',
     async (status) => {
       const old = await attempt();
-      await applications.withdraw(old.id, applicantId);
+      await applications.withdraw(old.id, applicantAuthority);
       expect((await exits()).items[0]).toMatchObject({
         id: old.id,
         status: ApplicationStatus.WITHDRAWN,
@@ -211,10 +230,10 @@ describe('Provider recent-exit projection E2E', () => {
         for (let index = 0; index < 5; index++)
           await attempt({ applicantId: await user() });
       }
-      const fresh = await applications.apply(listingId, applicantId);
+      const fresh = await applications.apply(listingId, applicantAuthority);
       expect(fresh.status).toBe(status);
       expect(await exits()).toMatchObject({ items: [], totalCount: 0 });
-      await applications.withdraw(fresh.id, applicantId);
+      await applications.withdraw(fresh.id, applicantAuthority);
       expect((await exits()).items[0]).toMatchObject({
         id: fresh.id,
         status: ApplicationStatus.WITHDRAWN,
@@ -227,11 +246,11 @@ describe('Provider recent-exit projection E2E', () => {
   it.each([0, 5])(
     'removes restored attempts and projects later withdrawal with %s occupied slots',
     async (slots) => {
-      const old = await applications.apply(listingId, applicantId);
-      await applications.reject(old.id, providerId);
+      const old = await applications.apply(listingId, applicantAuthority);
+      await applications.reject(old.id, providerActor);
       expect((await exits()).items[0].canRestore).toBe(false);
       await expect(
-        applications.restore(old.id, providerId),
+        applications.restore(old.id, providerActor),
       ).rejects.toMatchObject({ status: 429 });
       await prisma.listingEvent.updateMany({
         where: { applicationId: old.id },
@@ -240,12 +259,12 @@ describe('Provider recent-exit projection E2E', () => {
       expect((await exits()).items[0].canRestore).toBe(true);
       for (let index = 0; index < slots; index++)
         await attempt({ applicantId: await user() });
-      const restored = await applications.restore(old.id, providerId);
+      const restored = await applications.restore(old.id, providerActor);
       expect(restored.status).toBe(
         slots === 0 ? ApplicationStatus.ACTIVE : ApplicationStatus.WAITING,
       );
       expect(await exits()).toMatchObject({ items: [], totalCount: 0 });
-      await applications.withdraw(old.id, applicantId);
+      await applications.withdraw(old.id, applicantAuthority);
       const latest = await prisma.applicationActivity.findFirstOrThrow({
         where: {
           applicationId: old.id,
@@ -261,7 +280,7 @@ describe('Provider recent-exit projection E2E', () => {
         exitedAt: latest.occurredAt,
       });
       await expect(
-        applications.restore(old.id, providerId),
+        applications.restore(old.id, providerActor),
       ).rejects.toMatchObject({ status: 409 });
     },
   );
@@ -269,19 +288,19 @@ describe('Provider recent-exit projection E2E', () => {
   it('uses the last rejection after repeated restoration cycles', async () => {
     const entry = await attempt();
     for (let index = 0; index < 2; index++) {
-      await applications.reject(entry.id, providerId);
+      await applications.reject(entry.id, providerActor);
       await prisma.listingEvent.updateMany({
         where: { applicationId: entry.id },
         data: { occurredAt: new Date(Date.now() - 61_000) },
       });
-      await applications.restore(entry.id, providerId);
+      await applications.restore(entry.id, providerActor);
       expect((await exits()).totalCount).toBe(0);
       await prisma.listingEvent.updateMany({
         where: { applicationId: entry.id },
         data: { occurredAt: new Date(Date.now() - 61_000) },
       });
     }
-    const rejected = await applications.reject(entry.id, providerId);
+    const rejected = await applications.reject(entry.id, providerActor);
     expect((await exits()).items[0]).toMatchObject({
       id: entry.id,
       publicReason: ApplicationRejectionReason.NOT_SELECTED,
@@ -303,7 +322,7 @@ describe('Provider recent-exit projection E2E', () => {
     });
     expect((await exits()).totalCount).toBe(0);
     await expect(
-      applications.restore(old.id, providerId),
+      applications.restore(old.id, providerActor),
     ).rejects.toMatchObject({
       response: { code: 'APPLICATION_ATTEMPT_SUPERSEDED' },
     });
@@ -428,7 +447,7 @@ describe('Provider recent-exit projection E2E', () => {
     });
     expect((await exits()).items[0].canRestore).toBe(false);
     await expect(
-      applications.restore(entry.id, providerId),
+      applications.restore(entry.id, providerActor),
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -439,21 +458,20 @@ describe('Provider recent-exit projection E2E', () => {
       rejectedAt: new Date(base.getTime() + 1000),
     });
     expect((await exits()).items[0].canRestore).toBe(true);
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { minimumHouseholdNetIncome: 4000 },
+    await updateListingForProvider(prisma, listingId, {
+      minimumHouseholdNetIncome: 4000,
     });
     expect((await exits()).items[0].canRestore).toBe(false);
     await expect(
-      applications.restore(entry.id, providerId),
+      applications.restore(entry.id, providerActor),
     ).rejects.toMatchObject({ status: 422 });
-    await prisma.listing.update({
-      where: { id: listingId },
-      data: { minimumHouseholdNetIncome: null, status: ListingStatus.PAUSED },
+    await updateListingForProvider(prisma, listingId, {
+      minimumHouseholdNetIncome: null,
+      status: ListingStatus.PAUSED,
     });
     expect((await exits()).items[0].canRestore).toBe(false);
     await expect(
-      applications.restore(entry.id, providerId),
+      applications.restore(entry.id, providerActor),
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -462,15 +480,20 @@ describe('Provider recent-exit projection E2E', () => {
       status: ApplicationStatus.WITHDRAWN,
       withdrawnAt: new Date(base.getTime() + 1000),
     });
-    const foreign = await user(Role.PROVIDER);
+    const foreignUserId = await user(Role.PROVIDER);
+    await ensurePersonalWorkspaceForProvider(prisma, foreignUserId);
+    const foreignActor = await providerActorFor(prisma, foreignUserId);
+    const foreignContext = await authorizationContextFor(prisma, foreignUserId);
     await expect(
-      applications.findExitedByListing(listingId, foreign),
+      applications.findExitedByListing(listingId, foreignActor),
     ).rejects.toMatchObject({ status: 404 });
-    await expect(overview.listing(foreign, listingId)).rejects.toMatchObject({
+    await expect(
+      overview.listing(foreignActor, listingId),
+    ).rejects.toMatchObject({
       status: 404,
     });
     const result = await prisma.$transaction(
-      (tx) => recentExits.select(tx, foreign, [listingId]),
+      (tx) => recentExits.select(tx, foreignContext, [listingId]),
       { isolationLevel: 'RepeatableRead' },
     );
     expect(result.get(listingId)).toEqual({ items: [], totalCount: 0 });
@@ -482,14 +505,16 @@ describe('Provider recent-exit projection E2E', () => {
 
   it('keeps counts and cards in the same snapshot during concurrent re-entry', async () => {
     const old = await attempt();
-    await applications.withdraw(old.id, applicantId);
+    await applications.withdraw(old.id, applicantAuthority);
     await prisma.$transaction(
       async (tx) => {
-        const selection = await recentExits.select(tx, providerId, [listingId]);
-        await applications.apply(listingId, applicantId);
+        const selection = await recentExits.select(tx, providerContext, [
+          listingId,
+        ]);
+        await applications.apply(listingId, applicantAuthority);
         const rows = await recentExits.cards(
           tx,
-          providerId,
+          providerContext,
           selection.get(listingId)?.items ?? [],
           new Date(),
         );

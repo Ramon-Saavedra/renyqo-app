@@ -8,7 +8,7 @@ export type ListingWithActiveApplicationsCount = Listing & {
 };
 
 export class ProviderListingOverviewResponseDto extends ListingResponseDto {
-  readonly displayOrder: number;
+  readonly displayOrder: number | null;
   readonly activeApplicationsCount: number;
 
   constructor(

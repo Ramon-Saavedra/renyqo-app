@@ -1,4 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import type { ProviderActor } from '../provider-authorization/provider-listing-access';
+import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
+import type { ListingEligibilityState } from '../eligibility/profile-eligibility-evaluator';
 import type { ApplicantProfile, Application } from '../generated/prisma/client';
 import {
   ApplicationLifecycleService,
@@ -20,8 +23,8 @@ export class ApplicationsService {
     private readonly queryService: ApplicationProcessQueryService,
   ) {}
 
-  apply(listingId: string, applicantId: string): Promise<Application> {
-    return this.lifecycleService.apply(listingId, applicantId);
+  apply(listingId: string, authority: HumanAuthority): Promise<Application> {
+    return this.lifecycleService.apply(listingId, authority);
   }
 
   findAdmissionForListings(
@@ -36,36 +39,50 @@ export class ApplicationsService {
     );
   }
 
-  withdraw(applicationId: string, applicantId: string): Promise<Application> {
-    return this.lifecycleService.withdraw(applicationId, applicantId);
+  withdraw(
+    applicationId: string,
+    authority: HumanAuthority,
+  ): Promise<Application> {
+    return this.lifecycleService.withdraw(applicationId, authority);
   }
 
-  reject(applicationId: string, providerId: string): Promise<Application> {
+  reject(
+    applicationId: string,
+    providerId: ProviderActor,
+  ): Promise<Application> {
     return this.curationService.reject(applicationId, providerId);
   }
 
-  restore(applicationId: string, providerId: string): Promise<Application> {
+  restore(
+    applicationId: string,
+    providerId: ProviderActor,
+  ): Promise<Application> {
     return this.curationService.restore(applicationId, providerId);
   }
 
-  promoteWaitingApplications(listingId: string): Promise<number> {
-    return this.lifecycleService.promoteWaitingApplications(listingId);
+  promoteWaitingApplications(
+    listingId: string,
+    actor: ProviderActor,
+  ): Promise<number> {
+    return this.lifecycleService.promoteWaitingApplications(listingId, actor);
   }
 
   revalidateActiveAndWaitingApplications(
     tx: ApplicationTransactionClient,
     applicantId: string,
     profile: ApplicantProfile,
+    listings: readonly ListingEligibilityState[],
   ): Promise<void> {
     return this.lifecycleService.revalidateActiveAndWaitingApplications(
       tx,
       applicantId,
       profile,
+      listings,
     );
   }
 
   findAllByApplicantWithListing(
-    applicantId: string,
+    applicantId: HumanAuthority,
   ): Promise<ApplicantApplicationRecord[]> {
     return this.queryService.findAllByApplicantWithListing(applicantId);
   }
@@ -90,34 +107,34 @@ export class ApplicationsService {
     );
   }
 
-  findAllByProvider(providerId: string): Promise<Application[]> {
+  findAllByProvider(providerId: ProviderActor): Promise<Application[]> {
     return this.queryService.findAllByProvider(providerId);
   }
 
   findAllByListing(
     listingId: string,
-    providerId: string,
+    providerId: ProviderActor,
   ): Promise<Application[]> {
     return this.queryService.findAllByListing(listingId, providerId);
   }
 
   findWaitingCountByListing(
     listingId: string,
-    providerId: string,
+    providerId: ProviderActor,
   ): Promise<number> {
     return this.queryService.findWaitingCountByListing(listingId, providerId);
   }
 
   findActiveByListing(
     listingId: string,
-    providerId: string,
+    providerId: ProviderActor,
   ): Promise<ProviderActiveApplicationRecord[]> {
     return this.queryService.findActiveByListing(listingId, providerId);
   }
 
   findExitedByListing(
     listingId: string,
-    providerId: string,
+    providerId: ProviderActor,
   ): Promise<{ items: ProviderExitedApplicationRecord[]; totalCount: number }> {
     return this.queryService.findExitedByListing(listingId, providerId);
   }

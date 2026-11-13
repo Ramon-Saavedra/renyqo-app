@@ -1,4 +1,7 @@
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import { Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { sessionAuthorityFromRequest } from '../provider-authorization/domain/authority-reference';
 import type { Response } from 'express';
 
 import { AuthenticatedGuard } from '../auth/guards/authenticated.guard';
@@ -16,10 +19,16 @@ export class ApplicantSavedListingsController {
 
   @Get()
   async findAll(
+    @Req() request: Request,
     @CurrentUser() user: SafeUser,
     @Query() query: SavedListingsQueryDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<ApplicantListingsPageDto> {
-    return this.savedListingsService.findSavedListingsPage(user, query, res);
+    return this.savedListingsService.findSavedListingsPage(
+      user,
+      query,
+      res,
+      sessionAuthorityFromRequest(request),
+    );
   }
 }

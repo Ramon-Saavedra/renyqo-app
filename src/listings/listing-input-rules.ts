@@ -21,11 +21,15 @@ const ELIGIBILITY_CRITERIA_FIELDS = [
 @Injectable()
 export class ListingInputRules {
   buildCreateData(
-    providerId: string,
     dto: CreateListingDto,
-  ): Omit<Prisma.ListingUncheckedCreateInput, 'displayOrder'> {
+  ): Omit<
+    Prisma.ListingUncheckedCreateInput,
+    | 'workspaceId'
+    | 'createdByMembershipId'
+    | 'responsibleMembershipId'
+    | 'displayOrder'
+  > {
     const draftData = this.stripEmptyValues({
-      providerId,
       objectType: dto.objectType,
       city: dto.city,
       zip: dto.zip,
@@ -53,7 +57,6 @@ export class ListingInputRules {
     });
 
     return {
-      providerId,
       ...draftData,
       ...this.buildCreateDepositData(dto),
     };

@@ -4,6 +4,10 @@ import {
   loadVerificationIdentities,
 } from '../application-documents/verification-projection';
 import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  actorUserId,
+  type ApplicationActor,
+} from '../listings/application-listing-access';
 import type { AttentionAudience } from '../application-attention/application-pending-action';
 import { ApplicationActivityReadService } from '../applications/application-activity-read.service';
 import { ApplicationDocumentState } from '../generated/prisma/enums';
@@ -33,16 +37,27 @@ export class ApplicationHistoryQueryService {
   ) {}
 
   activity(
-    userId: string,
+    actor: ApplicationActor,
     audience: AttentionAudience,
     applicationId: string,
     query: ReadModelPageQueryDto,
   ) {
     const cursor = decodeReadModelCursor(query.cursor, 'activity');
-    return this.workspace.prisma.$transaction(
-      async (tx) => {
+    const userId = actorUserId(actor);
+    return this.workspace.listingAccess.read(
+      actor,
+      audience,
+      applicationId,
+      async () => {},
+      async (tx, _id, context) => {
         const asOf = this.workspace.clock.now();
-        await this.workspace.authorize(tx, applicationId, userId, audience);
+        await this.workspace.authorize(
+          tx,
+          applicationId,
+          userId,
+          audience,
+          context,
+        );
         const scope = this.activities.scope(applicationId, audience);
         const rows = await this.activities.page(
           tx,
@@ -85,25 +100,30 @@ export class ApplicationHistoryQueryService {
           total,
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
   documents(
-    userId: string,
+    actor: ApplicationActor,
     audience: AttentionAudience,
     applicationId: string,
     query: ReadModelPageQueryDto,
   ) {
     const cursor = decodeReadModelCursor(query.cursor, 'documents');
-    return this.workspace.prisma.$transaction(
-      async (tx) => {
+    const userId = actorUserId(actor);
+    return this.workspace.listingAccess.read(
+      actor,
+      audience,
+      applicationId,
+      async () => {},
+      async (tx, _id, context) => {
         const asOf = this.workspace.clock.now();
         const application = await this.workspace.authorize(
           tx,
           applicationId,
           userId,
           audience,
+          context,
         );
         const rows = await tx.applicationDocumentRequest.findMany({
           where: {
@@ -204,22 +224,32 @@ export class ApplicationHistoryQueryService {
           total,
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 
   files(
-    userId: string,
+    actor: ApplicationActor,
     audience: AttentionAudience,
     applicationId: string,
     requestId: string,
     query: ReadModelPageQueryDto,
   ) {
     const cursor = decodeReadModelCursor(query.cursor, 'files');
-    return this.workspace.prisma.$transaction(
-      async (tx) => {
+    const userId = actorUserId(actor);
+    return this.workspace.listingAccess.read(
+      actor,
+      audience,
+      applicationId,
+      async () => {},
+      async (tx, _id, context) => {
         const asOf = this.workspace.clock.now();
-        await this.workspace.authorize(tx, applicationId, userId, audience);
+        await this.workspace.authorize(
+          tx,
+          applicationId,
+          userId,
+          audience,
+          context,
+        );
         const request = await tx.applicationDocumentRequest.findFirst({
           where: { id: requestId, applicationId },
           select: { id: true },
@@ -278,7 +308,6 @@ export class ApplicationHistoryQueryService {
           total,
         );
       },
-      { isolationLevel: 'RepeatableRead' },
     );
   }
 }

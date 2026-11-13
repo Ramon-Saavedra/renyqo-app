@@ -1,4 +1,8 @@
 import {
+  ProviderListingAccess,
+  type ProviderActor,
+} from '../provider-authorization/provider-listing-access';
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -6,20 +10,20 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ApplicationDocumentAccessService } from './application-document-access.service';
 
 @Injectable()
 export class VerificationSubjectService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly provider: ProviderListingAccess,
     private readonly access: ApplicationDocumentAccessService,
   ) {}
 
   // Domain entry point only. No Phase 3 subject-management HTTP API is exposed.
   householdMember(
     applicationId: string,
-    actorUserId: string,
+    actor: ProviderActor,
     subjectKey: string,
     displayLabel?: string,
   ) {
@@ -36,32 +40,40 @@ export class VerificationSubjectService {
       (!label.length || label.length > 100 || /[\p{Cc}<>]/u.test(label))
     )
       throw new BadRequestException('Invalid subject label');
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      await this.access.mutation(tx, applicationId, actorUserId, 'provider');
-      const key = subjectKey.toLowerCase();
-      const existing = await tx.applicationVerificationSubject.findUnique({
-        where: { applicationId_subjectKey: { applicationId, subjectKey: key } },
-      });
-      if (existing) {
-        if (
-          existing.kind !== 'HOUSEHOLD_MEMBER' ||
-          existing.displayLabel !== label
-        )
-          throw new ConflictException(
-            'Subject identity already exists with different metadata',
-          );
-        return existing;
-      }
-      return tx.applicationVerificationSubject.create({
-        data: {
-          applicationId,
-          subjectKey: key,
-          kind: 'HOUSEHOLD_MEMBER',
-          displayLabel: label,
-          createdByUserId: actorUserId,
-        },
-      });
-    });
+    return this.provider.mutateApplication(
+      actor,
+      'verification.write',
+      applicationId,
+      async (tx) => {
+        const actorUserId = actor.authority.userId;
+        await this.access.mutation(tx, applicationId, actorUserId, 'provider');
+        const key = subjectKey.toLowerCase();
+        const existing = await tx.applicationVerificationSubject.findUnique({
+          where: {
+            applicationId_subjectKey: { applicationId, subjectKey: key },
+          },
+        });
+        if (existing) {
+          if (
+            existing.kind !== 'HOUSEHOLD_MEMBER' ||
+            existing.displayLabel !== label
+          )
+            throw new ConflictException(
+              'Subject identity already exists with different metadata',
+            );
+          return existing;
+        }
+        return tx.applicationVerificationSubject.create({
+          data: {
+            applicationId,
+            subjectKey: key,
+            kind: 'HOUSEHOLD_MEMBER',
+            displayLabel: label,
+            createdByUserId: actorUserId,
+          },
+        });
+      },
+    );
   }
 
   async resolve(

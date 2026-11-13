@@ -56,14 +56,19 @@ describe('Session pool errors', () => {
     );
   });
 
-  function service(): SessionInfrastructureService {
+  function service(
+    pool = new Pool({ connectionString: databaseUrl }),
+  ): SessionInfrastructureService {
     return new SessionInfrastructureService(
       new ConfigService({
         SESSION_SECRET: 'session-secret-at-least-32-characters',
         DATABASE_URL: databaseUrl,
         NODE_ENV: 'test',
       }),
-      {} as PrismaService,
+      {
+        getSharedPool: () => pool,
+        getDatabaseSchema: () => 'public',
+      } as PrismaService,
     );
   }
 
@@ -115,17 +120,23 @@ describe('Session pool errors', () => {
     expect(JSON.stringify(logged)).not.toContain('cookie');
   });
 
-  it('closes the shared pool once during shutdown', async () => {
+  it('closes only the store while Prisma owns the shared pool', async () => {
     const infrastructure = service();
+    const close = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
     infrastructure.createMiddleware();
     const pool = createdPools()[0];
+    const store = (
+      infrastructure as unknown as {
+        store?: { close: () => Promise<void> };
+      }
+    ).store;
+    if (store) store.close = close;
     const end = jest.spyOn(pool, 'end');
 
     await infrastructure.onModuleDestroy();
     await infrastructure.onModuleDestroy();
 
-    expect(end).toHaveBeenCalledTimes(1);
-    expect(pool.listenerCount('error')).toBe(1);
-    await expect(pool.end()).rejects.toThrow(/more than once/);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(end).not.toHaveBeenCalled();
   });
 });

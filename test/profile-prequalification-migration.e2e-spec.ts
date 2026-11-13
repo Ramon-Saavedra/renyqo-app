@@ -4,6 +4,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
+import {
+  LISTING_WORKSPACE_CUTOVER_MIGRATION,
+  clearLegacyListingsBeforeWorkspaceCutover,
+} from './e2e-migration-cutover';
 
 jest.setTimeout(120000);
 
@@ -147,10 +151,14 @@ describe('Profile eligibility migration (isolated PostgreSQL)', () => {
           ).toBe(0);
         }
         if (index === 1)
-          for (const name of migrations.filter((n) => n > migration))
+          for (const name of migrations.filter((n) => n > migration)) {
+            if (name === LISTING_WORKSPACE_CUTOVER_MIGRATION) {
+              await clearLegacyListingsBeforeWorkspaceCutover(client);
+            }
             await client.query(
               readFileSync(resolve(root, name, 'migration.sql'), 'utf8'),
             );
+          }
         const diff = cli(scoped.href, [
           'migrate',
           'diff',

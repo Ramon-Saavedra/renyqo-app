@@ -1,3 +1,4 @@
+import { hasListingParticipation } from '../provider-authorization/domain/listing-participation';
 import {
   ConflictException,
   Injectable,
@@ -18,7 +19,9 @@ const applicationSelect = {
   status: true,
   activeAt: true,
   verificationScopeRevision: true,
-  listing: { select: { providerId: true, status: true } },
+  listing: {
+    select: { workspaceId: true, responsibleMembershipId: true, status: true },
+  },
 } satisfies Prisma.ApplicationSelect;
 
 export type DocumentApplication = Prisma.ApplicationGetPayload<{
@@ -41,7 +44,7 @@ export class ApplicationDocumentAccessService {
       !application ||
       !(audience === 'applicant'
         ? application.applicantId === userId
-        : application.listing.providerId === userId &&
+        : (await hasListingParticipation(tx, userId, application.listing)) &&
           providerApplicationIsVisible(application))
     )
       throw new NotFoundException('Application not found');
