@@ -1,5 +1,10 @@
 # Authorization context & revocation — Phase 4.5.3
 
+Current provider operational adapters also enforce the
+[4.5.6 capability contract](provider-capabilities.md). The foundation notes below
+describe the original 4.5.3 boundary; Listing cutover and typed operation integration
+retain its authoritative resolution, revocation fences and tenant scope.
+
 This bounded foundation follows [4.5.1](provider-workspaces.md) and
 [4.5.2](provider-memberships.md). `ProviderAuthorizationModule` has no controllers,
 exports or default allow adapters. Registering it changes no legacy endpoint.

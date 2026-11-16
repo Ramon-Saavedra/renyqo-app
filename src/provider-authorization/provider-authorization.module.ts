@@ -7,8 +7,8 @@ import { AuthorizedWorkspaceReads } from './authorized-workspace-reads';
 import { WorkspaceAuthorityReader } from './persistence/workspace-authority.reader';
 import { ProviderListingAccess } from './provider-listing-access';
 
-// No controllers/exports or domain allow adapters. Integration is explicit in
-// later approved callers; registering this module changes no legacy endpoint.
+// Domain adapters enter through these coordinated authorization boundaries.
+// Capability evaluation reuses authoritative resolution; it grants no scope.
 @Module({
   providers: [
     ProviderListingAccess,

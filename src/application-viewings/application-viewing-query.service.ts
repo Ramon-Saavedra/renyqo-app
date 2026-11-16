@@ -91,6 +91,7 @@ export class ApplicationViewingQueryService {
         );
         return this.response(tx, application, side, viewingId);
       },
+      'viewing.read',
     );
   }
 
@@ -198,6 +199,7 @@ export class ApplicationViewingQueryService {
           primary,
         );
       },
+      'viewing.read',
     );
   }
 

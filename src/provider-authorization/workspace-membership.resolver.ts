@@ -14,6 +14,7 @@ import { WorkspaceAuthorityReader } from './persistence/workspace-authority.read
 import type { PrismaClient } from '../generated/prisma/client';
 import { MembershipBootstrap } from '../provider-tenancy/membership-bootstrap';
 import { assertDelegatedScope } from './domain/authority-reference';
+import { assertProviderOperation } from './capabilities/provider-capability-policy';
 
 @Injectable()
 export class WorkspaceMembershipResolver {
@@ -77,6 +78,10 @@ export class WorkspaceMembershipResolver {
             },
           }
         : null;
-    return workspaceContext(principal, selection, membership);
+    const context = workspaceContext(principal, selection, membership);
+    if (selection.providerOperation !== undefined) {
+      assertProviderOperation(context, selection.providerOperation);
+    }
+    return context;
   }
 }

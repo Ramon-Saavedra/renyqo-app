@@ -10,6 +10,7 @@ import {
 import type { Prisma } from '../generated/prisma/client';
 import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
 import type { AuthorizationContext } from '../provider-authorization/domain/authorization.types';
+import type { ProviderOperation } from '../provider-authorization/operations/provider-operation';
 import {
   ProviderListingAccess,
   providerListingWhere,
@@ -33,16 +34,15 @@ export class ApplicationListingAccess {
     private readonly applicant: ApplicantListingAccess,
   ) {}
 
-  assertActor(actor: ApplicationActor, audience: 'provider' | 'applicant') {
+  assertActor(
+    actor: ApplicationActor,
+    audience: 'provider' | 'applicant',
+    operation: ProviderOperation = 'application.read',
+  ) {
     if (audience === 'provider') {
       if (!('authority' in actor))
         throw new ForbiddenException('Explicit provider context required');
-      return this.provider.read(
-        actor,
-        'application.read',
-        undefined,
-        async () => {},
-      );
+      return this.provider.read(actor, operation, undefined, async () => {});
     }
     if ('authority' in actor)
       throw new ForbiddenException('Explicit applicant session required');
@@ -57,7 +57,7 @@ export class ApplicationListingAccess {
     applications: readonly { applicationId: string; listingId: string }[],
     listingIds: readonly string[] = [],
     // Server-selected original operation; preserve delegated action binding.
-    action = 'application.read',
+    action: ProviderOperation = 'application.read',
   ): Promise<void> {
     if (audience === 'applicant') return this.assertActor(actor, audience);
     if (!('authority' in actor))
@@ -104,13 +104,14 @@ export class ApplicationListingAccess {
       listingId: string,
       context?: AuthorizationContext,
     ) => Promise<T>,
+    operation: ProviderOperation,
   ) {
     if (audience === 'provider') {
       if (!('authority' in actor))
         throw new ForbiddenException('Explicit provider context required');
       return this.provider.readApplication(
         actor,
-        'application.read',
+        operation,
         id,
         async (tx, listingId) => {
           const app = await tx.application.findUnique({
@@ -135,13 +136,14 @@ export class ApplicationListingAccess {
     id: string,
     policy: ApplicantListingPolicy,
     mutate: (tx: Prisma.TransactionClient, listingId: string) => Promise<T>,
+    operation: ProviderOperation,
   ) {
     if (audience === 'provider') {
       if (!('authority' in actor))
         throw new ForbiddenException('Explicit provider context required');
       return this.provider.mutateApplication(
         actor,
-        'application.write',
+        operation,
         id,
         async (tx, listingId) => {
           await policy(tx, listingId);

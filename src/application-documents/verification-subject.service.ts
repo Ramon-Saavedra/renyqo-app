@@ -42,7 +42,7 @@ export class VerificationSubjectService {
       throw new BadRequestException('Invalid subject label');
     return this.provider.mutateApplication(
       actor,
-      'verification.write',
+      'verification.subject.write',
       applicationId,
       async (tx) => {
         const actorUserId = actor.authority.userId;

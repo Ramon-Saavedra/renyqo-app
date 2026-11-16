@@ -1,3 +1,4 @@
+import type { ProviderOperation } from '../src/provider-authorization/operations/provider-operation';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { NotFoundException, type INestApplication } from '@nestjs/common';
@@ -123,13 +124,21 @@ describe('Attention result scope revalidation through restricted runtime', () =>
         listingId: string,
         context?: AuthorizationContext,
       ) => Promise<T>,
+      operation: ProviderOperation,
     ): Promise<T> {
       if (id === references[1].id) {
         expect(firstCollected).toBe(true);
         collected.resolve();
         await release.promise;
       }
-      const value = await original(selected, audience, id, policy, produce);
+      const value = await original(
+        selected,
+        audience,
+        id,
+        policy,
+        produce,
+        operation,
+      );
       if (id === references[0].id) firstCollected = true;
       return value;
     });
@@ -181,7 +190,7 @@ describe('Attention result scope revalidation through restricted runtime', () =>
     const original = provider.read.bind(provider);
     jest.spyOn(provider, 'read').mockImplementation(async function <T>(
       selected: ProviderActor,
-      action: string,
+      action: ProviderOperation,
       listingId: string | undefined,
       produce: (
         tx: Prisma.TransactionClient,

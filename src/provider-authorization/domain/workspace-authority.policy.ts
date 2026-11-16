@@ -15,6 +15,7 @@ import {
   isAuthorityId,
   positiveEpoch,
 } from './authority-reference';
+import { isProviderOperation } from '../operations/provider-operation-requirements';
 
 export type MembershipFacts = {
   id: string;
@@ -38,6 +39,9 @@ export function captureRequirement(
     throw new NotFoundException('Workspace not found');
   if (
     !input.workspaceId ||
+    (input.providerOperation !== undefined &&
+      (!isProviderOperation(input.providerOperation) ||
+        input.action !== input.providerOperation)) ||
     !['OPERATIONAL', 'HISTORY', 'SECURITY', 'CLOSURE_SETTLEMENT'].includes(
       input.purpose,
     ) ||

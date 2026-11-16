@@ -97,6 +97,7 @@ export class ApplicationAttentionQueryService {
         if (!result) throw new NotFoundException('Application not found');
         return result;
       },
+      'attention.read',
     );
   }
 
@@ -105,7 +106,7 @@ export class ApplicationAttentionQueryService {
     audience: AttentionAudience,
     applicationIds: readonly string[],
   ): Promise<AttentionBatchResponseDto> {
-    await this.listingAccess.assertActor(actor, audience);
+    await this.listingAccess.assertActor(actor, audience, 'attention.read');
     const asOf = this.clock.now();
     const items: ApplicationAttentionListItemDto[] = [];
     for (const id of [...new Set(applicationIds)].sort()) {
@@ -128,10 +129,17 @@ export class ApplicationAttentionQueryService {
             if (!summary) throw new NotFoundException('Application not found');
             return this.toListItem(application, summary);
           },
+          'attention.read',
         ),
       );
     }
-    await this.listingAccess.assertResultScope(actor, audience, items);
+    await this.listingAccess.assertResultScope(
+      actor,
+      audience,
+      items,
+      [],
+      'attention.read',
+    );
     return new AttentionBatchResponseDto(asOf, items);
   }
 
@@ -141,7 +149,7 @@ export class ApplicationAttentionQueryService {
     query: AttentionQueryDto,
     listingId?: string,
   ): Promise<AttentionAggregateResponseDto> {
-    await this.listingAccess.assertActor(actor, audience);
+    await this.listingAccess.assertActor(actor, audience, 'attention.read');
     const asOf = this.clock.now();
     const all: ApplicationAttentionListItemDto[] = [];
     const references: { applicationId: string; listingId: string }[] = [];
@@ -237,9 +245,13 @@ export class ApplicationAttentionQueryService {
           b.actionableUnreadMessageCount - a.actionableUnreadMessageCount ||
           a.applicationId.localeCompare(b.applicationId),
       );
-    await this.listingAccess.assertResultScope(actor, audience, references, [
-      ...listingItems.keys(),
-    ]);
+    await this.listingAccess.assertResultScope(
+      actor,
+      audience,
+      references,
+      [...listingItems.keys()],
+      'attention.listings',
+    );
     return new AttentionAggregateResponseDto(
       asOf,
       this.totals(all, nextRevalidateAt),

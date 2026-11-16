@@ -81,7 +81,7 @@ export class VerificationDecisionService {
   ): Promise<DecisionCommandResult> {
     return this.provider.mutateApplication(
       actor,
-      'verification.write',
+      'verification.decide',
       applicationId,
       async (tx) => {
         const actorUserId = actor.authority.userId;

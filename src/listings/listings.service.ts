@@ -98,7 +98,7 @@ export class ListingsService {
   ): Promise<ListingWithActiveApplicationsCount[]> {
     return this.access.read(
       actor,
-      'listing.read',
+      'listing.list',
       undefined,
       async (tx, context) =>
         tx.listing.findMany({

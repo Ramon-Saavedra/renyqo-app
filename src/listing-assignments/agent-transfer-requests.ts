@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { TRANSFER_RESPONSE_OPERATIONS } from '../provider-authorization/operations/transfer-response-operation';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProtectedWorkspaceTransactions } from '../provider-authorization/protected-workspace-transactions';
@@ -41,6 +42,7 @@ export class AgentTransferRequests {
     const requirement = {
       workspaceId: command.workspaceId,
       action: 'listing.transfer.request',
+      providerOperation: 'listing.transfer.request' as const,
       resourceIds: [command.listingId],
       purpose: 'OPERATIONAL' as const,
     };
@@ -142,9 +144,11 @@ export class AgentTransferRequests {
     requestId: string,
     response: 'APPROVED' | 'REJECTED' | 'CANCELLED',
   ) {
+    const operation = TRANSFER_RESPONSE_OPERATIONS[response];
     const requirement = {
       workspaceId: actor.workspaceId,
-      action: 'listing.transfer.respond',
+      action: operation,
+      providerOperation: operation,
       resourceIds: [requestId],
       purpose: 'OPERATIONAL' as const,
     };

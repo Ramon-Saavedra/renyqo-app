@@ -44,7 +44,15 @@ export class VerificationRequirementService {
   ): Promise<VerificationCommandResult> {
     return this.provider.mutateApplication(
       actor,
-      'verification.write',
+      command.operation === 'DECIDE'
+        ? 'verification.decide'
+        : (
+            {
+              REQUEST: 'document.request',
+              CANCEL: 'document.cancel',
+              REPLACE: 'document.replace',
+            } as const
+          )[command.operation],
       applicationId,
       async (tx) => {
         const actorUserId = actor.authority.userId;

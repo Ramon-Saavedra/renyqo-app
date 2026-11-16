@@ -179,6 +179,7 @@ export class ApplicationActivityService {
         });
         return activities.map((activity) => this.toTimelineItem(activity));
       },
+      'application.activity.read',
     );
   }
   private toTimelineItem(

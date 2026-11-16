@@ -23,6 +23,7 @@ export class OwnerReassignment {
     const requirement = {
       workspaceId: command.workspaceId,
       action: 'listing.assignment.reassign',
+      providerOperation: 'listing.assignment.reassign' as const,
       resourceIds: [command.listingId],
       purpose: 'OPERATIONAL' as const,
       requiredRole: 'OWNER' as const,

@@ -139,6 +139,7 @@ export class VerificationQueryService {
           },
         };
       },
+      'verification.subjects.read',
     );
   }
 
@@ -307,6 +308,7 @@ export class VerificationQueryService {
           },
         };
       },
+      'verification.requirements.read',
     );
   }
 }

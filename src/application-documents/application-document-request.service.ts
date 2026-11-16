@@ -80,6 +80,7 @@ export class ApplicationDocumentRequestService {
           ),
         );
       },
+      'document.read',
     );
   }
 
@@ -158,6 +159,7 @@ export class ApplicationDocumentRequestService {
           return this.toDto(row, false, mutable);
         });
       },
+      'document.read',
     );
   }
 
