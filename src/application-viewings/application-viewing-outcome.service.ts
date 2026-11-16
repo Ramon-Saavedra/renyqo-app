@@ -131,6 +131,7 @@ export class ApplicationViewingOutcomeService {
         );
         return this.query.response(tx, application, 'provider', viewingId);
       },
+      'viewing.outcome',
     );
   }
 
@@ -209,6 +210,7 @@ export class ApplicationViewingOutcomeService {
           viewingId,
         );
       },
+      'viewing.respond',
     );
   }
 

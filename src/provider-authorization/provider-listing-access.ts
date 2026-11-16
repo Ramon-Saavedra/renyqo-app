@@ -21,6 +21,8 @@ import type {
 } from './domain/authorization.types';
 import { WorkspaceMembershipResolver } from './workspace-membership.resolver';
 import { ProtectedWorkspaceTransactions } from './protected-workspace-transactions';
+import type { ProviderOperation } from './operations/provider-operation';
+import { projectProviderResult } from './projections/provider-result-projection';
 
 export interface ProviderActor {
   readonly authority: HumanAuthority;
@@ -61,7 +63,7 @@ export class ProviderListingAccess {
 
   read<T>(
     actor: ProviderActor,
-    action: string,
+    action: ProviderOperation,
     listingId: string | undefined,
     produce: (
       tx: Prisma.TransactionClient,
@@ -84,7 +86,7 @@ export class ProviderListingAccess {
 
   private async readScope<T>(
     actor: ProviderActor,
-    action: string,
+    action: ProviderOperation,
     resourceId: string | undefined,
     produce: (
       tx: Prisma.TransactionClient,
@@ -125,12 +127,12 @@ export class ProviderListingAccess {
         await revalidate(tx, current);
       },
     );
-    return snapshot.value;
+    return projectProviderResult(snapshot.value, snapshot.context, action);
   }
 
   async mutate<T>(
     actor: ProviderActor,
-    action: string,
+    action: ProviderOperation,
     listingId: string | undefined,
     mutate: (
       tx: Prisma.TransactionClient,
@@ -165,13 +167,14 @@ export class ProviderListingAccess {
           await this.assertListing(tx, context, listingId);
         }
       },
-      (tx, context) => mutate(tx, context),
+      async (tx, context) =>
+        projectProviderResult(await mutate(tx, context), context, action),
     );
   }
 
   readApplication<T>(
     actor: ProviderActor,
-    action: string,
+    action: ProviderOperation,
     applicationId: string,
     policy: (
       tx: Prisma.TransactionClient,
@@ -209,7 +212,7 @@ export class ProviderListingAccess {
 
   async mutateApplication<T>(
     actor: ProviderActor,
-    action: string,
+    action: ProviderOperation,
     applicationId: string,
     mutate: (
       tx: Prisma.TransactionClient,
@@ -233,18 +236,24 @@ export class ProviderListingAccess {
           AND (${context.role}='OWNER' OR (responsible_membership_id=${context.membershipId}::uuid AND status<>'retired')) FOR UPDATE`;
         await this.applicationReference(tx, context, applicationId, listingId);
       },
-      (tx, context) => mutate(tx, listingId, context),
+      async (tx, context) =>
+        projectProviderResult(
+          await mutate(tx, listingId, context),
+          context,
+          action,
+        ),
     );
   }
 
   private requirement(
     actor: ProviderActor,
-    action: string,
+    action: ProviderOperation,
     id?: string,
   ): AuthorizationRequirement {
     return {
       workspaceId: actor.workspaceId,
       action,
+      providerOperation: action,
       resourceIds: id ? [id] : [],
       purpose: 'OPERATIONAL',
     };

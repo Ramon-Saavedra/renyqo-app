@@ -61,7 +61,7 @@ describe('Bounded Listing consumer reads with fresh revocation checks', () => {
     };
     const ready = deferred(),
       release = deferred();
-    const result = provider.read(actor, 'test.read', id, async (tx) => {
+    const result = provider.read(actor, 'listing.read', id, async (tx) => {
       const row = await tx.listing.findUniqueOrThrow({
         where: { id },
         select: { title: true },
@@ -88,7 +88,7 @@ describe('Bounded Listing consumer reads with fresh revocation checks', () => {
     };
     const ready = deferred(),
       release = deferred();
-    const result = provider.read(actor, 'test.read', id, async (tx) => {
+    const result = provider.read(actor, 'listing.read', id, async (tx) => {
       const row = await tx.listing.findUniqueOrThrow({
         where: { id },
         select: { title: true },
@@ -116,7 +116,7 @@ describe('Bounded Listing consumer reads with fresh revocation checks', () => {
     };
     const ready = deferred(),
       release = deferred();
-    const result = provider.read(actor, 'test.read', id, async (tx) => {
+    const result = provider.read(actor, 'listing.read', id, async (tx) => {
       const first = await tx.listing.findUniqueOrThrow({
         where: { id },
         select: { title: true },

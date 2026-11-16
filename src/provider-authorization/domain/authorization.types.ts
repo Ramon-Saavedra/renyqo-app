@@ -3,6 +3,7 @@ import type {
   WorkspaceLifecycle,
   WorkspaceMembershipRole,
 } from '../../generated/prisma/client';
+import type { ProviderOperation } from '../operations/provider-operation';
 
 export type ActionScope = Readonly<{
   action: string;
@@ -46,6 +47,7 @@ export type AuthorizationRequirement = ActionScope &
   Readonly<{
     workspaceId: string;
     purpose: 'OPERATIONAL' | 'HISTORY' | 'SECURITY' | 'CLOSURE_SETTLEMENT';
+    providerOperation?: ProviderOperation;
     requiredRole?: 'OWNER';
     expectedMembershipId?: string;
     expectedMembershipRevision?: number;

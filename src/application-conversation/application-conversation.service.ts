@@ -65,6 +65,7 @@ export class ApplicationConversationService {
         );
         return this.toSummary(tx, application, side);
       },
+      'conversation.read',
     );
   }
 
@@ -99,6 +100,7 @@ export class ApplicationConversationService {
           page.hasMore,
         );
       },
+      'conversation.read',
     );
   }
 
@@ -172,6 +174,7 @@ export class ApplicationConversationService {
         });
         return this.messages.toDto(message);
       },
+      'conversation.send',
     );
   }
 
@@ -227,6 +230,7 @@ export class ApplicationConversationService {
         }
         return new MarkConversationReadResponseDto(count);
       },
+      'conversation.mark-read',
     );
   }
 

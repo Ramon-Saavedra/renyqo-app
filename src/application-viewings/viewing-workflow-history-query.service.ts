@@ -166,6 +166,7 @@ export class ViewingWorkflowHistoryQueryService {
               },
             };
       },
+      'viewing.workflow.history',
     );
   }
 }

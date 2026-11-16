@@ -72,6 +72,7 @@ export class ApplicationDocumentService {
         if (!documentUploadAllowed(request.currentFile))
           throw new ConflictException('This request already has a document');
       },
+      'document.read',
     );
   }
 
@@ -122,6 +123,7 @@ export class ApplicationDocumentService {
         });
         return attempt;
       },
+      'document.request',
     );
     let object: { versionId: string; etag: string };
     try {
@@ -148,6 +150,7 @@ export class ApplicationDocumentService {
           where: { id: file.id },
           data: { versionId: object.versionId, etag: object.etag },
         }),
+      'document.request',
     );
     return this.requests.fileDto(saved);
   }
@@ -178,6 +181,7 @@ export class ApplicationDocumentService {
         if (!file) throw new NotFoundException('Available document not found');
         return file;
       },
+      'document.content.read',
     );
     const stream = await this.storage.download(file);
     try {
@@ -200,6 +204,7 @@ export class ApplicationDocumentService {
           if (!current)
             throw new NotFoundException('Available document not found');
         },
+        'document.content.read',
       );
       return stream;
     } catch (error) {
@@ -251,6 +256,7 @@ export class ApplicationDocumentService {
         );
         return this.requests.fileDto(reviewed);
       },
+      'document.review',
     );
   }
 }

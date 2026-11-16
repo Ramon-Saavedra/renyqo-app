@@ -100,6 +100,7 @@ export class ApplicationHistoryQueryService {
           total,
         );
       },
+      'application.activity.read',
     );
   }
 
@@ -224,6 +225,7 @@ export class ApplicationHistoryQueryService {
           total,
         );
       },
+      'application.document-history',
     );
   }
 
@@ -308,6 +310,7 @@ export class ApplicationHistoryQueryService {
           total,
         );
       },
+      'application.file-history',
     );
   }
 }

@@ -143,6 +143,7 @@ export class ApplicationViewingService {
         );
         return this.query.response(tx, application, 'provider', viewing.id);
       },
+      'viewing.propose',
     );
   }
 
@@ -170,6 +171,7 @@ export class ApplicationViewingService {
               action,
               dto,
             ),
+      'viewing.respond',
     );
   }
 

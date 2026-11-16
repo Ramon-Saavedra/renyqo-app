@@ -191,6 +191,7 @@ export class ViewingWorkflowCommandService {
             : null,
         };
       },
+      'viewing.workflow.read',
     );
   }
 
@@ -568,6 +569,9 @@ export class ViewingWorkflowCommandService {
         );
         return succeeded;
       },
+      command.action === 'consideration'
+        ? 'viewing.workflow.consideration'
+        : 'viewing.workflow.command',
     );
     // Expiry is committed, even though the triggering stale command receives 409.
     if (!outcome.ok) throw new ConflictException(outcome.error);

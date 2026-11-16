@@ -108,6 +108,7 @@ export class ApplicantApplicationOverviewQueryService {
               summary.viewing,
             );
           },
+          'application.workspace',
         ),
       );
     await this.workspace.listingAccess.assertActor(authority, 'applicant');

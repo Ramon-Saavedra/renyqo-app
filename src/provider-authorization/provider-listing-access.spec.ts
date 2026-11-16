@@ -107,7 +107,7 @@ describe('Provider application lookup boundaries', () => {
         stage === 'locked mutation'
           ? access.mutateApplication(
               actor,
-              'application.write',
+              'application.reject',
               applicationId,
               produce,
             )

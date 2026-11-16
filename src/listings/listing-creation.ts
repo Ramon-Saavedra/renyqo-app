@@ -43,6 +43,7 @@ export class ListingCreation {
     const requirement = {
       workspaceId: actor.workspaceId,
       action: 'listing.create',
+      providerOperation: 'listing.create' as const,
       resourceIds: [],
       purpose: 'OPERATIONAL' as const,
     };

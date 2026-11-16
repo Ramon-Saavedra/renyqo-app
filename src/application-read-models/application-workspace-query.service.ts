@@ -239,6 +239,7 @@ export class ApplicationWorkspaceQueryService {
           ),
         );
       },
+      'application.workspace',
     );
   }
 }

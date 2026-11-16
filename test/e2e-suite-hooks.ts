@@ -20,6 +20,9 @@ function skipSharedSuiteFinalizer(testPath: string): boolean {
   if (testPath.endsWith('attention-scope-revalidation.e2e-spec.ts'))
     return true;
   if (testPath.endsWith('overview-scope-revalidation.e2e-spec.ts')) return true;
+  if (testPath.endsWith('provider-capabilities-http.e2e-spec.ts')) return true;
+  if (testPath.endsWith('provider-capabilities-revocation.e2e-spec.ts'))
+    return true;
   if (testPath.endsWith('application-documents.e2e-spec.ts')) return true;
   if (testPath.endsWith('listing-assignment-http.e2e-spec.ts')) return true;
   if (testPath.endsWith('workspace-discovery.e2e-spec.ts')) return true;
