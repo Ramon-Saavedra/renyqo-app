@@ -68,8 +68,9 @@ export class ProviderApplicationOverviewQueryService {
       ]),
     );
     const attention = new Map<string, ApplicationAttentionSummaryDto>();
+    const references: { applicationId: string; listingId: string }[] = [];
     const retained = new Set(retainIds);
-    if (!ids.length) return { totals, attention };
+    if (!ids.length) return { totals, attention, references };
     const counts = await tx.application.groupBy({
       by: ['listingId', 'status'],
       where: {
@@ -139,6 +140,7 @@ export class ProviderApplicationOverviewQueryService {
         asOf,
       );
       for (const row of applications) {
+        references.push({ applicationId: row.id, listingId: row.listingId });
         const summary = facts.attention.get(row.id);
         const total = totals.get(row.listingId);
         if (summary && total) total.attention.add(summary);
@@ -148,12 +150,17 @@ export class ProviderApplicationOverviewQueryService {
       if (applications.length < 200) break;
       cursor = applications.at(-1)?.id;
     }
-    return { totals, attention };
+    return { totals, attention, references };
   }
 
-  overview(actor: ProviderActor, query: ReadModelPageQueryDto) {
+  async overview(actor: ProviderActor, query: ReadModelPageQueryDto) {
     const cursor = decodeReadModelCursor(query.cursor, 'listings');
-    return this.listings.read(
+    const listingReferences: string[] = [];
+    const applicationReferences: {
+      applicationId: string;
+      listingId: string;
+    }[] = [];
+    const result = await this.listings.read(
       actor,
       'listing.overview',
       undefined,
@@ -180,13 +187,23 @@ export class ProviderApplicationOverviewQueryService {
           take: query.limit + 1,
         });
         const page = rows.slice(0, query.limit);
-        const totalCount = await tx.listing.count({
+        // Off-page listings contribute totalCount too. Retain their identities,
+        // not only page headers, so a compensating assignment cannot mask loss.
+        const contributingListings = await tx.listing.findMany({
           where: {
             ...providerListingWhere(context),
             status: { not: 'RETIRED' },
           },
+          select: { id: true },
         });
-        const { totals } = await this.summaries(tx, context, page, asOf);
+        listingReferences.push(...contributingListings.map((row) => row.id));
+        const { totals, references } = await this.summaries(
+          tx,
+          context,
+          page,
+          asOf,
+        );
+        applicationReferences.push(...references);
         const images = await this.workspace.coverImages(
           tx,
           page.map((row) => row.id),
@@ -220,10 +237,21 @@ export class ProviderApplicationOverviewQueryService {
                 })
               : null,
           ),
-          totalCount,
+          contributingListings.length,
         );
       },
     );
+    // Fresh authoritative scope after all snapshot composition. This includes
+    // headers without applications, pagination/count contributors and attention
+    // Application -> Listing references; tenant RLS alone cannot prove assignment.
+    await this.workspace.listingAccess.assertResultScope(
+      actor,
+      'provider',
+      applicationReferences,
+      listingReferences,
+      'listing.overview',
+    );
+    return result;
   }
 
   listing(actor: ProviderActor, listingId: string) {

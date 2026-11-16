@@ -4,6 +4,15 @@ This phase adds read composition. Lifecycle, conversation, document, viewing and
 
 Provider operational routes require explicit `x-workspace-id` selection and current ACTIVE workspace/membership authority. OWNER may access workspace listings; AGENT requires current Listing responsibility. Discover selectors with `GET /api/v1/provider/workspaces`; neither a session alone nor a global provider User ID establishes Listing ownership. Applicant access remains bound to the authenticated applicant/resource relationship.
 
+The provider listing overview revalidates its contributing resource scope in a fresh
+authorized transaction after snapshot composition. This includes empty listing
+headers, off-page listings contributing `totalCount`, and Application → Listing
+references contributing attention totals. Reassignment that removes AGENT access
+rejects the aggregate rather than returning stale data; OWNER retains workspace
+scope. WAITING remains count-only. This bounded read check does not hold assignment
+locks through HTTP delivery or promise that business-state totals are live.
+Revalidation preserves the original operation's delegated action binding.
+
 ## Endpoints
 
 All routes below are authenticated GET requests under `/api/v1`. Provider and applicant role guards apply to their respective routes.
