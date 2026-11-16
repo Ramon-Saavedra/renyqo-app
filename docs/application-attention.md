@@ -38,6 +38,23 @@ The two reverted files are the only unnecessary changes identified. Remaining re
 
 Attention is derived from current conversation, document, viewing and application state. Nothing is persisted for badges or pending actions. Domain policies remain the authority; ApplicationActivity remains audit history. No primary action or urgency score is calculated.
 
+## Result scope revalidation
+
+Before returning a provider attention batch or aggregate, revalidate every
+collected Application-to-Listing reference and every Listing header against
+current workspace/listing scope. This includes resources outside the returned
+page or actionable filter, and listings with no application items.
+
+The check reuses `ProviderListingAccess` and the canonical Listing/Application
+visibility predicates in a fresh bounded read. It reloads only identifiers and
+scope facts, not attention projections. Reassignment can revoke AGENT scope
+without changing membership revision; actor-only revalidation is insufficient.
+Any inaccessible contributor rejects the complete result. OWNER workspace scope,
+WAITING anonymity and historical visibility remain unchanged.
+
+This is a bounded read authorization window, not a write commit fence. It adds no
+authority locks, capability model, revision changes or RLS policies.
+
 ## API
 
 All routes are under /api/v1 and require authenticated, active users; applicant routes require the applicant audience, and provider routes require current workspace/listing participation.
