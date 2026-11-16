@@ -131,7 +131,7 @@ export class ApplicationAttentionQueryService {
         ),
       );
     }
-    await this.listingAccess.assertActor(actor, audience);
+    await this.listingAccess.assertResultScope(actor, audience, items);
     return new AttentionBatchResponseDto(asOf, items);
   }
 
@@ -144,6 +144,7 @@ export class ApplicationAttentionQueryService {
     await this.listingAccess.assertActor(actor, audience);
     const asOf = this.clock.now();
     const all: ApplicationAttentionListItemDto[] = [];
+    const references: { applicationId: string; listingId: string }[] = [];
     const listingItems = new Map<string, ApplicationAttentionListItemDto[]>();
     if (audience === 'provider') {
       if (!('authority' in actor))
@@ -200,6 +201,12 @@ export class ApplicationAttentionQueryService {
         refs.map((row) => row.id),
       );
       for (const item of batch.items) {
+        // Keep references before filtering/pagination: those resources can still
+        // contribute listing headers, counts or revalidation timestamps.
+        references.push({
+          applicationId: item.applicationId,
+          listingId: item.listingId,
+        });
         if (!listingItems.has(item.listingId))
           listingItems.set(item.listingId, []);
         const boundary = item.nextRevalidateAt;
@@ -230,7 +237,9 @@ export class ApplicationAttentionQueryService {
           b.actionableUnreadMessageCount - a.actionableUnreadMessageCount ||
           a.applicationId.localeCompare(b.applicationId),
       );
-    await this.listingAccess.assertActor(actor, audience);
+    await this.listingAccess.assertResultScope(actor, audience, references, [
+      ...listingItems.keys(),
+    ]);
     return new AttentionAggregateResponseDto(
       asOf,
       this.totals(all, nextRevalidateAt),
