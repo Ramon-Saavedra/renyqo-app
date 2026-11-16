@@ -14,10 +14,14 @@ permissions:
   contents: read
 
 jobs:
-  e2e-tests:
-    name: e2e-tests
+  e2e-shards:
+    name: e2e-shard (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     services:
       postgres:
         image: postgres:16-alpine
@@ -52,5 +56,38 @@ jobs:
 
       - run: npm ci --no-audit
       - run: npx prisma generate
+      - name: Check shard verification helper
+        run: |
+          npx eslint scripts/e2e-shards.cjs scripts/e2e-shards.test.cjs
+          node --test scripts/e2e-shards.test.cjs
+      - name: Verify complete, disjoint shard discovery
+        id: discovery
+        run: node scripts/e2e-shards.cjs discover "$RUNNER_TEMP/e2e-discovery.json"
       - run: npx prisma migrate deploy
-      - run: npm run test:e2e -- --runInBand
+      - name: Run E2E shard
+        id: tests
+        run: >-
+          npm run test:e2e -- --runInBand --shard=${{ matrix.shard }}/2
+          --passWithNoTests=false --json --outputFile="$RUNNER_TEMP/e2e-results.json"
+      - name: Verify execution and report timings
+        if: ${{ !cancelled() && steps.discovery.outcome == 'success' }}
+        run: >-
+          node scripts/e2e-shards.cjs report "$RUNNER_TEMP/e2e-discovery.json"
+          ${{ matrix.shard }} "$RUNNER_TEMP/e2e-results.json"
+
+  # Keep the required check name stable; skipped/cancelled shards cannot pass it.
+  e2e-tests:
+    name: e2e-tests
+    needs: e2e-shards
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Require every E2E shard to succeed
+        env:
+          SHARDS_RESULT: ${{ needs.e2e-shards.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != "success" ]; then
+            echo "E2E shards did not all succeed: $SHARDS_RESULT"
+            exit 1
+          fi
