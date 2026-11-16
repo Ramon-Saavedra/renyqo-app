@@ -45,4 +45,11 @@ export default tseslint.config(
       '@typescript-eslint/unbound-method': 'off',
     },
   },
+  {
+    files: ['scripts/e2e-shards.cjs', 'scripts/e2e-shards.test.cjs'],
+    extends: [tseslint.configs.disableTypeChecked],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
 );
