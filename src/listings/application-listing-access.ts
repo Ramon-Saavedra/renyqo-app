@@ -56,6 +56,8 @@ export class ApplicationListingAccess {
     audience: 'provider' | 'applicant',
     applications: readonly { applicationId: string; listingId: string }[],
     listingIds: readonly string[] = [],
+    // Server-selected original operation; preserve delegated action binding.
+    action = 'application.read',
   ): Promise<void> {
     if (audience === 'applicant') return this.assertActor(actor, audience);
     if (!('authority' in actor))
@@ -65,36 +67,31 @@ export class ApplicationListingAccess {
     const listings = [
       ...new Set([...listingIds, ...references.map((row) => row.listingId)]),
     ];
-    await this.provider.read(
-      actor,
-      'application.read',
-      undefined,
-      async (tx, context) => {
-        if (
-          listings.length &&
-          (await tx.listing.count({
-            where: { id: { in: listings }, ...providerListingWhere(context) },
-          })) !== listings.length
+    await this.provider.read(actor, action, undefined, async (tx, context) => {
+      if (
+        listings.length &&
+        (await tx.listing.count({
+          where: { id: { in: listings }, ...providerListingWhere(context) },
+        })) !== listings.length
+      )
+        throw new NotFoundException('Listing not found');
+      const rows = ids.length
+        ? await tx.application.findMany({
+            where: {
+              id: { in: ids },
+              ...providerApplicationVisibility(context),
+            },
+            select: { id: true, listingId: true },
+          })
+        : [];
+      const current = new Map(rows.map((row) => [row.id, row.listingId]));
+      if (
+        references.some(
+          (row) => current.get(row.applicationId) !== row.listingId,
         )
-          throw new NotFoundException('Listing not found');
-        const rows = ids.length
-          ? await tx.application.findMany({
-              where: {
-                id: { in: ids },
-                ...providerApplicationVisibility(context),
-              },
-              select: { id: true, listingId: true },
-            })
-          : [];
-        const current = new Map(rows.map((row) => [row.id, row.listingId]));
-        if (
-          references.some(
-            (row) => current.get(row.applicationId) !== row.listingId,
-          )
-        )
-          throw new NotFoundException('Application not found');
-      },
-    );
+      )
+        throw new NotFoundException('Application not found');
+    });
   }
 
   read<T>(
