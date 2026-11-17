@@ -29,7 +29,7 @@ describe('Application viewing PostgreSQL integrity', () => {
     userId = randomUUID();
     workspaceId = randomUUID();
     membershipId = randomUUID();
-    await client.query('BEGIN');
+    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
     await client.query(
       'INSERT INTO users (id,name,email,password_hash,accepted_terms_at,accepted_privacy_at,updated_at) VALUES ($1,$2,$3,$4,now(),now(),now())',
       [
@@ -91,7 +91,7 @@ describe('Application viewing PostgreSQL integrity', () => {
       [viewingId, applicationId, randomUUID(), 'a'.repeat(64)],
     );
     await client.query('COMMIT');
-    await client.query('BEGIN');
+    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
   });
 
   afterEach(async () => {
@@ -138,7 +138,7 @@ describe('Application viewing PostgreSQL integrity', () => {
     await status(value);
     await outcome(1, value);
     await client.query('COMMIT');
-    await client.query('BEGIN');
+    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
   }
 
   it.each([
@@ -262,7 +262,7 @@ describe('Application viewing PostgreSQL integrity', () => {
     await initial('completed');
     await interest();
     await client.query('COMMIT');
-    await client.query('BEGIN');
+    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
     await outcome(2, 'no_show');
     await status('no_show');
     await expect(client.query('COMMIT')).rejects.toMatchObject({

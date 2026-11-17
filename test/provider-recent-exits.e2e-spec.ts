@@ -36,7 +36,7 @@ import {
 } from './e2e-provider-context';
 import {
   createPublishedListingForProvider,
-  ensurePersonalWorkspaceForProvider,
+  ensureWorkspaceForProvider,
   updateListingForProvider,
 } from './e2e-workspace-listing';
 import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
@@ -107,7 +107,7 @@ describe('Provider recent-exit projection E2E', () => {
 
   beforeEach(async () => {
     providerId = await user(Role.PROVIDER);
-    await ensurePersonalWorkspaceForProvider(prisma, providerId);
+    await ensureWorkspaceForProvider(prisma, providerId);
     providerActor = await providerActorFor(prisma, providerId);
     providerContext = await authorizationContextFor(prisma, providerId);
     applicantId = await user();
@@ -481,7 +481,7 @@ describe('Provider recent-exit projection E2E', () => {
       withdrawnAt: new Date(base.getTime() + 1000),
     });
     const foreignUserId = await user(Role.PROVIDER);
-    await ensurePersonalWorkspaceForProvider(prisma, foreignUserId);
+    await ensureWorkspaceForProvider(prisma, foreignUserId);
     const foreignActor = await providerActorFor(prisma, foreignUserId);
     const foreignContext = await authorizationContextFor(prisma, foreignUserId);
     await expect(

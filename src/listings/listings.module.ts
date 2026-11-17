@@ -1,4 +1,5 @@
 import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
+import { ProviderEntitlementsModule } from '../provider-entitlements/provider-entitlements.module';
 import { Module } from '@nestjs/common';
 import { ApplicantListingSummariesModule } from '../applicant-listing-summaries/applicant-listing-summaries.module';
 import { ApplicationsModule } from '../applications/applications.module';
@@ -20,6 +21,7 @@ import { ListingConsumerAccessModule } from './listing-consumer-access.module';
 
 @Module({
   imports: [
+    ProviderEntitlementsModule,
     ListingConsumerAccessModule,
     ProviderAuthorizationModule,
     ListingImagesModule,

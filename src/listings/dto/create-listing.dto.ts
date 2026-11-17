@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   Min,
 } from 'class-validator';
@@ -68,6 +69,9 @@ const toOptionalNumber = ({ value }: TransformFnParams): unknown => {
 
 @BedroomsNotGreaterThanRooms()
 export class CreateListingDto {
+  @IsOptional() @IsUUID('4') commandId?: string;
+  @IsOptional() @IsUUID('4') responsibleMembershipId?: string;
+  @IsOptional() @IsUUID('4') predecessorListingId?: string;
   @IsOptional()
   @IsEnum(ObjectType)
   objectType?: ObjectType;

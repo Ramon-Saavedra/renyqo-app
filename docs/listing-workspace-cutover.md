@@ -14,7 +14,7 @@ OWNER direct reassignment requires the expected Listing revision. Assigning the 
 
 Suspension preserves responsibility but removes authority. Membership removal fails while non-retired responsibility remains, or follows an atomic reassignment in the caller's transaction. Retirement permits historical association with a removed member. Reinstatement and ownership transfer do not rewrite Listing responsibility.
 
-Public Listing creation remains unavailable until the quota/entitlement integration. `ListingCreation` supplies the structural transaction and requires an explicit eligibility callback; it is not a public quota bypass.
+Phase 4.5.7 integrates public Listing creation with the existing structural transaction, canonical quota enforcement and protected command replay. See [plans and capacity](provider-entitlements.md); no caller-provided eligibility callback can bypass the acquisition rules.
 
 ## Access paths
 

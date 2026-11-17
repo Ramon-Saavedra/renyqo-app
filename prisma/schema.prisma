@@ -235,6 +235,69 @@ enum PersonalAllocationReleaseReason {
 
 // Partial indexes, immutable identities and deferred aggregate invariants are
 // defined in migration SQL. Do not replace migrations with db push.
+model PlanVersion {
+  id String @id @db.Uuid
+  planKey String @map("plan_key") @db.VarChar(80)
+  version Int
+  workspaceKind WorkspaceKind @map("workspace_kind")
+  maxListings Int @map("max_listings")
+  maxSeats Int @map("max_seats")
+  features String[] @default([])
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  assignments WorkspacePlanAssignment[]
+  changes WorkspacePlanChange[] @relation("AssignedVersion")
+  previousChanges WorkspacePlanChange[] @relation("PreviousVersion")
+  @@unique([planKey,version])
+  @@map("plan_versions")
+}
+
+model WorkspacePlanAssignment {
+  workspaceId String @id @map("workspace_id") @db.Uuid
+  planVersionId String? @map("plan_version_id") @db.Uuid
+  revision Int @default(1)
+  source String @db.VarChar(24)
+  changeMode String @default("VOLUNTARY") @map("change_mode") @db.VarChar(16)
+  commandId String @map("command_id") @db.Uuid
+  actorMembershipId String? @map("actor_membership_id") @db.Uuid
+  updatedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("updated_at") @db.Timestamptz(3)
+  workspace ProviderWorkspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  planVersion PlanVersion? @relation(fields:[planVersionId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  actor WorkspaceMembership? @relation(fields:[actorMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict)
+  @@map("workspace_plan_assignments")
+}
+
+model WorkspacePlanChange {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  revision Int
+  previousPlanVersionId String? @map("previous_plan_version_id") @db.Uuid
+  planVersionId String? @map("plan_version_id") @db.Uuid
+  source String @db.VarChar(24)
+  changeMode String @map("change_mode") @db.VarChar(16)
+  commandId String @map("command_id") @db.Uuid
+  actorMembershipId String? @map("actor_membership_id") @db.Uuid
+  occurredAt DateTime @default(dbgenerated("clock_timestamp()")) @map("occurred_at") @db.Timestamptz(3)
+  workspace ProviderWorkspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  planVersion PlanVersion? @relation("AssignedVersion",fields:[planVersionId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  previousPlanVersion PlanVersion? @relation("PreviousVersion",fields:[previousPlanVersionId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  actor WorkspaceMembership? @relation(fields:[actorMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:Restrict)
+  @@unique([workspaceId,revision])
+  @@unique([workspaceId,commandId])
+  @@map("workspace_plan_changes")
+}
+
+model WorkspaceSeatReservation {
+  id String @id @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  commandId String @map("command_id") @db.Uuid
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  releasedAt DateTime? @map("released_at") @db.Timestamptz(3)
+  workspace ProviderWorkspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  @@unique([workspaceId,commandId])
+  @@map("workspace_seat_reservations")
+}
+
 model ProviderWorkspace {
   id                  String                        @id @default(uuid()) @db.Uuid
   kind                WorkspaceKind
@@ -252,6 +315,9 @@ model ProviderWorkspace {
   personalAllocations PersonalWorkspaceAllocation[]
   ownershipRevisionBaseline WorkspaceOwnershipRevisionBaseline?
   ownershipTransferIntents OwnershipTransferIntent[]
+  planAssignment WorkspacePlanAssignment?
+  planChanges WorkspacePlanChange[]
+  seatReservations WorkspaceSeatReservation[]
 
   @@map("provider_workspaces")
 }
@@ -278,6 +344,8 @@ model WorkspaceMembership {
   createdListings Listing[] @relation("ListingCreator")
   responsibleListings Listing[] @relation("ListingResponsible")
   outgoingOwnershipIntents OwnershipTransferIntent[] @relation("TransferCurrentOwner")
+  planAssignments WorkspacePlanAssignment[]
+  planChanges WorkspacePlanChange[]
   incomingOwnershipIntents OwnershipTransferIntent[] @relation("TransferTarget")
 
   @@unique([workspaceId, userId])
@@ -366,6 +434,9 @@ model PasswordResetToken {
 }
 
 model Listing {
+  predecessorListingId String? @map("predecessor_listing_id") @db.Uuid
+  predecessorListing Listing? @relation("ListingCampaign", fields:[predecessorListingId,workspaceId], references:[id,workspaceId], onDelete:Restrict, onUpdate:Restrict,map:"listing_predecessor_tenant")
+  successorListings Listing[] @relation("ListingCampaign")
   assignmentTransitions ListingAssignmentTransition[]
   transferRequests ListingTransferRequest[]
   publicProjection PublicListingProjection?
@@ -1238,6 +1309,7 @@ enum ListingTransferStatus {
 }
 
 model ListingAssignmentTransition {
+  creationInputHash String? @map("creation_input_hash") @db.VarChar(64)
   id String @id @db.Uuid
   workspaceId String @map("workspace_id") @db.Uuid
   listingId String @map("listing_id") @db.Uuid

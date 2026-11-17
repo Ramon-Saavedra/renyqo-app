@@ -126,7 +126,7 @@ Provider operational endpoints require an authenticated active User/session, an 
 | Method  | Path                                     | Auth     | Description                                               |
 | ------- | ---------------------------------------- | -------- | --------------------------------------------------------- |
 | `GET`   | `/api/v1/provider/workspaces`            | Session  | Discover own ACTIVE membership/workspace selectors       |
-| `POST`  | `/api/v1/provider/listings`              | Provider | Unavailable: 503 until quota/entitlement integration   |
+| `POST`  | `/api/v1/provider/listings`              | Provider | Protected creation with commandId and workspace quota |
 | `GET`   | `/api/v1/provider/listings`              | Provider | Get the authorized non-RETIRED workspace portfolio     |
 | `GET`   | `/api/v1/provider/listings/:id`          | Provider | Get one authorized workspace listing                                     |
 | `PATCH` | `/api/v1/provider/listings/:id`          | Provider | Update an authorized workspace listing                                   |
@@ -159,7 +159,7 @@ Listing lifecycle transitions are guarded. A caller without current workspace/li
 
 `RETIRED` is irreversible; `RENTED` permits only retirement. Repeating an action, including a second retirement, returns `409`. Pause hides the listing from applicant discovery and blocks new applications. Existing applications, conversations, documents, and viewings stay in place and follow their current state rules. Resume returns the same listing to `PUBLISHED` without refreshing `publishedAt`.
 
-`POST /api/v1/provider/listings` intentionally returns `503` after workspace authorization until quota/entitlement integration. The internal structural creation seam is not a public creation bypass.
+`POST /api/v1/provider/listings` requires a UUID `commandId` and enforces current workspace capacity transactionally. Same-input replay does not acquire another slot. See [plans and capacity](provider-entitlements.md) for the creation, projection and development-only activation contracts.
 
 Provider detail/mutation DTOs expose only their explicit presentation, requirement, lifecycle timestamp and workspace/creator/responsibility/revision fields. Internal `assignmentSequence`, criteria revision/evidence and raw Prisma fields are excluded. Portfolio responses additionally expose `displayOrder` and `activeApplicationsCount`.
 

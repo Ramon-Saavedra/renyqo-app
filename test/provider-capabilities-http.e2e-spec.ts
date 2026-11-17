@@ -136,12 +136,12 @@ describe('Provider capabilities over HTTP through restricted runtime', () => {
       .set('x-workspace-id', w.id)
       .expect(403);
   });
-  it('keeps listing creation dormant despite its compatibility capability', async () => {
+  it('requires a stable command independently of the creation capability', async () => {
     await client
       .post('/api/v1/provider/listings')
       .set('x-workspace-id', w.id)
       .send({})
-      .expect(503);
+      .expect(400);
   });
 
   it('cannot reject an application through viewing consideration without APPLICATION_MANAGE', async () => {

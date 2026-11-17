@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
-  ServiceUnavailableException,
+  BadRequestException,
 } from '@nestjs/common';
 import type { Listing } from '../generated/prisma/client';
 import {
@@ -37,6 +37,7 @@ import { ListingInputRules } from './listing-input-rules';
 import { ListingResponseMapper } from './listing-response.mapper';
 import { ListingCriteriaRevisionService } from '../eligibility/listing-criteria-revision.service';
 import { ApplicationEligibilityAssessmentService } from '../eligibility/application-eligibility-assessment.service';
+import { ListingCreation } from './listing-creation';
 
 const PUBLISH_REQUIRED_FIELDS = [
   'title',
@@ -75,21 +76,26 @@ export class ListingsService {
     private readonly applicationLifecycle: ApplicationLifecycleService,
     private readonly criteriaRevisions: ListingCriteriaRevisionService,
     private readonly assessments: ApplicationEligibilityAssessmentService,
+    private readonly creation: ListingCreation,
   ) {}
 
-  create(
+  async create(
     _actor: ProviderActor,
     _dto: CreateListingDto,
     _file?: Express.Multer.File,
   ): Promise<Listing> {
-    void _dto;
-    void _file;
-    return this.access.read(_actor, 'listing.create', undefined, () =>
-      Promise.reject(
-        new ServiceUnavailableException(
-          'Listing creation requires entitlement/quota integration',
-        ),
-      ),
+    if (!_dto.commandId)
+      throw new BadRequestException('Creation commandId is required');
+    if (_file)
+      throw new UnprocessableEntityException(
+        'Upload media through the listing media endpoint after creation',
+      );
+    return this.creation.run(
+      _actor,
+      _dto,
+      _dto.commandId,
+      _dto.responsibleMembershipId,
+      _dto.predecessorListingId,
     );
   }
 

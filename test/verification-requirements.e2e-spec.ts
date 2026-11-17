@@ -20,7 +20,7 @@ import { ApplicationDocumentFinalizationService } from '../src/application-docum
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
 import {
   createPublishedListingForProvider,
-  ensurePersonalWorkspaceForProvider,
+  ensureWorkspaceForProvider,
 } from './e2e-workspace-listing';
 import {
   applicantAuthorityFor,
@@ -136,10 +136,10 @@ describe('Verification requirement domain (isolated PostgreSQL schema)', () => {
         .expect(201);
     }
     providerId = String(body(await register(agent))['id']);
-    await ensurePersonalWorkspaceForProvider(prisma, providerId);
+    await ensureWorkspaceForProvider(prisma, providerId);
     providerActor = await providerActorFor(prisma, providerId);
     const foreignProviderId = String(body(await register(foreignAgent))['id']);
-    await ensurePersonalWorkspaceForProvider(prisma, foreignProviderId);
+    await ensureWorkspaceForProvider(prisma, foreignProviderId);
   }, 30000);
 
   afterAll(async () => {

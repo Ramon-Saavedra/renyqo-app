@@ -6,7 +6,7 @@ import type {
 import type { ProviderActor } from '../src/provider-authorization/provider-listing-access';
 import type { PrismaService } from '../src/prisma/prisma.service';
 import {
-  ensurePersonalWorkspaceForProvider,
+  ensureWorkspaceForProvider,
   resolveProviderWorkspace,
 } from './e2e-workspace-listing';
 
@@ -57,7 +57,7 @@ export async function bindProviderWorkspaceHeader(
   providerUserId: string,
   agent: HeaderAgent,
 ): Promise<string> {
-  const { workspaceId } = await ensurePersonalWorkspaceForProvider(
+  const { workspaceId } = await ensureWorkspaceForProvider(
     prisma,
     providerUserId,
   );
@@ -70,7 +70,7 @@ export async function providerActorFor(
   providerUserId: string,
   sessionId?: string,
 ): Promise<ProviderActor> {
-  await ensurePersonalWorkspaceForProvider(prisma, providerUserId);
+  await ensureWorkspaceForProvider(prisma, providerUserId);
   const { workspaceId } = await resolveProviderWorkspace(
     prisma,
     providerUserId,
@@ -97,7 +97,7 @@ export async function authorizationContextFor(
   providerUserId: string,
   sessionId?: string,
 ): Promise<AuthorizationContext> {
-  await ensurePersonalWorkspaceForProvider(prisma, providerUserId);
+  await ensureWorkspaceForProvider(prisma, providerUserId);
   const membership = await prisma.workspaceMembership.findFirstOrThrow({
     where: { userId: providerUserId, role: 'OWNER', status: 'ACTIVE' },
     include: {

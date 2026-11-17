@@ -1,3 +1,4 @@
+import { runSerializableTransaction } from '../src/prisma/run-serializable-transaction';
 import { VerificationRequirementService } from '../src/application-documents/verification-requirement.service';
 import { createDocumentEvidenceFixture } from './document-requirement-fixture';
 import { createEligibleApplicantProfile } from './eligible-applicant-fixture';
@@ -63,7 +64,7 @@ import {
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
 import {
   createPublishedListingForProvider,
-  ensurePersonalWorkspaceForProvider,
+  ensureWorkspaceForProvider,
   resolveProviderWorkspace,
   updateListingForProvider,
 } from './e2e-workspace-listing';
@@ -220,7 +221,7 @@ describe('Application read models E2E', () => {
     provider = await register('provider');
     applicant = await register('applicant');
     await createEligibleApplicantProfile(applicant.agent);
-    await ensurePersonalWorkspaceForProvider(prisma, provider.id);
+    await ensureWorkspaceForProvider(prisma, provider.id);
     providerActor = await providerActorFor(prisma, provider.id);
     applicantAuthority = await applicantAuthorityFor(prisma, applicant.id);
     const listing = await createPublishedListingForProvider(
@@ -828,7 +829,7 @@ describe('Application read models E2E', () => {
       ],
     });
     await expectImage('https://images.example/cover.jpg');
-    await prisma.$transaction(async (tx) => {
+    await runSerializableTransaction(prisma, async (tx) => {
       await tx.listingImage.update({
         where: { id: coverId },
         data: { isCover: false },
@@ -937,7 +938,7 @@ describe('Application read models E2E', () => {
 
   it('exposes effective corrected outcomes and submitted interest without history', async () => {
     const row = await viewing(applicationId, ViewingStatus.NO_SHOW);
-    await prisma.$transaction(async (tx) => {
+    await runSerializableTransaction(prisma, async (tx) => {
       await tx.applicationViewingOutcome.create({
         data: {
           viewingId: row.id,
@@ -1902,7 +1903,7 @@ describe('Application read models E2E', () => {
       prisma,
       provider.id,
     );
-    await prisma.$transaction(async (tx) => {
+    await runSerializableTransaction(prisma, async (tx) => {
       await installTenantContext(tx, workspaceId);
       const workspace = await tx.providerWorkspace.findUniqueOrThrow({
         where: { id: workspaceId },

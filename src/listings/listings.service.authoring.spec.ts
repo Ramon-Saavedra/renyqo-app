@@ -1,3 +1,4 @@
+import { ListingCreation } from './listing-creation';
 import {
   unitProviderOperations,
   UNIT_WORKSPACE_ID,
@@ -93,6 +94,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   revision: 1,
   assignmentSequence: 1,
   retiredAt: null,
+  predecessorListingId: null,
   status: ListingStatus.DRAFT,
   city: 'Berlin',
   zip: '10115',
@@ -193,6 +195,7 @@ describe('ListingsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: ListingCreation, useValue: { run: jest.fn() } },
         {
           provide: ListingCriteriaRevisionService,
           useValue: {
@@ -261,7 +264,7 @@ describe('ListingsService', () => {
 
   describe('create', () => {
     it.each([false, true])(
-      'fails closed before quota integration, including uploaded input: %s',
+      'requires a stable command before persisting any input: %s',
       async (withFile) => {
         await expect(
           service.create(
@@ -269,9 +272,7 @@ describe('ListingsService', () => {
             { city: 'Berlin' },
             withFile ? makeMulterFile() : undefined,
           ),
-        ).rejects.toThrow(
-          'Listing creation requires entitlement/quota integration',
-        );
+        ).rejects.toThrow('Creation commandId is required');
         expect(prismaMock.listing.create).not.toHaveBeenCalled();
         expect(cloudinaryMock.uploadBuffer).not.toHaveBeenCalled();
       },

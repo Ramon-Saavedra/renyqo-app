@@ -51,8 +51,8 @@ responsible-listing scope. ACTIVE OWNER receives the operational set except the
 AGENT-only transfer request/cancellation capability. Neither receives reserved
 FINANCIAL_READ. SUSPENDED/REMOVED memberships have no effective authority.
 
-Capabilities never expand scope. Creation remains blocked by entitlement/quota
-integration. Membership removal/reinstatement and ownership transfer remain
+Capabilities never expand scope. Phase 4.5.7 integrates creation with the
+[canonical quota boundary](provider-entitlements.md). Membership removal/reinstatement and ownership transfer remain
 dormant. This phase does not activate invitations, billing or team fan-out.
 Defaults are explicit compatibility lists; adding a catalog entry never
 automatically grants it to either role.

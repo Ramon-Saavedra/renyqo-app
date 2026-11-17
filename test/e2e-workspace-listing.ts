@@ -1,3 +1,5 @@
+import { testOrganizationPlan } from './entitlement-test-catalog';
+import { runSerializableTransaction } from '../src/prisma/run-serializable-transaction';
 import { randomUUID } from 'node:crypto';
 import type { Prisma, PrismaClient } from '../src/generated/prisma/client';
 import {
@@ -23,7 +25,7 @@ function workspaceEstablishment() {
   );
 }
 
-export async function ensurePersonalWorkspaceForProvider(
+export async function ensureWorkspaceForProvider(
   prisma: WorkspaceDb,
   providerUserId: string,
 ) {
@@ -34,16 +36,22 @@ export async function ensurePersonalWorkspaceForProvider(
   if (existing) return existing;
   const establishment = workspaceEstablishment();
   const workspaceId = randomUUID();
-  await prisma.$transaction(async (tx) => {
+  await runSerializableTransaction(prisma, async (tx) => {
     await installTenantContext(tx, workspaceId);
     await establishment.withinTransaction(tx, {
       workspaceId,
       membershipId: randomUUID(),
       userId: providerUserId,
       displayName: 'E2E workspace',
-      kind: 'PERSONAL',
-      allocationId: randomUUID(),
+      kind: 'ORGANIZATION',
+      legalName: 'Test fixture organization',
     });
+  });
+  await prisma.$executeRaw`INSERT INTO plan_versions(id,plan_key,version,workspace_kind,max_listings,max_seats) VALUES(${testOrganizationPlan}::uuid,'TEST_FIXTURE',1,'ORGANIZATION',10000,1000) ON CONFLICT DO NOTHING`;
+  await runSerializableTransaction(prisma, async (tx) => {
+    await installTenantContext(tx, workspaceId);
+    await tx.$executeRaw`SELECT lock_workspace_ownership_revision(${workspaceId}::uuid,1)`;
+    await tx.$executeRaw`UPDATE workspace_plan_assignments SET plan_version_id=${testOrganizationPlan}::uuid,source='INTERNAL',command_id=gen_random_uuid(),actor_membership_id=(SELECT id FROM workspace_memberships WHERE workspace_id=${workspaceId}::uuid AND role='OWNER') WHERE workspace_id=${workspaceId}::uuid`;
   });
   return resolveProviderWorkspace(prisma, providerUserId);
 }
@@ -69,17 +77,23 @@ export async function createPublishedListingForProvider(
   providerUserId: string,
   overrides: Omit<
     Partial<Prisma.ListingCreateInput>,
-    'workspace' | 'createdByMembership' | 'responsibleMembership'
+    | 'workspace'
+    | 'createdByMembership'
+    | 'responsibleMembership'
+    | 'predecessorListing'
+    | 'successorListings'
   > = {},
 ) {
-  const { workspaceId, id: membershipId } =
-    await ensurePersonalWorkspaceForProvider(prisma, providerUserId);
+  const { workspaceId, id: membershipId } = await ensureWorkspaceForProvider(
+    prisma,
+    providerUserId,
+  );
   const maxOrder = await prisma.listing.aggregate({
     where: { workspaceId, status: { not: ListingStatus.RETIRED } },
     _max: { displayOrder: true },
   });
   const commandId = randomUUID();
-  return prisma.$transaction(async (tx) => {
+  return runSerializableTransaction(prisma, async (tx) => {
     await installTenantContext(tx, workspaceId);
     const workspace = await tx.providerWorkspace.findUniqueOrThrow({
       where: { id: workspaceId },
@@ -131,7 +145,7 @@ async function withWorkspaceListingLock<T>(
   workspaceId: string,
   work: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
-  return prisma.$transaction(async (tx) => {
+  return runSerializableTransaction(prisma, async (tx) => {
     await installTenantContext(tx, workspaceId);
     const workspace = await tx.providerWorkspace.findUniqueOrThrow({
       where: { id: workspaceId },
@@ -274,8 +288,10 @@ export async function createListingInWorkspaceForProvider(
     'workspaceId' | 'createdByMembershipId' | 'responsibleMembershipId'
   >,
 ) {
-  const { workspaceId, id: membershipId } =
-    await ensurePersonalWorkspaceForProvider(prisma, providerUserId);
+  const { workspaceId, id: membershipId } = await ensureWorkspaceForProvider(
+    prisma,
+    providerUserId,
+  );
   const commandId = randomUUID();
   const { status: requestedStatus, publishedAt, ...rest } = data;
   return withWorkspaceListingLock(prisma, workspaceId, async (tx) => {
@@ -339,17 +355,23 @@ export async function createDraftListingForProvider(
   providerUserId: string,
   overrides: Omit<
     Partial<Prisma.ListingCreateInput>,
-    'workspace' | 'createdByMembership' | 'responsibleMembership'
+    | 'workspace'
+    | 'createdByMembership'
+    | 'responsibleMembership'
+    | 'predecessorListing'
+    | 'successorListings'
   > = {},
 ) {
-  const { workspaceId, id: membershipId } =
-    await ensurePersonalWorkspaceForProvider(prisma, providerUserId);
+  const { workspaceId, id: membershipId } = await ensureWorkspaceForProvider(
+    prisma,
+    providerUserId,
+  );
   const maxOrder = await prisma.listing.aggregate({
     where: { workspaceId, status: { not: ListingStatus.RETIRED } },
     _max: { displayOrder: true },
   });
   const commandId = randomUUID();
-  return prisma.$transaction(async (tx) => {
+  return runSerializableTransaction(prisma, async (tx) => {
     await installTenantContext(tx, workspaceId);
     const workspace = await tx.providerWorkspace.findUniqueOrThrow({
       where: { id: workspaceId },
