@@ -176,7 +176,7 @@ describe('Session-authoritative workspace discovery through restricted login', (
       .post('/api/v1/provider/listings')
       .set('x-workspace-id', own.id)
       .send({ city: 'Berlin' })
-      .expect(503);
+      .expect(400);
   });
   it.each(['SUSPENDED', 'REMOVED'] as const)(
     'omits %s memberships',

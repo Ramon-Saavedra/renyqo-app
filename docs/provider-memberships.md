@@ -35,7 +35,8 @@ Once assignment exists, removal must repair required assignments atomically or f
 
 Removal and reinstatement commands explicitly refuse execution. Reinstatement needs
 real seat entitlement validation (4.5.7); removal needs assignment integration
-(4.5.5). Resume uses an existing seat and restores no future grants automatically.
+(4.5.5). Phase 4.5.7 supplies the [capacity primitive](provider-entitlements.md)
+without activating these commands. Resume uses an existing seat and restores no future grants automatically.
 Even suspension/resume persistence is unavailable operationally: authenticated,
 authorized orchestration and durable audit integration (4.5.10) must precede activation.
 There are no permissive policy adapters or fake approvals.

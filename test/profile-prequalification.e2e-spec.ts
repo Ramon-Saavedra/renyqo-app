@@ -27,7 +27,7 @@ import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
 import {
   createListingInWorkspaceForProvider,
   createPublishedListingForProvider,
-  ensurePersonalWorkspaceForProvider,
+  ensureWorkspaceForProvider,
 } from './e2e-workspace-listing';
 import {
   applicantAuthorityFor,
@@ -145,7 +145,7 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
         .expect(201);
     }
     providerId = String(body(await register(agent))['id']);
-    await ensurePersonalWorkspaceForProvider(prisma, providerId);
+    await ensureWorkspaceForProvider(prisma, providerId);
     await bindProviderWorkspaceHeader(prisma, providerId, agent);
     providerActor = await providerActorFor(prisma, providerId);
     await register(foreignAgent);
@@ -234,7 +234,6 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
         providerActor,
         { title: 'HTTP revision', minimumHouseholdNetIncome: 3000 },
         randomUUID(),
-        () => Promise.resolve(),
       );
     const id = row.id;
     await agent

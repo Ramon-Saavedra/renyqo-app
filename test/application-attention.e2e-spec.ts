@@ -1,3 +1,4 @@
+import { runSerializableTransaction } from '../src/prisma/run-serializable-transaction';
 import { VerificationRequirementService } from '../src/application-documents/verification-requirement.service';
 import {
   createDocumentEvidenceFixture,
@@ -259,7 +260,7 @@ describe('Application attention E2E', () => {
       prisma,
       provider.id,
     );
-    await prisma.$transaction(async (tx) => {
+    await runSerializableTransaction(prisma, async (tx) => {
       await installTenantContext(tx, workspaceId);
       const workspace = await tx.providerWorkspace.findUniqueOrThrow({
         where: { id: workspaceId },

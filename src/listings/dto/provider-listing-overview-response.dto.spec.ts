@@ -21,6 +21,7 @@ function makeListing(
     revision: 1,
     assignmentSequence: 1,
     retiredAt: null,
+    predecessorListingId: null,
     status: ListingStatus.PUBLISHED,
     city: 'Berlin',
     zip: '10115',

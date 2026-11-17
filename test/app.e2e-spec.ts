@@ -27,7 +27,7 @@ import {
   compactWorkspaceListingDisplayOrder,
   createDraftListingForProvider,
   createPublishedListingForProvider,
-  ensurePersonalWorkspaceForProvider,
+  ensureWorkspaceForProvider,
   resolveProviderWorkspace,
   updateListingForProvider,
 } from './e2e-workspace-listing';
@@ -257,7 +257,7 @@ function providerListingOrder(body: unknown): ProviderListingOrderItem[] {
 }
 
 async function workspaceIdForProvider(providerUserId: string) {
-  await ensurePersonalWorkspaceForProvider(getPrisma(), providerUserId);
+  await ensureWorkspaceForProvider(getPrisma(), providerUserId);
   return (await resolveProviderWorkspace(getPrisma(), providerUserId))
     .workspaceId;
 }
@@ -266,7 +266,7 @@ async function createPublishedListing(
   providerUserId: string,
   overrides: Parameters<typeof createPublishedListingForProvider>[2] = {},
 ) {
-  await ensurePersonalWorkspaceForProvider(getPrisma(), providerUserId);
+  await ensureWorkspaceForProvider(getPrisma(), providerUserId);
   return createPublishedListingForProvider(getPrisma(), providerUserId, {
     title: 'E2E Listing',
     ...overrides,
@@ -2202,7 +2202,6 @@ describe('Backend API E2E', () => {
         providerActor,
         { title: 'Appended after gaps', city: 'Berlin' },
         randomUUID(),
-        () => Promise.resolve(),
       );
 
     const visibleOrder = providerListingOrder(

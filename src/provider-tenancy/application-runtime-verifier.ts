@@ -65,4 +65,20 @@ export async function assertApplicationRuntime(
     throw new Error(
       'Application runtime required privileges are missing or excessive',
     );
+  const [entitlements] = await db.$queryRaw<{ safe: boolean }[]>`
+    SELECT count(*)=3 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity
+      AND NOT pg_has_role(current_user,c.relowner,'MEMBER')
+      AND has_table_privilege(current_user,c.oid,'SELECT')
+      AND NOT has_table_privilege(current_user,c.oid,'DELETE,TRUNCATE,TRIGGER'))
+      AND NOT has_table_privilege(current_user,'plan_versions','INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')
+      AND has_table_privilege(current_user,'plan_versions','SELECT')
+      AND has_table_privilege(current_user,'workspace_plan_assignments','INSERT')
+      AND has_table_privilege(current_user,'workspace_plan_assignments','UPDATE')
+      AND has_table_privilege(current_user,'workspace_seat_reservations','INSERT')
+      AND has_table_privilege(current_user,'workspace_seat_reservations','UPDATE')
+      AND NOT has_table_privilege(current_user,'workspace_plan_changes','INSERT,UPDATE') AS safe
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema()
+      AND c.relname IN('workspace_plan_assignments','workspace_plan_changes','workspace_seat_reservations')`;
+  if (!entitlements?.safe)
+    throw new Error('Application entitlement runtime boundary is unsafe');
 }

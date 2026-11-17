@@ -9,8 +9,30 @@ import { TenantFixture } from './workspace-tenant.fixture';
 import { assertApplicationRuntime } from '../src/provider-tenancy/application-runtime-verifier';
 import { sqlTenant } from './workspace-tenant.fixture';
 import { installTenantContext } from '../src/provider-tenancy/tenant-context';
+import {
+  seedEntitlementTestCatalog,
+  assignEntitlementTestPlan,
+} from './entitlement-test-catalog';
 
 export class ListingWorkspaceFixture extends TenantFixture {
+  override async runtimeSql<T>(
+    workspaceId: string | null,
+    work: (client: PoolClient) => Promise<T>,
+  ) {
+    const client = await this.runtimePool.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+      if (workspaceId) await sqlTenant(client, workspaceId);
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   readonly applicationLogin = `app_${randomUUID().replaceAll('-', '')}`;
   applicationUrl!: string;
   applicationPool!: Pool;
@@ -21,6 +43,12 @@ export class ListingWorkspaceFixture extends TenantFixture {
     await this.tx(async (tx) => {
       await installTenantContext(tx, input.workspaceId);
       await this.establishment.withinTransaction(tx, input);
+      await tx.$executeRaw`SELECT lock_workspace_ownership_revision(${input.workspaceId}::uuid,1)`;
+      await assignEntitlementTestPlan(
+        tx,
+        input.workspaceId,
+        input.membershipId,
+      );
     });
     return {
       id: input.workspaceId,
@@ -35,11 +63,34 @@ export class ListingWorkspaceFixture extends TenantFixture {
     for (const name of [
       '20261108150000_listing_workspace_assignment',
       '20261112150000_public_listing_discovery_indexes',
+      '20261116100000_workspace_plan_catalog',
+      '20261116101000_workspace_capacity_guards',
+      '20261116102000_workspace_capacity_acquisition',
+      '20261116103000_listing_creation_lineage',
+      '20261116104000_workspace_plan_conversion',
     ]) {
-      await this.pool.query(
-        readFileSync(join(migrations, name, 'migration.sql'), 'utf8'),
-      );
+      try {
+        await this.pool.query(
+          readFileSync(join(migrations, name, 'migration.sql'), 'utf8'),
+        );
+      } catch (error) {
+        throw new Error(
+          `Migration ${name}: ${String(error)} ${JSON.stringify(error)}`,
+          { cause: error },
+        );
+      }
     }
+    await seedEntitlementTestCatalog(this.pool);
+    const organizations = await this.prisma.providerWorkspace.findMany({
+      where: { kind: 'ORGANIZATION' },
+      include: { memberships: { where: { role: 'OWNER' } } },
+    });
+    for (const w of organizations)
+      await this.tx(async (tx) => {
+        await installTenantContext(tx, w.id);
+        await tx.$executeRaw`SELECT lock_workspace_ownership_revision(${w.id}::uuid,${w.ownershipRevision})`;
+        await assignEntitlementTestPlan(tx, w.id, w.memberships[0].id);
+      });
     const admin = new URL(process.env['E2E_DATABASE_URL']!);
     admin.searchParams.set('schema', this.schema);
     const runtime = new URL(admin);
@@ -107,7 +158,7 @@ export class ListingWorkspaceFixture extends TenantFixture {
   ) {
     const client = await this.applicationPool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
       if (workspaceId) await sqlTenant(client, workspaceId);
       const result = await work(client);
       await client.query('COMMIT');

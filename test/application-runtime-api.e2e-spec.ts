@@ -278,7 +278,7 @@ describe('API/session/worker smoke through restricted application login', () => 
       ).householdNetIncome,
     ).toBe(1000);
   });
-  it('keeps public creation closed while structural creation commits provenance, assignment and criteria together', async () => {
+  it('requires a creation command and commits provenance, assignment and criteria together', async () => {
     const agent = request.agent(
       app.getHttpServer() as Parameters<typeof request>[0],
     );
@@ -304,18 +304,13 @@ describe('API/session/worker smoke through restricted application login', () => 
       .post('/api/v1/provider/listings')
       .set('x-workspace-id', workspace.id)
       .send({ city: 'Berlin' })
-      .expect(503);
+      .expect(400);
     expect(
       await f.prisma.listing.count({ where: { workspaceId: workspace.id } }),
     ).toBe(0);
-    let eligibilityCalls = 0;
     const created = await app
       .get(ListingCreation)
-      .run(actor, { city: 'Berlin', coldRent: 1234.56 }, randomUUID(), () => {
-        eligibilityCalls++;
-        return Promise.resolve();
-      });
-    expect(eligibilityCalls).toBe(1);
+      .run(actor, { city: 'Berlin', coldRent: 1234.56 }, randomUUID());
     expect(created).toMatchObject({
       workspaceId: workspace.id,
       createdByMembershipId: workspace.owner,
@@ -337,10 +332,8 @@ describe('API/session/worker smoke through restricted application login', () => 
     await expect(
       app
         .get(ListingCreation)
-        .run(actor, { city: 'Berlin' }, randomUUID(), () =>
-          Promise.reject(new Error('Entitlement denied')),
-        ),
-    ).rejects.toThrow('Entitlement denied');
+        .run(actor, { city: 'Berlin' }, randomUUID(), randomUUID()),
+    ).rejects.toThrow('Responsible member is ineligible');
     expect(
       await f.prisma.listing.count({ where: { workspaceId: workspace.id } }),
     ).toBe(1);

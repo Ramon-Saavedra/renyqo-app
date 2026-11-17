@@ -20,6 +20,7 @@ import { ProviderListingAccess } from './provider-listing-access';
     AuthorizedWorkspaceReads,
   ],
   exports: [
+    AuthorizedWorkspaceReads,
     ProviderListingAccess,
     ProtectedWorkspaceTransactions,
     WorkspaceMembershipResolver,

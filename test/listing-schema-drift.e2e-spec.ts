@@ -41,7 +41,7 @@ describe('Listing Prisma/PostgreSQL shape agreement', () => {
         /\b(?:ALTER TABLE|DROP TABLE|CREATE TABLE|CREATE INDEX|DROP INDEX|ALTER INDEX)\b/.test(
           statement,
         ) &&
-        /"(?:listings|listing_assignment_transitions|listing_transfer_requests|public_listing_projections|listing_tenant_routes)"/.test(
+        /"(?:listings|listing_assignment_transitions|listing_transfer_requests|public_listing_projections|listing_tenant_routes|plan_versions|workspace_plan_assignments|workspace_plan_changes|workspace_seat_reservations)"/.test(
           statement,
         ),
     );

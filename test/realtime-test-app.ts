@@ -14,7 +14,7 @@ import { Role } from '../src/generated/prisma/enums';
 import { assertSafeE2EDatabaseUrl } from './e2e-database-safety';
 import {
   createPublishedListingForProvider,
-  ensurePersonalWorkspaceForProvider,
+  ensureWorkspaceForProvider,
 } from './e2e-workspace-listing';
 import {
   applicantAuthorityFor,
@@ -130,7 +130,7 @@ export async function realtimeTestApp(
       },
     });
     if (role === Role.PROVIDER) {
-      await ensurePersonalWorkspaceForProvider(prisma, row.id);
+      await ensureWorkspaceForProvider(prisma, row.id);
     }
     return { userId: row.id, ...(await sessionFor(row.id)) };
   }

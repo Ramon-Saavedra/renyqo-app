@@ -15,6 +15,10 @@ BEGIN
     RAISE EXCEPTION 'Unsafe application role graph';
   END IF;
   EXECUTE format('GRANT USAGE ON SCHEMA %I TO renyqo_application_runtime',s);
+  -- Entitlement tables inherit minimum runtime grants from the workspace group;
+  -- immutable catalog and change evidence must never receive blanket DML grants.
+  EXECUTE format('GRANT SELECT ON %I.plan_versions,%I.workspace_plan_assignments,%I.workspace_plan_changes,%I.workspace_seat_reservations TO renyqo_workspace_runtime',s,s,s,s);
+  EXECUTE format('GRANT INSERT,UPDATE ON %I.workspace_plan_assignments,%I.workspace_seat_reservations TO renyqo_workspace_runtime',s,s);
   -- Required by INSERT defaults, including the unchanged global queue sequence.
   -- No blanket sequence grants. The legacy consideration INSERT default still
   -- evaluates its serial sequence before the queue-fairness trigger derives position.

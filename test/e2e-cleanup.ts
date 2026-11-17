@@ -115,7 +115,7 @@ export async function clearE2EData(prisma: PrismaClient): Promise<void> {
           throw new Error('Unsafe E2E cleanup connection');
         const tables = await tx.$queryRaw<
           { tablename: string }[]
-        >`SELECT tablename FROM pg_tables WHERE schemaname = ${target.schema} AND tablename <> '_prisma_migrations' ORDER BY tablename`;
+        >`SELECT tablename FROM pg_tables WHERE schemaname = ${target.schema} AND tablename NOT IN ('_prisma_migrations','plan_versions') ORDER BY tablename`;
         if (tables.length) {
           // One statement satisfies cyclic/restrict FKs without CASCADE into other schemas.
           await tx.$executeRawUnsafe(

@@ -1,3 +1,4 @@
+import { ListingCreation } from './listing-creation';
 import {
   unitProviderOperations,
   UNIT_WORKSPACE_ID,
@@ -96,6 +97,7 @@ const makeRawListing = (overrides: Partial<Listing> = {}): Listing => ({
   revision: 1,
   assignmentSequence: 1,
   retiredAt: null,
+  predecessorListingId: null,
   status: ListingStatus.DRAFT,
   city: 'Berlin',
   zip: '10115',
@@ -204,6 +206,7 @@ describe('ListingsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: ListingCreation, useValue: { run: jest.fn() } },
         {
           provide: ListingCriteriaRevisionService,
           useValue: {
