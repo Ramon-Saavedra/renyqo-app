@@ -157,6 +157,9 @@ enum ProviderType {
 }
 
 model User {
+  emailVerificationChallenges EmailVerificationChallenge[]
+  acceptedInvitations WorkspaceInvitation[]
+  invitationCommands WorkspaceInvitationCommand[]
   workspaceMemberships WorkspaceMembership[]
   personalWorkspaceAllocations PersonalWorkspaceAllocation[]
   verificationSubjects ApplicationVerificationSubject[] @relation("VerificationSubjectCreator")
@@ -235,6 +238,79 @@ enum PersonalAllocationReleaseReason {
 
 // Partial indexes, immutable identities and deferred aggregate invariants are
 // defined in migration SQL. Do not replace migrations with db push.
+enum WorkspaceInvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+model EmailVerificationChallenge {
+  id String @id @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  email String
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+  authVersion Int @map("auth_version")
+  sessionId String @map("session_id")
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  usedAt DateTime? @map("used_at") @db.Timestamptz(3)
+  user User @relation(fields:[userId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  @@index([userId,createdAt],map:"email_verification_user_created")
+  @@map("email_verification_challenges")
+}
+
+model WorkspaceInvitation {
+  id String @id @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  email String
+  role WorkspaceMembershipRole @default(AGENT)
+  createdByMembershipId String @map("created_by_membership_id") @db.Uuid
+  reservationId String @unique @map("reservation_id") @db.Uuid
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+  generation Int @default(1)
+  revision Int @default(1)
+  issuerMembershipRevision Int @map("issuer_membership_revision")
+  issuerAuthVersion Int @map("issuer_auth_version")
+  ownershipRevision Int @map("ownership_revision")
+  status WorkspaceInvitationStatus @default(PENDING)
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  issuedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("issued_at") @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  expiredAt DateTime? @map("expired_at") @db.Timestamptz(3)
+  acceptedMembershipId String? @map("accepted_membership_id") @db.Uuid
+  acceptedUserId String? @map("accepted_user_id") @db.Uuid
+  acceptanceKind String? @map("acceptance_kind") @db.VarChar(16)
+  deliveryStatus String @default("UNKNOWN") @map("delivery_status") @db.VarChar(12)
+  workspace ProviderWorkspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  issuer WorkspaceMembership @relation("InvitationIssuer",fields:[createdByMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:NoAction)
+  acceptedMember WorkspaceMembership? @relation("InvitationAcceptedMember",fields:[acceptedMembershipId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:NoAction)
+  acceptedUser User? @relation(fields:[acceptedUserId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  reservation WorkspaceSeatReservation @relation(fields:[reservationId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:NoAction)
+  commands WorkspaceInvitationCommand[]
+  @@unique([id,workspaceId])
+  @@unique([reservationId,workspaceId])
+  @@index([workspaceId,createdAt,id],map:"workspace_invitation_page")
+  @@map("workspace_invitations")
+}
+
+model WorkspaceInvitationCommand {
+  workspaceId String @map("workspace_id") @db.Uuid
+  commandId String @map("command_id") @db.Uuid
+  invitationId String @map("invitation_id") @db.Uuid
+  kind String @db.VarChar(12)
+  actorUserId String @map("actor_user_id") @db.Uuid
+  inputHash String @map("input_hash") @db.VarChar(64)
+  resultRevision Int @map("result_revision")
+  occurredAt DateTime @default(dbgenerated("clock_timestamp()")) @map("occurred_at") @db.Timestamptz(3)
+  invitation WorkspaceInvitation @relation(fields:[invitationId,workspaceId],references:[id,workspaceId],onDelete:Restrict,onUpdate:NoAction)
+  actor User @relation(fields:[actorUserId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  @@id([workspaceId,commandId])
+  @@map("workspace_invitation_commands")
+}
+
 model PlanVersion {
   id String @id @db.Uuid
   planKey String @map("plan_key") @db.VarChar(80)
@@ -287,6 +363,7 @@ model WorkspacePlanChange {
 }
 
 model WorkspaceSeatReservation {
+  invitation WorkspaceInvitation?
   id String @id @db.Uuid
   workspaceId String @map("workspace_id") @db.Uuid
   commandId String @map("command_id") @db.Uuid
@@ -295,10 +372,12 @@ model WorkspaceSeatReservation {
   releasedAt DateTime? @map("released_at") @db.Timestamptz(3)
   workspace ProviderWorkspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict,onUpdate:Restrict)
   @@unique([workspaceId,commandId])
+  @@unique([id,workspaceId],map:"seat_reservation_id_workspace")
   @@map("workspace_seat_reservations")
 }
 
 model ProviderWorkspace {
+  invitations WorkspaceInvitation[]
   id                  String                        @id @default(uuid()) @db.Uuid
   kind                WorkspaceKind
   displayName         String                        @map("display_name") @db.VarChar(160)
@@ -323,6 +402,8 @@ model ProviderWorkspace {
 }
 
 model WorkspaceMembership {
+  createdInvitations WorkspaceInvitation[] @relation("InvitationIssuer")
+  acceptedInvitations WorkspaceInvitation[] @relation("InvitationAcceptedMember")
   id           String                    @id @default(uuid()) @db.Uuid
   workspaceId  String                    @map("workspace_id") @db.Uuid
   userId       String                    @map("user_id") @db.Uuid

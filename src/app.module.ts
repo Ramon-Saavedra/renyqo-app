@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ProviderInvitationsModule } from './provider-invitations/provider-invitations.module';
 import { ListingAssignmentsModule } from './listing-assignments/listing-assignments.module';
 import { ProviderWorkspacesModule } from './provider-workspaces/provider-workspaces.module';
 import { ProviderMembershipsModule } from './provider-memberships/provider-memberships.module';
@@ -26,6 +27,7 @@ import { ListingAssistanceModule } from './listing-assistance/listing-assistance
 
 @Module({
   imports: [
+    ProviderInvitationsModule,
     ListingAssignmentsModule,
     ProviderWorkspacesModule,
     ProviderMembershipsModule,

@@ -10,6 +10,9 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+import { Transform } from 'class-transformer';
+import { canonicalEmail } from '../identity/canonical-email';
+
 export enum PublicRole {
   APPLICANT = 'applicant',
   PROVIDER = 'provider',
@@ -26,6 +29,9 @@ export class RegisterDto {
   @MaxLength(100)
   name!: string;
 
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? canonicalEmail(value) : value,
+  )
   @IsEmail()
   email!: string;
 

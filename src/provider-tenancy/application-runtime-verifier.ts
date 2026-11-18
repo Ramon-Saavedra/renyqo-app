@@ -81,4 +81,18 @@ export async function assertApplicationRuntime(
       AND c.relname IN('workspace_plan_assignments','workspace_plan_changes','workspace_seat_reservations')`;
   if (!entitlements?.safe)
     throw new Error('Application entitlement runtime boundary is unsafe');
+  const [invitations] = await db.$queryRaw<{ safe: boolean }[]>`
+    SELECT count(*)=2 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity
+      AND NOT pg_has_role(current_user,c.relowner,'MEMBER')
+      AND has_table_privilege(current_user,c.oid,'SELECT')
+      AND has_table_privilege(current_user,c.oid,'INSERT')
+      AND NOT has_table_privilege(current_user,c.oid,'DELETE,TRUNCATE,TRIGGER'))
+      AND has_table_privilege(current_user,'workspace_invitations','UPDATE')
+      AND NOT has_table_privilege(current_user,'workspace_invitation_commands','UPDATE')
+      AND has_function_privilege(current_user,'lookup_workspace_invitation(text,uuid,text,integer)','EXECUTE')
+      AND has_function_privilege(current_user,'admit_workspace_invitation(uuid,uuid,text,uuid,uuid)','EXECUTE') AS safe
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema()
+      AND c.relname IN('workspace_invitations','workspace_invitation_commands')`;
+  if (!invitations?.safe)
+    throw new Error('Application invitation runtime boundary is unsafe');
 }

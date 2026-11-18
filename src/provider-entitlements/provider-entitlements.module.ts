@@ -16,6 +16,6 @@ import { EntitlementsController } from './adapters/entitlements.controller';
     WorkspaceCapacityQuery,
     MockPlanActivation,
   ],
-  exports: [EntitlementResolver],
+  exports: [EntitlementResolver, SeatReservations],
 })
 export class ProviderEntitlementsModule {}

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { admitFixtureAgent } from './invitation-admission.fixture';
 import { Test } from '@nestjs/testing';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -163,16 +164,7 @@ describe('API/session/worker smoke through restricted application login', () => 
         const response = await call(id).expect(404);
         bodies.push(response.body as unknown);
       }
-      await f.runtimeSql(workspaces[0].id, async (c) => {
-        await c.query('SELECT lock_workspace_ownership_revision($1,1)', [
-          workspaces[0].id,
-        ]);
-        await c.query(
-          `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,display_color)
-            VALUES($1,$2,$3,'AGENT','#7C3AED')`,
-          [randomUUID(), workspaces[0].id, userId],
-        );
-      });
+      await admitFixtureAgent(f, workspaces[0].id, userId);
       // The same application is now in the selected workspace but outside AGENT scope.
       const inaccessible = await call(foreign.id, workspaces[0].id).expect(404);
       bodies.push(inaccessible.body as unknown);

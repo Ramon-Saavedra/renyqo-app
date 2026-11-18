@@ -1,6 +1,7 @@
 import { installTenantContext } from '../src/provider-tenancy/tenant-context';
 import { randomUUID } from 'node:crypto';
 import { CapacityFixture } from './workspace-capacity.fixture';
+import { admitFixtureAgent } from './invitation-admission.fixture';
 jest.setTimeout(60000);
 describe('Seat capacity and immutable product terms', () => {
   const f = new CapacityFixture();
@@ -42,13 +43,7 @@ describe('Seat capacity and immutable product terms', () => {
     const w = await f.assigned(2, 2);
     const member = randomUUID(),
       user = await f.user();
-    await f.runtimeSql(w.id, async (c) => {
-      await c.query('SELECT lock_workspace_ownership_revision($1,1)', [w.id]);
-      await c.query(
-        `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,status,display_color) VALUES($1,$2,$3,'AGENT','ACTIVE','#123456')`,
-        [member, w.id, user],
-      );
-    });
+    await admitFixtureAgent(f, w.id, user, member);
     await f.runtimeSql(w.id, async (c) => {
       await c.query('SELECT lock_workspace_ownership_revision($1,1)', [w.id]);
       await c.query(

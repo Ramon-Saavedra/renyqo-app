@@ -19,9 +19,25 @@ import { AuthorityLockRepository } from './persistence/authority-lock.repository
 import { GlobalAuthorityReader } from './persistence/global-authority.reader';
 import { WorkspaceMembershipResolver } from './workspace-membership.resolver';
 import { MembershipBootstrap } from '../provider-tenancy/membership-bootstrap';
+import type { SessionAuthority } from './domain/authorization.types';
+import { acceptInvitationTransaction } from './invitation-acceptance.transaction';
 
 @Injectable()
 export class ProtectedWorkspaceTransactions {
+  acceptInvitation(
+    authority: SessionAuthority,
+    tokenHash: string,
+    commandId: string,
+  ) {
+    return acceptInvitationTransaction(
+      this.prisma,
+      this.locks,
+      this.global,
+      authority,
+      tokenHash,
+      commandId,
+    );
+  }
   constructor(
     private readonly prisma: PrismaService,
     private readonly locks: AuthorityLockRepository,
