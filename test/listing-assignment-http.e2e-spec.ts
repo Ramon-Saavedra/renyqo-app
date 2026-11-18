@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { admitFixtureAgent } from './invitation-admission.fixture';
 import { setTimeout as waitUntilExpiry } from 'node:timers/promises';
 import { Test } from '@nestjs/testing';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
@@ -125,19 +126,8 @@ describe('Listing assignment public HTTP contracts with restricted application l
     workspaceId = workspace.id;
     sourceId = randomUUID();
     targetId = randomUUID();
-    await f.runtimeSql(workspaceId, async (c) => {
-      await c.query('SELECT lock_workspace_ownership_revision($1,1)', [
-        workspaceId,
-      ]);
-      for (const [id, userId] of [
-        [sourceId, actors[1].id],
-        [targetId, actors[2].id],
-      ])
-        await c.query(
-          `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,display_color) VALUES($1,$2,$3,'AGENT','#7C3AED')`,
-          [id, workspaceId, userId],
-        );
-    });
+    await admitFixtureAgent(f, workspaceId, actors[1].id, sourceId);
+    await admitFixtureAgent(f, workspaceId, actors[2].id, targetId);
     listingId = await f.listing(workspaceId, workspace.owner, sourceId);
   });
   function input(revision = 1, member = targetId) {

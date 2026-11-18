@@ -31,7 +31,7 @@ describe('Shared Prisma startup boundary', () => {
         $connect: jest.fn().mockResolvedValue(undefined),
         $queryRaw: query,
       });
-      expect(query).toHaveBeenCalledTimes(4);
+      expect(query).toHaveBeenCalledTimes(5);
     } finally {
       if (previous === undefined) delete process.env['NODE_ENV'];
       else process.env['NODE_ENV'] = previous;

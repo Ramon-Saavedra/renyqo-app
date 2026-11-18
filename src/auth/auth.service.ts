@@ -16,6 +16,7 @@ import { UsersService } from '../users/users.service';
 import type { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { PublicProviderType, PublicRole } from './dto/register.dto';
 import type { RegisterDto } from './dto/register.dto';
+import { canonicalEmail } from './identity/canonical-email';
 import type { ResetPasswordDto } from './dto/reset-password.dto';
 import { PasswordResetTokensRepository } from './password-reset-tokens.repository';
 
@@ -52,7 +53,7 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<SafeUser> {
-    const email = dto.email.toLowerCase().trim();
+    const email = canonicalEmail(dto.email);
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const providerIdentity = this.getProviderIdentity(dto);
     try {
@@ -86,7 +87,7 @@ export class AuthService {
   }
 
   async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
-    const email = dto.email.toLowerCase().trim();
+    const email = canonicalEmail(dto.email);
     const user = await this.usersService.findByEmail(email);
 
     if (!user) {
@@ -145,7 +146,7 @@ export class AuthService {
     email: string,
     password: string,
   ): Promise<SafeUser | null> {
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = canonicalEmail(email);
     const user = await this.usersService.findByEmail(normalizedEmail);
     const hash = user ? user.passwordHash : DUMMY_HASH;
     const valid = await bcrypt.compare(password, hash);

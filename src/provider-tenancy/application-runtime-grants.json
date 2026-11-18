@@ -2,6 +2,7 @@
   "SELECT,INSERT,UPDATE": [
     "users",
     "password_reset_tokens",
+    "email_verification_challenges",
     "applications",
     "application_viewings",
     "viewing_workflows",

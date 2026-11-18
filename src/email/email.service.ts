@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
 import type { EnvironmentVariables } from '../config/env.validation';
@@ -57,6 +61,37 @@ export class EmailService {
                 `<p><a href="${this.escapeHtml(input.resetUrl)}">Passwort zurücksetzen</a></p>`,
                 '<p>Wenn du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.</p>',
               ].join(''),
+            },
+          },
+        },
+      }),
+    );
+  }
+
+  assertSecurityDeliveryConfigured(): void {
+    if (!this.sesClient || !this.fromEmail)
+      throw new ServiceUnavailableException('Email delivery is not configured');
+  }
+
+  async sendSecurityLink(input: {
+    to: string;
+    subject: string;
+    text: string;
+    url: string;
+    label: string;
+  }): Promise<void> {
+    this.assertSecurityDeliveryConfigured();
+    await this.sesClient!.send(
+      new SendEmailCommand({
+        Source: this.fromEmail!,
+        Destination: { ToAddresses: [input.to] },
+        Message: {
+          Subject: { Charset: 'UTF-8', Data: input.subject },
+          Body: {
+            Text: { Charset: 'UTF-8', Data: `${input.text}\n\n${input.url}` },
+            Html: {
+              Charset: 'UTF-8',
+              Data: `<p>${this.escapeHtml(input.text)}</p><p><a href="${this.escapeHtml(input.url)}">${this.escapeHtml(input.label)}</a></p>`,
             },
           },
         },

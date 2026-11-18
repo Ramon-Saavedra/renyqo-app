@@ -9,9 +9,15 @@ import { PasswordResetTokensRepository } from './password-reset-tokens.repositor
 import { SessionSerializer } from './serializers/session.serializer';
 import { AuthRevocationService } from './session/auth-revocation.service';
 import { SessionModule } from './session/session.module';
+import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
+import { EmailVerificationService } from './email-verification/email-verification.service';
+import { EmailVerificationController } from './email-verification/email-verification.controller';
+import { SecurityLinkPolicy } from '../security/security-link-policy';
+import { SecurityLinkTrafficGuard } from '../security/security-link-traffic.guard';
 
 @Module({
   imports: [
+    ProviderAuthorizationModule,
     PassportModule.register({ session: true }),
     UsersModule,
     EmailModule,
@@ -19,11 +25,14 @@ import { SessionModule } from './session/session.module';
     SessionModule,
   ],
   providers: [
+    EmailVerificationService,
+    SecurityLinkPolicy,
+    SecurityLinkTrafficGuard,
     AuthService,
     SessionSerializer,
     PasswordResetTokensRepository,
     AuthRevocationService,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, EmailVerificationController],
 })
 export class AuthModule {}

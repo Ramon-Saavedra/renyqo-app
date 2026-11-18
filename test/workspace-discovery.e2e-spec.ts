@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { admitFixtureAgent } from './invitation-admission.fixture';
 import { readFileSync } from 'node:fs';
 import { Test } from '@nestjs/testing';
 import { type INestApplication } from '@nestjs/common';
@@ -71,14 +72,11 @@ describe('Session-authoritative workspace discovery through restricted login', (
     status: 'ACTIVE' | 'SUSPENDED' | 'REMOVED' = 'ACTIVE',
   ) {
     const id = randomUUID();
+    await admitFixtureAgent(f, workspaceId, userId, id);
     await f.runtimeSql(workspaceId, async (c) => {
       await c.query('SELECT lock_workspace_ownership_revision($1,1)', [
         workspaceId,
       ]);
-      await c.query(
-        `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,display_color) VALUES($1,$2,$3,'AGENT','#7C3AED')`,
-        [id, workspaceId, userId],
-      );
       if (status !== 'ACTIVE')
         await c.query(
           `UPDATE workspace_memberships SET status=$2::"WorkspaceMembershipStatus" WHERE id=$1`,
