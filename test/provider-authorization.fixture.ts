@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { HistoricalActorSnapshotCapture } from './historical-actor-snapshot.fixture';
 import type { PoolClient } from 'pg';
 import type { Prisma } from '../src/generated/prisma/client';
 import type { PrismaService } from '../src/prisma/prisma.service';
@@ -54,6 +55,7 @@ export class AuthorizationFixture extends MembershipFixture {
       this.authorityLocks,
       this.globalAuthority,
       this.resolver,
+      new HistoricalActorSnapshotCapture(),
     );
   }
   get reads() {

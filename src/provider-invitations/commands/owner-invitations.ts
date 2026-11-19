@@ -15,8 +15,14 @@ import {
 } from '../domain/invitation-errors';
 import { InvitationDelivery } from '../delivery/invitation-delivery';
 import { invitationDto } from '../projections/invitation.dto';
+import type { MemberColor } from '../../member-presentation/member-color.catalog';
 export type OwnerInvitationInput =
-  | { kind: 'CREATE'; email: string; commandId: string }
+  | {
+      kind: 'CREATE';
+      email: string;
+      commandId: string;
+      requestedColorId?: MemberColor;
+    }
   | {
       kind: 'RESEND' | 'REVOKE';
       id: string;

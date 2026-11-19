@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
-import { ApplicationActivityVisibility } from '../generated/prisma/enums';
+import {
+  ApplicationActivityVisibility,
+  ApplicationActivityActorType,
+} from '../generated/prisma/enums';
+import { historicalMemberActor } from '../member-presentation/actor-snapshot.contract';
 import type { AttentionAudience } from '../application-attention/application-pending-action';
 import { toPublicActivityPayload } from './application-activity.policy';
 
@@ -10,6 +14,7 @@ const select = {
   actorType: true,
   occurredAt: true,
   payload: true,
+  actorSnapshot: true,
 } satisfies Prisma.ApplicationActivitySelect;
 type Row = Prisma.ApplicationActivityGetPayload<{ select: typeof select }>;
 
@@ -32,11 +37,18 @@ export class ApplicationActivityReadService {
     };
   }
 
-  toDto(row: Row) {
+  toDto(
+    row: Omit<Row, 'actorSnapshot'> & { actorSnapshot?: unknown },
+    audience: AttentionAudience = 'applicant',
+  ) {
     return {
       id: row.id,
       type: row.type,
       actorType: row.actorType,
+      ...(audience === 'provider' &&
+      row.actorType === ApplicationActivityActorType.PROVIDER
+        ? { actor: historicalMemberActor(row.actorSnapshot) }
+        : {}),
       occurredAt: row.occurredAt,
       payload: toPublicActivityPayload(row.payload),
     };
@@ -54,7 +66,7 @@ export class ApplicationActivityReadService {
       take: 6,
     });
     return {
-      items: rows.slice(0, 5).map((row) => this.toDto(row)),
+      items: rows.slice(0, 5).map((row) => this.toDto(row, audience)),
       hasMore: rows.length > 5,
     };
   }

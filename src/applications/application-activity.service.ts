@@ -23,6 +23,7 @@ import {
   type ApplicationActor,
 } from '../listings/application-listing-access';
 import { providerApplicationVisibility } from './application-process.policy';
+import { historicalMemberActor } from '../member-presentation/actor-snapshot.contract';
 
 export type ApplicationActivityMetadata = {
   viewingLifecycleContext?: 'RESTORE_CLEANUP';
@@ -62,9 +63,10 @@ export type AppendApplicationActivityInput = {
 
 export type ApplicationActivityTimelineItem = Omit<
   ApplicationActivity,
-  'actorUserId' | 'payload'
+  'actorUserId' | 'payload' | 'actorSnapshot'
 > & {
   payload: Omit<ApplicationActivityMetadata, 'reason'> | null;
+  actor?: ReturnType<typeof historicalMemberActor>;
 };
 
 type PublicActivityAudience =
@@ -177,13 +179,16 @@ export class ApplicationActivityService {
           },
           orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
         });
-        return activities.map((activity) => this.toTimelineItem(activity));
+        return activities.map((activity) =>
+          this.toTimelineItem(activity, side === 'provider'),
+        );
       },
       'application.activity.read',
     );
   }
   private toTimelineItem(
     activity: ApplicationActivity,
+    internal: boolean,
   ): ApplicationActivityTimelineItem {
     const payload = toPublicActivityPayload(activity.payload);
 
@@ -192,6 +197,10 @@ export class ApplicationActivityService {
       applicationId: activity.applicationId,
       type: activity.type,
       actorType: activity.actorType,
+      ...(internal &&
+      activity.actorType === ApplicationActivityActorType.PROVIDER
+        ? { actor: historicalMemberActor(activity.actorSnapshot) }
+        : {}),
       visibility: activity.visibility,
       occurredAt: activity.occurredAt,
       payload,

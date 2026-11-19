@@ -85,7 +85,7 @@ export class WorkspaceEstablishment {
       id: input.membershipId,
       workspaceId: workspace.id,
       userId: input.userId,
-      displayColor: '#2563EB',
+      displayColor: 'ROYAL_BLUE',
     });
     if (input.kind === 'PERSONAL') {
       await this.allocations.allocate(tx, {

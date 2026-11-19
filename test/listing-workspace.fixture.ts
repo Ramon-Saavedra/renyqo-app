@@ -9,6 +9,7 @@ import { TenantFixture } from './workspace-tenant.fixture';
 import { assertApplicationRuntime } from '../src/provider-tenancy/application-runtime-verifier';
 import { sqlTenant } from './workspace-tenant.fixture';
 import { invitationMigrations } from './invitation-admission.fixture';
+import { memberPresentationMigrations } from './member-presentation-migrations.fixture';
 import { installTenantContext } from '../src/provider-tenancy/tenant-context';
 import {
   seedEntitlementTestCatalog,
@@ -70,6 +71,7 @@ export class ListingWorkspaceFixture extends TenantFixture {
       '20261116103000_listing_creation_lineage',
       '20261116104000_workspace_plan_conversion',
       ...invitationMigrations,
+      ...memberPresentationMigrations,
     ]) {
       try {
         await this.pool.query(

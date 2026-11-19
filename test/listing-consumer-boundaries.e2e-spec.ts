@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ActorSnapshotCapture } from '../src/member-presentation/actor-snapshot.capture';
 import { ListingWorkspaceFixture } from './listing-workspace.fixture';
 import { deferred } from './provider-authorization.fixture';
 import type { PrismaService } from '../src/prisma/prisma.service';
@@ -31,6 +32,7 @@ describe('Bounded Listing consumer reads with fresh revocation checks', () => {
       f.authorityLocks,
       f.globalAuthority,
       f.resolver,
+      new ActorSnapshotCapture(),
     );
     provider = new ProviderListingAccess(
       db,

@@ -90,7 +90,9 @@ export async function assertApplicationRuntime(
       AND has_table_privilege(current_user,'workspace_invitations','UPDATE')
       AND NOT has_table_privilege(current_user,'workspace_invitation_commands','UPDATE')
       AND has_function_privilege(current_user,'lookup_workspace_invitation(text,uuid,text,integer)','EXECUTE')
-      AND has_function_privilege(current_user,'admit_workspace_invitation(uuid,uuid,text,uuid,uuid)','EXECUTE') AS safe
+      AND has_function_privilege(current_user,'admit_workspace_invitation(uuid,uuid,text,uuid,uuid)','EXECUTE')
+      AND has_function_privilege(current_user,'build_member_actor_snapshot(uuid,uuid,uuid)','EXECUTE')
+      AND has_column_privilege(current_user,'application_activities','actor_snapshot','SELECT') AS safe
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema()
       AND c.relname IN('workspace_invitations','workspace_invitation_commands')`;
   if (!invitations?.safe)

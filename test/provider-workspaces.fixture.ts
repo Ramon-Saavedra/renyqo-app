@@ -5,7 +5,7 @@ import { Pool, type PoolClient } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, type Prisma } from '../src/generated/prisma/client';
 import { runSerializableTransaction } from '../src/prisma/run-serializable-transaction';
-import { MembershipIdentityRepository } from '../src/provider-workspaces/persistence/membership-identity.repository';
+import { HistoricalMembershipIdentity } from './historical-membership-identity.fixture';
 import { OrganizationProfileRepository } from '../src/provider-workspaces/persistence/organization-profile.repository';
 import { PersonalAllocationRepository } from '../src/provider-workspaces/persistence/personal-allocation.repository';
 import { WorkspaceRepository } from '../src/provider-workspaces/persistence/workspace.repository';
@@ -26,7 +26,7 @@ export class WorkspaceFixture {
   readonly profiles = new OrganizationProfileRepository();
   readonly establishment = new WorkspaceEstablishment(
     this.workspaces,
-    new MembershipIdentityRepository(),
+    new HistoricalMembershipIdentity(),
     new PersonalAllocationRepository(),
     this.profiles,
   );

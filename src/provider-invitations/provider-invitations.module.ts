@@ -11,6 +11,7 @@ import { InvitationDelivery } from './delivery/invitation-delivery';
 import { OwnerInvitations } from './commands/owner-invitations';
 import { InviteeInvitations } from './commands/invitee-invitations';
 import { TeamQuery } from './projections/team.query';
+import { MemberPaletteQuery } from './projections/member-palette.query';
 import { OwnerInvitationsController } from './http/owner-invitations.controller';
 import { InviteeInvitationsController } from './http/invitee-invitations.controller';
 @Module({
@@ -21,6 +22,7 @@ import { InviteeInvitationsController } from './http/invitee-invitations.control
   ],
   controllers: [OwnerInvitationsController, InviteeInvitationsController],
   providers: [
+    MemberPaletteQuery,
     TenantTransactions,
     SecurityLinkPolicy,
     SecurityLinkTrafficGuard,

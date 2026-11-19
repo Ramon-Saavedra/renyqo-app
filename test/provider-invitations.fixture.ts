@@ -9,6 +9,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { prismaServiceWithSharedPool } from './e2e-prisma-override';
 import { installE2eSessionMiddleware } from './e2e-session-middleware';
 import { ListingWorkspaceFixture } from './listing-workspace.fixture';
+import type { MemberColor } from '../src/member-presentation/member-color.catalog';
 export class InvitationFixture {
   readonly db = new ListingWorkspaceFixture();
   app!: INestApplication;
@@ -117,14 +118,20 @@ export class InvitationFixture {
     owner: ReturnType<InvitationFixture['client']>,
     email: string,
     commandId = randomUUID(),
+    requestedColorId?: MemberColor,
   ) {
     const response = await owner
       .post('/api/v1/provider/workspace-invitations')
       .set('x-workspace-id', this.w.id)
-      .send({ email, commandId })
+      .send({ email, commandId, requestedColorId })
       .expect(201);
     return {
-      body: response.body as { id: string; revision: number; delivery: string },
+      body: response.body as {
+        id: string;
+        revision: number;
+        delivery: string;
+        requestedColorId: MemberColor | null;
+      },
     };
   }
   async stop() {

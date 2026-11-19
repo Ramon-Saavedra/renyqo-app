@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ActorSnapshotCapture } from '../src/member-presentation/actor-snapshot.capture';
 import { ListingWorkspaceFixture } from './listing-workspace.fixture';
 import { AssignmentParticipants } from '../src/listing-assignments/assignment-participants';
 import { AssignmentRepository } from '../src/listing-assignments/persistence/assignment.repository';
@@ -32,6 +33,7 @@ describe('Listing assignment through restricted application login', () => {
       f.authorityLocks,
       f.globalAuthority,
       f.resolver,
+      new ActorSnapshotCapture(),
     );
     const participants = new AssignmentParticipants(db, f.resolver);
     reassignment = new OwnerReassignment(participants, writes, repository);

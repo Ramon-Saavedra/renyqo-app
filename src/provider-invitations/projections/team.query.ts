@@ -63,11 +63,12 @@ export class TeamQuery {
           limit,
           members: members.map((m) => ({
             id: m.id,
+            membershipId: m.id,
             name: m.user.name,
             email: m.user.email,
             role: m.role,
             status: m.status,
-            color: m.displayColor,
+            colorId: m.displayColor,
             joinedAt:
               joined.find((i) => i.acceptedMembershipId === m.id)?.acceptedAt ??
               m.createdAt,

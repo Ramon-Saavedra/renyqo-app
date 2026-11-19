@@ -9,6 +9,7 @@ import { SecurityLinkPolicy } from '../../security/security-link-policy';
 import { commandFingerprint } from '../../security/opaque-secret';
 import { InvitationRepository } from '../persistence/invitation.repository';
 import { invitationConflict, invitationRateLimited } from './invitation-errors';
+import type { MemberColor } from '../../member-presentation/member-color.catalog';
 
 @Injectable()
 export class InvitationLifecycle {
@@ -28,6 +29,7 @@ export class InvitationLifecycle {
       email: string;
       hash: string;
       ownershipRevision: number;
+      requestedColorId?: MemberColor;
     },
   ) {
     const pending = await tx.workspaceInvitation.findFirst({
@@ -88,6 +90,7 @@ export class InvitationLifecycle {
         issuerMembershipRevision: ctx.membershipRevision,
         issuerAuthVersion: ctx.authVersion,
         ownershipRevision: input.ownershipRevision,
+        requestedColorId: input.requestedColorId,
       },
     });
   }
