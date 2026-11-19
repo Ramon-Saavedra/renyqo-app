@@ -6,16 +6,22 @@ import { SeatReservations } from './capacity/seat-reservations';
 import { WorkspaceCapacityQuery } from './projections/workspace-capacity.query';
 import { MockPlanActivation } from './adapters/mock-plan-activation';
 import { EntitlementsController } from './adapters/entitlements.controller';
+import { ListingCreationAvailabilityProjection } from './projections/listing-creation-availability';
 @Module({
   imports: [ProviderAuthorizationModule],
   controllers: [EntitlementsController],
   providers: [
     EntitlementResolver,
+    ListingCreationAvailabilityProjection,
     WorkspacePlanCommands,
     SeatReservations,
     WorkspaceCapacityQuery,
     MockPlanActivation,
   ],
-  exports: [EntitlementResolver, SeatReservations],
+  exports: [
+    EntitlementResolver,
+    SeatReservations,
+    ListingCreationAvailabilityProjection,
+  ],
 })
 export class ProviderEntitlementsModule {}

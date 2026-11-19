@@ -26,6 +26,12 @@ describe('Session-authoritative workspace discovery through restricted login', (
         'utf8',
       ),
     );
+    await f.pool.query(
+      readFileSync(
+        'prisma/migrations/20261119120000_workspace_discovery_presentation/migration.sql',
+        'utf8',
+      ),
+    );
     process.env['SESSION_SECRET'] =
       'workspace-discovery-e2e-session-secret-at-least-32';
     const module = await Test.createTestingModule({ imports: [AppModule] })
@@ -96,9 +102,10 @@ describe('Session-authoritative workspace discovery through restricted login', (
       .expect(200);
     expect(response.body).toEqual([]);
   });
-  it('returns only the four allowlisted facts for one PERSONAL membership', async () => {
+  it('returns only the five allowlisted facts for one PERSONAL membership', async () => {
     const { agent, id } = await provider();
     const input = f.command(id, 'PERSONAL');
+    input.displayName = 'Canonical personal portfolio';
     await f.tx(async (tx) => {
       await installTenantContext(tx, input.workspaceId);
       await f.establishment.withinTransaction(tx, input);
@@ -110,6 +117,7 @@ describe('Session-authoritative workspace discovery through restricted login', (
         membershipId: input.membershipId,
         role: 'OWNER',
         kind: 'PERSONAL',
+        displayName: input.displayName,
       },
     ]);
     await agent.get('/api/v1/provider/listings').expect(404);
@@ -137,6 +145,7 @@ describe('Session-authoritative workspace discovery through restricted login', (
         membershipId: member,
         role: 'AGENT',
         kind: 'ORGANIZATION',
+        displayName: 'Workspace',
       },
     ]);
   });
@@ -152,12 +161,14 @@ describe('Session-authoritative workspace discovery through restricted login', (
           membershipId: own.owner,
           role: 'OWNER',
           kind: 'ORGANIZATION',
+          displayName: 'Workspace',
         },
         {
           workspaceId: foreign.id,
           membershipId: member,
           role: 'AGENT',
           kind: 'ORGANIZATION',
+          displayName: 'Workspace',
         },
       ].sort((a, b) => a.workspaceId.localeCompare(b.workspaceId)),
     );
@@ -265,5 +276,41 @@ describe('Session-authoritative workspace discovery through restricted login', (
       data: { authVersion: { increment: 1 } },
     });
     await agent.get('/api/v1/provider/workspaces').expect(401);
+  });
+  it('preserves the bounded helper owner, trusted path, explicit EXECUTE and RLS', async () => {
+    const { rows } = await f.pool.query<{
+      owner: string;
+      prosecdef: boolean;
+      proconfig: string[];
+      public_execute: boolean;
+    }>(
+      `SELECT pg_get_userbyid(p.proowner) owner,p.prosecdef,p.proconfig,
+        EXISTS(SELECT FROM aclexplode(p.proacl) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') public_execute
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname=$1 AND p.proname='discover_active_workspaces'`,
+      [f.schema],
+    );
+    expect(rows).toEqual([
+      {
+        owner: 'renyqo_workspace_discovery',
+        prosecdef: true,
+        proconfig: [`search_path=pg_catalog, ${f.schema}, pg_temp`],
+        public_execute: false,
+      },
+    ]);
+    const role = await f.pool.query(
+      `SELECT rolcanlogin,rolsuper,rolbypassrls FROM pg_roles WHERE rolname='renyqo_workspace_discovery'`,
+    );
+    expect(role.rows).toEqual([
+      { rolcanlogin: false, rolsuper: false, rolbypassrls: false },
+    ]);
+    const tables = await f.pool.query(
+      `SELECT relrowsecurity,relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND relname IN('provider_workspaces','workspace_memberships')`,
+      [f.schema],
+    );
+    expect(tables.rows).toEqual([
+      { relrowsecurity: true, relforcerowsecurity: true },
+      { relrowsecurity: true, relforcerowsecurity: true },
+    ]);
   });
 });
