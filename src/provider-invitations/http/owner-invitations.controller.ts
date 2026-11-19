@@ -16,6 +16,7 @@ import { providerActorFromRequest } from '../../provider-authorization/provider-
 import { SecurityLinkTrafficGuard } from '../../security/security-link-traffic.guard';
 import { OwnerInvitations } from '../commands/owner-invitations';
 import { TeamQuery } from '../projections/team.query';
+import { MemberPaletteQuery } from '../projections/member-palette.query';
 import {
   CreateInvitationDto,
   InvitationMutationDto,
@@ -27,7 +28,13 @@ export class OwnerInvitationsController {
   constructor(
     private readonly commands: OwnerInvitations,
     private readonly team: TeamQuery,
+    private readonly palette: MemberPaletteQuery,
   ) {}
+  @Get('team/member-colors')
+  @Header('Cache-Control', 'private, no-store')
+  colors(@Req() req: Request) {
+    return this.palette.run(providerActorFromRequest(req));
+  }
   @Get('team')
   @Header('Cache-Control', 'private, no-store')
   @Header('Vary', 'Cookie, x-workspace-id')

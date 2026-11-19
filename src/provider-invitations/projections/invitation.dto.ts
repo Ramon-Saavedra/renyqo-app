@@ -10,6 +10,7 @@ export function invitationDto(
   return {
     id: row.id,
     email: row.email,
+    requestedColorId: row.requestedColorId,
     status,
     expiresAt: row.expiresAt,
     revision: row.revision,

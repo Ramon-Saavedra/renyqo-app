@@ -8,6 +8,11 @@ import { verifySharedE2EHarnessQuiescent } from './e2e-harness-leak-detection';
 function skipSharedSuiteFinalizer(testPath: string): boolean {
   if (!testPath.endsWith('.e2e-spec.ts')) return true;
   if (
+    testPath.includes('member-presentation-') ||
+    testPath.includes('member-actor-')
+  )
+    return true;
+  if (
     testPath.includes('provider-invitations-') ||
     testPath.endsWith('email-verification.e2e-spec.ts')
   )

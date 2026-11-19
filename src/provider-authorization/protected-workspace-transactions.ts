@@ -21,6 +21,7 @@ import { WorkspaceMembershipResolver } from './workspace-membership.resolver';
 import { MembershipBootstrap } from '../provider-tenancy/membership-bootstrap';
 import type { SessionAuthority } from './domain/authorization.types';
 import { acceptInvitationTransaction } from './invitation-acceptance.transaction';
+import { ActorSnapshotCapture } from '../member-presentation/actor-snapshot.capture';
 
 @Injectable()
 export class ProtectedWorkspaceTransactions {
@@ -43,6 +44,7 @@ export class ProtectedWorkspaceTransactions {
     private readonly locks: AuthorityLockRepository,
     private readonly global: GlobalAuthorityReader,
     private readonly resolver: WorkspaceMembershipResolver,
+    private readonly snapshots: ActorSnapshotCapture,
   ) {}
 
   async run<T>(
@@ -111,6 +113,7 @@ export class ProtectedWorkspaceTransactions {
         lockPlan,
       );
       const context = await this.resolver.resolve(tx, principal, selection);
+      await this.snapshots.capture(tx, context);
       // Domain-owned dependency locks and policy run after all authority tiers.
       // There is no default allow policy and no external I/O in this callback.
       await policy(context, tx, selection);

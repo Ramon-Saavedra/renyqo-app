@@ -85,7 +85,7 @@ export class ApplicationHistoryQueryService {
         const hasMore = rows.length > query.limit;
         return new ReadModelPageDto(
           asOf,
-          page.map((row) => this.activities.toDto(row)),
+          page.map((row) => this.activities.toDto(row, audience)),
           new ReadModelPaginationDto(
             query.limit,
             hasMore,

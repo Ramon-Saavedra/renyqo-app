@@ -9,7 +9,7 @@ export class MembershipIdentityRepository {
     });
   }
 
-  establishOwner(
+  async establishOwner(
     tx: Prisma.TransactionClient,
     data: {
       id: string;

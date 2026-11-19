@@ -14,7 +14,7 @@ describe('Restricted-login invitation database invariants', () => {
           f.w.id,
         ]);
         await c.query(
-          `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,display_color) VALUES($1,$2,$3,'AGENT','#123456')`,
+          `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,display_color) VALUES($1,$2,$3,'AGENT','ROYAL_BLUE')`,
           [randomUUID(), f.w.id, user],
         );
       }),

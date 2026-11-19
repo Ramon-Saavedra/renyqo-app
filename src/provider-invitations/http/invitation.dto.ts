@@ -1,6 +1,8 @@
 import { Transform, Type } from 'class-transformer';
 import {
   IsEmail,
+  IsIn,
+  IsOptional,
   IsInt,
   IsString,
   IsUUID,
@@ -9,7 +11,12 @@ import {
   Min,
 } from 'class-validator';
 import { canonicalEmail } from '../../auth/identity/canonical-email';
+import {
+  MEMBER_COLOR_IDS,
+  type MemberColor,
+} from '../../member-presentation/member-color.catalog';
 export class CreateInvitationDto {
+  @IsOptional() @IsIn(MEMBER_COLOR_IDS) requestedColorId?: MemberColor;
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? canonicalEmail(value) : value,
   )

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { HistoricalActorSnapshotCapture } from './historical-actor-snapshot.fixture';
 import { readFileSync } from 'node:fs';
 import { Pool, type PoolClient } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -33,6 +34,7 @@ export class TenantFixture extends AuthorizationFixture {
       this.authorityLocks,
       this.globalAuthority,
       this.resolver,
+      new HistoricalActorSnapshotCapture(),
     );
   }
   override get reads() {

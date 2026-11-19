@@ -53,7 +53,7 @@ describe('Application viewing PostgreSQL integrity', () => {
     );
     await client.query(
       `INSERT INTO workspace_memberships (id, workspace_id, user_id, role, status, revision, display_color, created_at, updated_at)
-       VALUES ($1, $2, $3, 'OWNER', 'ACTIVE', 1, '#336699', now(), now())`,
+       VALUES ($1, $2, $3, 'OWNER', 'ACTIVE', 1, 'ROYAL_BLUE', now(), now())`,
       [membershipId, workspaceId, userId],
     );
     await client.query(
