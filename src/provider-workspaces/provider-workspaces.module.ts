@@ -12,12 +12,17 @@ import { WorkspaceCreation } from '../provider-tenancy/workspace-creation';
 import { TenantTransactions } from '../provider-tenancy/tenant-transactions';
 import { GlobalAuthorityReader } from '../provider-authorization/persistence/global-authority.reader';
 import { AuthorityLockRepository } from '../provider-authorization/persistence/authority-lock.repository';
+import { ProviderAuthorizationModule } from '../provider-authorization/provider-authorization.module';
+import { ProviderEntitlementsModule } from '../provider-entitlements/provider-entitlements.module';
+import { CurrentWorkspaceQuery } from './projections/current-workspace.query';
 
 // Discovery is read-only; establishment/conversion/lifecycle commands stay dormant.
 @Module({
+  imports: [ProviderAuthorizationModule, ProviderEntitlementsModule],
   controllers: [ProviderWorkspacesController],
   providers: [
     WorkspaceDiscovery,
+    CurrentWorkspaceQuery,
     WorkspaceRepository,
     MembershipIdentityRepository,
     OrganizationProfileRepository,

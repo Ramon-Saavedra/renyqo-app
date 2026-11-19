@@ -9,6 +9,7 @@ export type DiscoverableWorkspace = {
   membershipId: string;
   role: 'OWNER' | 'AGENT';
   kind: 'PERSONAL' | 'ORGANIZATION';
+  displayName: string;
 };
 
 @Injectable()
