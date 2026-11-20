@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
+import { canReorderListings } from '../provider-authorization/operations/listing-order.policy';
 import {
   ProviderListingAccess,
   type ProviderActor,
@@ -66,7 +67,7 @@ export class ListingOrderingService {
       'listing.order',
       undefined,
       async (tx, context) => {
-        if (context.role !== 'OWNER')
+        if (!canReorderListings(context))
           throw new ForbiddenException('OWNER required for workspace ordering');
         await tx.$queryRaw`SELECT id FROM listings WHERE workspace_id=${context.workspaceId}::uuid AND status<>'retired' ORDER BY id FOR UPDATE`;
         const rows = await tx.listing.findMany({

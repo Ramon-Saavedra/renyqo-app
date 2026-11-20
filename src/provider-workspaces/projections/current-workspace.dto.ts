@@ -12,5 +12,8 @@ export type CurrentWorkspaceDto = {
     role: WorkspaceMembershipRole;
     colorId: MemberColor;
   };
-  actions: { createListing: ListingCreationAvailability };
+  actions: {
+    createListing: ListingCreationAvailability;
+    reorderListings: { allowed: boolean };
+  };
 };

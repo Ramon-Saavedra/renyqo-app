@@ -56,7 +56,10 @@ describe('Current workspace presentation through restricted runtime', () => {
           kind: 'ORGANIZATION',
         },
         membership: { id: membershipId, role, colorId: member.displayColor },
-        actions: { createListing: { allowed: true, reason: null } },
+        actions: {
+          createListing: { allowed: true, reason: null },
+          reorderListings: { allowed: role === 'OWNER' },
+        },
       });
       expect(response.headers['cache-control']).toBe('private, no-store');
       expect(response.headers['vary']).toContain('x-workspace-id');
