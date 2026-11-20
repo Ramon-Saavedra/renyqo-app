@@ -24,7 +24,8 @@ existing display-name column is added. No Prisma model or data backfill changes.
 
 - `workspace`: `id`, `displayName`, `kind`;
 - `membership`: current `id`, `role`, `colorId`;
-- `actions.createListing`: `allowed`, `reason`.
+- `actions.createListing`: `allowed`, `reason`;
+- `actions.reorderListings`: `allowed`.
 
 The global user name remains in SafeUser. Workspace display identity comes from
 ProviderWorkspace, never User.companyName, OWNER name or OrganizationProfile.
@@ -56,10 +57,21 @@ creation with default responsibility, not validity of arbitrary creation inputs,
 assignment targets or relisting lineage. Concurrent growth can invalidate it;
 the actual command reauthorizes and enforces capacity under existing locks.
 
+## Reorder availability
+
+Reordering uses the shared canonical `canReorderListings` operation policy in
+both this projection and the protected ordering mutation. It requires ACTIVE
+membership/workspace, structural OWNER designation and the existing operation
+evaluator. Normal AGENT capabilities never delegate workspace ordering. The
+mutation independently reauthorizes under its existing transaction boundary;
+the advisory boolean grants no authority. No permission persistence is added.
+
 ## Validation and boundaries
 
 Focused tests: `current-workspace.e2e-spec.ts`, `workspace-discovery.e2e-spec.ts`
-and `listing-creation-availability.spec.ts`. Migration parity covers clean and
+and `listing-creation-availability.spec.ts`. Reorder coverage is in
+`workspace-reorder-availability.e2e-spec.ts` and `listing-order.policy.spec.ts`.
+Migration parity covers clean and
 upgrade replay including function ownership, policies and grants.
 
 Team, invitation/verification, actor history, responsible-member projections,

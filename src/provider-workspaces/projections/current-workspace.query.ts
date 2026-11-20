@@ -4,6 +4,7 @@ import type { ProviderActor } from '../../provider-authorization/provider-listin
 import { ListingCreationAvailabilityProjection } from '../../provider-entitlements/projections/listing-creation-availability';
 import { isMemberColor } from '../../member-presentation/member-color.catalog';
 import type { CurrentWorkspaceDto } from './current-workspace.dto';
+import { canReorderListings } from '../../provider-authorization/operations/listing-order.policy';
 
 @Injectable()
 export class CurrentWorkspaceQuery {
@@ -42,6 +43,7 @@ export class CurrentWorkspaceQuery {
           },
           actions: {
             createListing: await this.availability.project(tx, context),
+            reorderListings: { allowed: canReorderListings(context) },
           },
         };
       },
