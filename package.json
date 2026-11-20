@@ -15,7 +15,10 @@
     "@hono/node-server": "^1.19.13",
     "deepmerge-ts": "^8.0.1",
     "qs": "^6.17.1",
-    "mysql2": "^3.24.3"
+    "mysql2": "^3.24.3",
+    "@prisma/config@7.10.1": {
+      "effect": "3.22.1"
+    }
   },
   "scripts": {
     "build": "nest build",
