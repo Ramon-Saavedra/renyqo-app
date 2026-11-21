@@ -1,5 +1,8 @@
 # Audit ledger — Phase 4.5.10, Slice 2
 
+This page records the Slice 2 foundation. Current bounded domain adoption is
+documented in [Slice 3](audit-domain-adoption.md).
+
 This slice adds opt-in execution infrastructure only. AppModule still does not
 import AuditModule; no domain endpoint/worker produces audit automatically. Only
 the foundation activation action is registered. Slice 3 requires separate approval.

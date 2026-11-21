@@ -1,3 +1,4 @@
+import { invitationAudit } from '../commands/invitation-audit';
 import { Injectable } from '@nestjs/common';
 import type {
   Prisma,
@@ -55,6 +56,7 @@ export class InvitationLifecycle {
         expired.id,
         expired.revision,
       );
+      await invitationAudit(tx, ctx, expired, input.expiryCommandId, 'EXPIRE');
     }
     const member = await tx.workspaceMembership.findFirst({
       where: { workspaceId: ctx.workspaceId, user: { email: input.email } },

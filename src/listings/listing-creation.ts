@@ -1,3 +1,5 @@
+import { auditedWork } from '../audit/context/audited-work';
+import { assignmentAudit } from '../listing-assignments/assignment-audit';
 import {
   ConflictException,
   ForbiddenException,
@@ -92,93 +94,96 @@ export class ListingCreation {
           userIds: [plan.target.userId],
         },
         () => Promise.resolve(),
-        async (tx, ctx) => {
-          const prior = await tx.listingAssignmentTransition.findUnique({
-            where: {
-              workspaceId_commandId: {
-                workspaceId: ctx.workspaceId,
-                commandId,
-              },
-            },
-          });
-          if (prior) {
-            if (
-              prior.reason !== 'INITIAL' ||
-              prior.initiatedByMembershipId !== ctx.membershipId ||
-              prior.creationInputHash !== fingerprint
-            )
-              capacityConflict('CREATION_COMMAND_CONFLICT');
-            const replay = await tx.listing.findFirst({
-              where: { id: prior.listingId, ...providerListingWhere(ctx) },
-            });
-            if (!replay) throw new NotFoundException('Listing not found');
-            return replay;
-          }
-          const target = await tx.workspaceMembership.findUnique({
-            where: { id: plan.target.id, workspaceId: ctx.workspaceId },
-            include: { user: { select: { status: true } } },
-          });
-          if (
-            !target ||
-            target.userId !== plan.target.userId ||
-            target.status !== 'ACTIVE' ||
-            target.user.status !== 'ACTIVE'
-          )
-            throw new ConflictException('Responsible member is ineligible');
-          assertAcquisition(
-            await this.entitlements.resolve(tx, ctx.workspaceId),
-            'LISTING',
-          );
-          if (predecessorListingId) {
-            // Current AGENT scope excludes retired history; do not widen it here.
-            if (ctx.role !== 'OWNER')
-              throw new NotFoundException('Listing not found');
-            const predecessor = await tx.listing.findFirst({
+        async (tx, ctx) =>
+          auditedWork(tx, async () => {
+            const prior = await tx.listingAssignmentTransition.findUnique({
               where: {
-                id: predecessorListingId,
-                ...providerListingWhere(ctx),
-                status: 'RETIRED',
+                workspaceId_commandId: {
+                  workspaceId: ctx.workspaceId,
+                  commandId,
+                },
               },
             });
-            if (!predecessor) throw new NotFoundException('Listing not found');
-            await tx.$queryRaw`SELECT id FROM listings WHERE id=${predecessorListingId}::uuid AND workspace_id=${ctx.workspaceId}::uuid FOR UPDATE`;
-          }
-          const listing = await tx.listing.create({
-            data: {
-              ...data,
-              id,
-              workspaceId: ctx.workspaceId,
-              createdByMembershipId: ctx.membershipId,
-              responsibleMembershipId: plan.target.id,
-              predecessorListingId,
-              displayOrder: await this.ordering.getNextDisplayOrder(
-                tx,
-                ctx.workspaceId,
-              ),
-              photos: [],
-            },
-          });
-          await tx.listingAssignmentTransition.create({
-            data: {
-              id: randomUUID(),
-              workspaceId: ctx.workspaceId,
-              listingId: id,
-              sequence: 1,
-              newMembershipId: plan.target.id,
-              reason: 'INITIAL',
-              initiatedByMembershipId: ctx.membershipId,
-              commandId,
-              creationInputHash: fingerprint,
-            },
-          });
-          await this.criteria.current(
-            tx,
-            listing,
-            ctx.userId,
-            CriteriaRevisionSource.NATIVE,
-          );
-          return listing;
-        },
+            if (prior) {
+              if (
+                prior.reason !== 'INITIAL' ||
+                prior.initiatedByMembershipId !== ctx.membershipId ||
+                prior.creationInputHash !== fingerprint
+              )
+                capacityConflict('CREATION_COMMAND_CONFLICT');
+              const replay = await tx.listing.findFirst({
+                where: { id: prior.listingId, ...providerListingWhere(ctx) },
+              });
+              if (!replay) throw new NotFoundException('Listing not found');
+              return replay;
+            }
+            const target = await tx.workspaceMembership.findUnique({
+              where: { id: plan.target.id, workspaceId: ctx.workspaceId },
+              include: { user: { select: { status: true } } },
+            });
+            if (
+              !target ||
+              target.userId !== plan.target.userId ||
+              target.status !== 'ACTIVE' ||
+              target.user.status !== 'ACTIVE'
+            )
+              throw new ConflictException('Responsible member is ineligible');
+            assertAcquisition(
+              await this.entitlements.resolve(tx, ctx.workspaceId),
+              'LISTING',
+            );
+            if (predecessorListingId) {
+              // Current AGENT scope excludes retired history; do not widen it here.
+              if (ctx.role !== 'OWNER')
+                throw new NotFoundException('Listing not found');
+              const predecessor = await tx.listing.findFirst({
+                where: {
+                  id: predecessorListingId,
+                  ...providerListingWhere(ctx),
+                  status: 'RETIRED',
+                },
+              });
+              if (!predecessor)
+                throw new NotFoundException('Listing not found');
+              await tx.$queryRaw`SELECT id FROM listings WHERE id=${predecessorListingId}::uuid AND workspace_id=${ctx.workspaceId}::uuid FOR UPDATE`;
+            }
+            const listing = await tx.listing.create({
+              data: {
+                ...data,
+                id,
+                workspaceId: ctx.workspaceId,
+                createdByMembershipId: ctx.membershipId,
+                responsibleMembershipId: plan.target.id,
+                predecessorListingId,
+                displayOrder: await this.ordering.getNextDisplayOrder(
+                  tx,
+                  ctx.workspaceId,
+                ),
+                photos: [],
+              },
+            });
+            await tx.listingAssignmentTransition.create({
+              data: {
+                id: randomUUID(),
+                workspaceId: ctx.workspaceId,
+                listingId: id,
+                sequence: 1,
+                newMembershipId: plan.target.id,
+                reason: 'INITIAL',
+                initiatedByMembershipId: ctx.membershipId,
+                commandId,
+                creationInputHash: fingerprint,
+              },
+            });
+            await assignmentAudit(tx, ctx, commandId);
+            await this.criteria.current(
+              tx,
+              listing,
+              ctx.userId,
+              CriteriaRevisionSource.NATIVE,
+            );
+            return listing;
+          }),
       );
     } catch (error) {
       translateCapacityFailure(error);

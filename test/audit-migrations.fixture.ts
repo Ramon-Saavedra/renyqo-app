@@ -11,3 +11,12 @@ export const auditContextMigrations = [
   '20261121113000_audit_bound_append',
   '20261121114000_audit_owner_query',
 ];
+
+export const auditDomainMigrations = [
+  '20261121120000_audit_domain_catalog',
+  '20261121121000_audit_domain_commands',
+  '20261121122000_audit_invitation_evidence',
+  '20261121123000_audit_portfolio_evidence',
+  '20261121124000_audit_domain_append',
+  '20261121125000_audit_invitation_admission',
+];
