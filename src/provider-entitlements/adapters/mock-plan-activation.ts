@@ -1,3 +1,5 @@
+import { auditedWork } from '../../audit/context/audited-work';
+import { planAudit } from '../assignments/plan-audit';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ProviderActor } from '../../provider-authorization/provider-listing-access';
 import { ProtectedWorkspaceTransactions } from '../../provider-authorization/protected-workspace-transactions';
@@ -49,12 +51,24 @@ export class MockPlanActivation {
             throw new NotFoundException('Plan not available');
         },
         (tx, ctx) =>
-          this.plans.assign(tx, {
-            ...input,
-            workspaceId: ctx.workspaceId,
-            actorMembershipId: ctx.membershipId,
-            source: 'MOCK_DEV',
-            mode: 'VOLUNTARY',
+          auditedWork(tx, async () => {
+            const prior = await tx.workspacePlanChange.findUnique({
+              where: {
+                workspaceId_commandId: {
+                  workspaceId: ctx.workspaceId,
+                  commandId: input.commandId,
+                },
+              },
+            });
+            const result = await this.plans.assign(tx, {
+              ...input,
+              workspaceId: ctx.workspaceId,
+              actorMembershipId: ctx.membershipId,
+              source: 'MOCK_DEV',
+              mode: 'VOLUNTARY',
+            });
+            if (!prior) await planAudit(tx, ctx, input.commandId);
+            return result;
           }),
       );
     } catch (error) {

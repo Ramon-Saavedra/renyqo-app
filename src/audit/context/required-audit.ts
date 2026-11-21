@@ -2,6 +2,10 @@ import type { Prisma } from '../../generated/prisma/client';
 import { auditEffectKey } from '../commands/audit-command';
 import type { AuditSignals } from '../observability/audit-signals';
 import { auditFailure } from '../observability/audit-failure';
+import {
+  validDomainEffect,
+  type DomainAuditEffect,
+} from '../domain/domain-evidence';
 
 export type AuditEffect = Readonly<{
   effectKey: string;
@@ -9,7 +13,7 @@ export type AuditEffect = Readonly<{
   metadata: Readonly<{ activationVersion: 1 }>;
 }>;
 export interface RequiredAudit {
-  append(effect: AuditEffect): Promise<string>;
+  append(effect: AuditEffect | DomainAuditEffect): Promise<string>;
 }
 
 function valid(effect: AuditEffect) {
@@ -39,22 +43,31 @@ export async function withRequiredAudit<T>(
 ): Promise<T> {
   let active = true;
   const audit: RequiredAudit = Object.freeze({
-    async append(effect: AuditEffect) {
+    async append(effect: AuditEffect | DomainAuditEffect) {
       if (!active) {
         signals.report('AUDIT_CONTEXT_MISSING');
         await tx.$executeRaw`SELECT reject_required_audit()`;
         throw new Error('Audit execution has ended');
       }
-      if (!valid(effect)) {
+      const domain =
+        effect && typeof effect === 'object' && 'evidence' in effect;
+      if (domain ? !validDomainEffect(effect) : !valid(effect)) {
         signals.report('AUDIT_PAYLOAD_REJECTED');
         // Poison the outer transaction even if the caller catches this failure.
         await tx.$executeRaw`SELECT reject_required_audit()`;
         throw new TypeError('Invalid audit effect');
       }
       try {
+        if (domain) {
+          const [row] = await tx.$queryRaw<
+            { id: string }[]
+          >`SELECT append_domain_audit_event(${id}::uuid,${effect.effectKey},${effect.evidence.kind},${effect.evidence.id}::uuid) AS id`;
+          return row.id;
+        }
+        const foundation = effect;
         const [row] = await tx.$queryRaw<{ id: string }[]>`
-          SELECT append_context_audit_event(${id}::uuid,${effect.effectKey},
-            ${JSON.stringify(effect.changes)}::jsonb,${JSON.stringify(effect.metadata)}::jsonb) AS id`;
+          SELECT append_context_audit_event(${id}::uuid,${foundation.effectKey},
+            ${JSON.stringify(foundation.changes)}::jsonb,${JSON.stringify(foundation.metadata)}::jsonb) AS id`;
         return row.id;
       } catch (error) {
         signals.report('AUDIT_APPEND_FAILED');

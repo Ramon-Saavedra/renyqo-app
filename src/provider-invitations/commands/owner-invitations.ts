@@ -1,3 +1,5 @@
+import { auditedWork } from '../../audit/context/audited-work';
+import { invitationAudit } from './invitation-audit';
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -79,57 +81,62 @@ export class OwnerInvitations {
           membershipIds: [],
         },
         () => Promise.resolve(),
-        async (tx, ctx) => {
-          const command = {
-            workspaceId: ctx.workspaceId,
-            commandId: input.commandId,
-            kind: input.kind,
-            actorUserId: ctx.userId,
-            inputHash: commandFingerprint(normalized),
-          };
-          const replay = await this.repository.replay(tx, command);
-          if (replay) return { row: replay, issued: false };
-          let row;
-          if (normalized.kind === 'CREATE') {
-            this.delivery.assertConfigured();
-            row = await this.lifecycle.create(tx, ctx, {
-              ...normalized,
-              id,
-              reservationId,
-              expiryCommandId,
-              hash: token.hash,
-              ownershipRevision: ownership.revision,
-            });
-          } else {
-            const old = await this.repository.find(
-              tx,
-              ctx.workspaceId,
-              normalized.id,
-            );
-            if (old.revision !== normalized.revision)
-              invitationConflict('INVITATION_REVISION_CONFLICT');
-            if (normalized.kind === 'RESEND') {
+        async (tx, ctx) =>
+          auditedWork(tx, async () => {
+            const command = {
+              workspaceId: ctx.workspaceId,
+              commandId: input.commandId,
+              kind: input.kind,
+              actorUserId: ctx.userId,
+              inputHash: commandFingerprint(normalized),
+            };
+            const replay = await this.repository.replay(tx, command);
+            if (replay) return { row: replay, issued: false };
+            let row;
+            let priorRevision: number | undefined;
+            if (normalized.kind === 'CREATE') {
               this.delivery.assertConfigured();
-              row = await this.lifecycle.resend(
-                tx,
-                ctx,
-                old,
-                token.hash,
-                normalized.revision,
-                ownership.revision,
-              );
+              row = await this.lifecycle.create(tx, ctx, {
+                ...normalized,
+                id,
+                reservationId,
+                expiryCommandId,
+                hash: token.hash,
+                ownershipRevision: ownership.revision,
+              });
             } else {
-              const now = await this.repository.clock(tx);
-              row = await this.lifecycle.terminate(
+              const old = await this.repository.find(
                 tx,
-                old,
-                old.expiresAt <= now ? 'EXPIRED' : 'REVOKED',
+                ctx.workspaceId,
+                normalized.id,
               );
+              priorRevision = old.revision;
+              if (old.revision !== normalized.revision)
+                invitationConflict('INVITATION_REVISION_CONFLICT');
+              if (normalized.kind === 'RESEND') {
+                this.delivery.assertConfigured();
+                row = await this.lifecycle.resend(
+                  tx,
+                  ctx,
+                  old,
+                  token.hash,
+                  normalized.revision,
+                  ownership.revision,
+                );
+              } else {
+                const now = await this.repository.clock(tx);
+                row = await this.lifecycle.terminate(
+                  tx,
+                  old,
+                  old.expiresAt <= now ? 'EXPIRED' : 'REVOKED',
+                );
+              }
             }
-          }
-          await this.repository.record(tx, command, row.id, row.revision);
-          return { row, issued: normalized.kind !== 'REVOKE' };
-        },
+            await this.repository.record(tx, command, row.id, row.revision);
+            if (priorRevision === undefined || row.revision !== priorRevision)
+              await invitationAudit(tx, ctx, row, input.commandId, input.kind);
+            return { row, issued: normalized.kind !== 'REVOKE' };
+          }),
       );
       const delivery = result.issued
         ? await this.delivery.send(result.row, token.secret)

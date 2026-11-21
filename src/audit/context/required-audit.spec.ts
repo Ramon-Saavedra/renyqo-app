@@ -8,6 +8,25 @@ describe('Required audit failures and execution lifetime', () => {
     jest.spyOn(signals, 'report').mockImplementation(() => undefined),
   );
   afterEach(() => jest.restoreAllMocks());
+  it.each([null, undefined, 42, 'invalid'])(
+    'aborts required execution for malformed runtime input %s',
+    async (value) => {
+      const execute = jest
+        .fn()
+        .mockRejectedValue(new Error('transaction aborted'));
+      const tx = {
+        $executeRaw: execute,
+        $queryRaw: jest.fn(),
+      } as unknown as Prisma.TransactionClient;
+      await expect(
+        withRequiredAudit(tx, 'context', signals, (a) =>
+          a.append(value as unknown as Parameters<RequiredAudit['append']>[0]),
+        ),
+      ).rejects.toThrow('transaction aborted');
+      expect(execute).toHaveBeenCalled();
+      expect(signals.report).toHaveBeenCalledWith('AUDIT_PAYLOAD_REJECTED');
+    },
+  );
   it('rejects sensitive payloads without sending them to persistence or logs', async () => {
     const execute = jest
       .fn()

@@ -1,3 +1,5 @@
+import { auditedWork } from '../audit/context/audited-work';
+import { assignmentAudit } from './assignment-audit';
 import { ConflictException, Injectable } from '@nestjs/common';
 import type { HumanAuthority } from '../provider-authorization/domain/authorization.types';
 import { ProtectedWorkspaceTransactions } from '../provider-authorization/protected-workspace-transactions';
@@ -65,27 +67,36 @@ export class OwnerReassignment {
         )
           throw new ConflictException('Assignment target is ineligible');
       },
-      async (tx, context) => {
-        const listing = await this.assignments.lockListing(
-          tx,
-          command.workspaceId,
-          command.listingId,
-        );
-        assertAssignmentListing(
-          context,
-          listing,
-          command.expectedListingRevision,
-        );
-        if (listing.responsible_membership_id !== plan.sourceId)
-          throw new ConflictException('Responsibility changed');
-        return this.assignments.assign(tx, listing, {
-          targetMembershipId: command.targetMembershipId,
-          reason: 'OWNER_REASSIGNMENT',
-          initiator: context.membershipId,
-          commandId: command.commandId,
-          correlationId: command.correlationId,
-        });
-      },
+      async (tx, context) =>
+        auditedWork(tx, async () => {
+          const listing = await this.assignments.lockListing(
+            tx,
+            command.workspaceId,
+            command.listingId,
+          );
+          assertAssignmentListing(
+            context,
+            listing,
+            command.expectedListingRevision,
+          );
+          if (listing.responsible_membership_id !== plan.sourceId)
+            throw new ConflictException('Responsibility changed');
+          const result = await this.assignments.assign(tx, listing, {
+            targetMembershipId: command.targetMembershipId,
+            reason: 'OWNER_REASSIGNMENT',
+            initiator: context.membershipId,
+            commandId: command.commandId,
+            correlationId: command.correlationId,
+          });
+          if (listing.responsible_membership_id !== command.targetMembershipId)
+            await assignmentAudit(
+              tx,
+              context,
+              command.commandId,
+              command.correlationId,
+            );
+          return result;
+        }),
     );
   }
 }

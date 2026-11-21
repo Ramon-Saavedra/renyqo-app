@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import {
+  DOMAIN_AUDIT_SCOPES,
+  type DomainAuditScope,
+} from '../domain/domain-evidence';
 
 export type AuditCommand = Readonly<{
   commandId: string;
-  commandScope: 'audit.ledger.activation';
+  commandScope: 'audit.ledger.activation' | DomainAuditScope;
   correlationId: string;
   causationId?: string;
   requiredEffects: readonly string[];
@@ -44,7 +48,9 @@ export function auditCommand(input: AuditCommand): AuditCommand {
     (input.causationId !== undefined &&
       (typeof input.causationId !== 'string' ||
         !auditId.test(input.causationId))) ||
-    input.commandScope !== 'audit.ledger.activation' ||
+    !(
+      ['audit.ledger.activation', ...DOMAIN_AUDIT_SCOPES] as readonly string[]
+    ).includes(input.commandScope) ||
     !validEffects(input.requiredEffects)
   )
     throw new TypeError('Invalid audit command');

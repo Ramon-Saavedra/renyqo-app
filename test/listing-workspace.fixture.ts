@@ -13,6 +13,7 @@ import { memberPresentationMigrations } from './member-presentation-migrations.f
 import {
   auditMigrations,
   auditContextMigrations,
+  auditDomainMigrations,
 } from './audit-migrations.fixture';
 import { installTenantContext } from '../src/provider-tenancy/tenant-context';
 import {
@@ -78,6 +79,7 @@ export class ListingWorkspaceFixture extends TenantFixture {
       ...memberPresentationMigrations,
       ...auditMigrations,
       ...auditContextMigrations,
+      ...auditDomainMigrations,
     ]) {
       try {
         await this.pool.query(
