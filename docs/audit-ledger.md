@@ -1,5 +1,8 @@
 # Audit ledger — Phase 4.5.10, Slice 1
 
+This page records the Slice 1 baseline. The opt-in execution/query foundations and
+additional controlled helper grants are documented in [Slice 2](audit-context.md).
+
 This is a dormant storage/security foundation. It does not adopt existing business
 mutations, record access, activate onboarding, ownership transfer or removal,
 provide a query endpoint, or claim complete audit coverage. No historical events

@@ -10,7 +10,10 @@ import { assertApplicationRuntime } from '../src/provider-tenancy/application-ru
 import { sqlTenant } from './workspace-tenant.fixture';
 import { invitationMigrations } from './invitation-admission.fixture';
 import { memberPresentationMigrations } from './member-presentation-migrations.fixture';
-import { auditMigrations } from './audit-migrations.fixture';
+import {
+  auditMigrations,
+  auditContextMigrations,
+} from './audit-migrations.fixture';
 import { installTenantContext } from '../src/provider-tenancy/tenant-context';
 import {
   seedEntitlementTestCatalog,
@@ -74,6 +77,7 @@ export class ListingWorkspaceFixture extends TenantFixture {
       ...invitationMigrations,
       ...memberPresentationMigrations,
       ...auditMigrations,
+      ...auditContextMigrations,
     ]) {
       try {
         await this.pool.query(
