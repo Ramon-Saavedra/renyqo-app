@@ -11,6 +11,56 @@ datasource db {
   provider = "postgresql"
 }
 
+enum AuditActorKind {
+  USER
+  MEMBER
+  SYSTEM
+  INTEGRATION
+}
+
+enum AuditSource {
+  HTTP
+  DOMAIN_WORKER
+  INTERNAL
+}
+
+// Slice 1 foundation only. No historical backfill or business adoption.
+model AuditEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  action String @db.VarChar(120)
+  schemaVersion Int @map("schema_version")
+  actorKind AuditActorKind @map("actor_kind")
+  actorUserId String? @map("actor_user_id") @db.Uuid
+  actorMembershipId String? @map("actor_membership_id") @db.Uuid
+  systemPurpose String? @map("system_purpose") @db.VarChar(80)
+  resourceType String @map("resource_type") @db.VarChar(80)
+  resourceId String @map("resource_id") @db.Uuid
+  listingId String? @map("listing_id") @db.Uuid
+  resourceRevisionBefore Int? @map("resource_revision_before")
+  resourceRevisionAfter Int? @map("resource_revision_after")
+  revisionKind String? @map("revision_kind") @db.VarChar(80)
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(3)
+  recordedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("recorded_at") @db.Timestamptz(3)
+  source AuditSource
+  correlationId String @map("correlation_id") @db.Uuid
+  causationId String? @map("causation_id") @db.Uuid
+  commandId String @map("command_id") @db.Uuid
+  commandScope String @map("command_scope") @db.VarChar(120)
+  effectKey String @map("effect_key") @db.VarChar(160)
+  sourceEvidenceType String? @map("source_evidence_type") @db.VarChar(80)
+  sourceEvidenceId String? @map("source_evidence_id") @db.Uuid
+  changes Json @db.JsonB
+  metadata Json @db.JsonB
+  workspace ProviderWorkspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  @@unique([workspaceId,commandScope,commandId,effectKey],map:"audit_event_command_effect")
+  @@unique([workspaceId,sourceEvidenceType,sourceEvidenceId,action],map:"audit_event_source_evidence")
+  @@index([workspaceId,recordedAt,id],map:"audit_event_workspace_page")
+  @@index([workspaceId,resourceType,resourceId,recordedAt,id],map:"audit_event_resource_page")
+  @@index([workspaceId,listingId,recordedAt,id],map:"audit_event_listing_page")
+  @@map("audit_events")
+}
+
 enum Role {
   APPLICANT @map("applicant")
   PROVIDER  @map("provider")
@@ -380,6 +430,7 @@ model WorkspaceSeatReservation {
 }
 
 model ProviderWorkspace {
+  auditEvents AuditEvent[]
   invitations WorkspaceInvitation[]
   id                  String                        @id @default(uuid()) @db.Uuid
   kind                WorkspaceKind
