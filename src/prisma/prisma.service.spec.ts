@@ -52,7 +52,9 @@ describe('Shared Prisma startup boundary', () => {
         expect.stringContaining(
           "'workspace_invitations','workspace_invitation_commands'",
         ),
-        expect.stringContaining("c.relname='audit_events'"),
+        expect.stringContaining(
+          "'audit_events','audit_actor_identities','audit_execution_contexts'",
+        ),
       ]);
       expect(query.mock.invocationCallOrder[0]).toBeGreaterThan(
         connect.mock.invocationCallOrder[0],
@@ -67,7 +69,7 @@ describe('Shared Prisma startup boundary', () => {
     process.env['NODE_ENV'] = 'production';
     const query = jest.fn((sql: TemplateStringsArray) =>
       Promise.resolve([
-        { safe: !sql.join(' ').includes("c.relname='audit_events'") },
+        { safe: !sql.join(' ').includes("'audit_actor_identities'") },
       ]),
     );
     try {
