@@ -1,6 +1,7 @@
 import type { Prisma } from '../generated/prisma/client';
 import { assertRestrictedWorkspaceRuntime } from './runtime-role-verifier';
 import grantMatrix from './application-runtime-grants.json';
+import { assertAuditRuntime } from '../audit/persistence/audit-runtime-verifier';
 
 // Activated only by the coordinated 4.5.5 operational Listing cutover. Unlike
 // the workspace-only login, this login must also support existing app modules.
@@ -97,4 +98,5 @@ export async function assertApplicationRuntime(
       AND c.relname IN('workspace_invitations','workspace_invitation_commands')`;
   if (!invitations?.safe)
     throw new Error('Application invitation runtime boundary is unsafe');
+  await assertAuditRuntime(db);
 }

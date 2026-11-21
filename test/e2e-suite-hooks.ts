@@ -6,6 +6,10 @@ import { finalizeSharedE2ESuite } from './e2e-cleanup';
 import { verifySharedE2EHarnessQuiescent } from './e2e-harness-leak-detection';
 
 function skipSharedSuiteFinalizer(testPath: string): boolean {
+  if (
+    /[/\\]audit-(foundation|security|migration)\.e2e-spec\.ts$/.test(testPath)
+  )
+    return true;
   if (!testPath.endsWith('.e2e-spec.ts')) return true;
   if (
     testPath.includes('member-presentation-') ||
