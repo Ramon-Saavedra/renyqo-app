@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { projectAuditedProviderMutation } from './adapters/provider-lifecycle-audit';
 import {
   Injectable,
   NotFoundException,
@@ -138,8 +140,10 @@ export class ProviderListingAccess {
       tx: Prisma.TransactionClient,
       context: AuthorizationContext,
     ) => Promise<T>,
+    audit: { applicationConsequences?: true } = {},
   ) {
     const requirement = this.requirement(actor, action, listingId);
+    const auditCommandId = randomUUID();
     const ownershipRevision = await this.resolver.read(
       this.prisma,
       actor.authority,
@@ -167,8 +171,17 @@ export class ProviderListingAccess {
           await this.assertListing(tx, context, listingId);
         }
       },
-      async (tx, context) =>
-        projectProviderResult(await mutate(tx, context), context, action),
+      (tx, context) =>
+        projectAuditedProviderMutation(
+          tx,
+          context,
+          action,
+          auditCommandId,
+          listingId,
+          () => mutate(tx, context),
+          undefined,
+          audit.applicationConsequences,
+        ),
     );
   }
 
@@ -227,6 +240,7 @@ export class ProviderListingAccess {
       async () => {},
       (_tx, id) => Promise.resolve(id),
     );
+    const auditCommandId = randomUUID();
     return this.writes.run(
       actor.authority,
       this.requirement(actor, action, applicationId),
@@ -236,11 +250,15 @@ export class ProviderListingAccess {
           AND (${context.role}='OWNER' OR (responsible_membership_id=${context.membershipId}::uuid AND status<>'retired')) FOR UPDATE`;
         await this.applicationReference(tx, context, applicationId, listingId);
       },
-      async (tx, context) =>
-        projectProviderResult(
-          await mutate(tx, listingId, context),
+      (tx, context) =>
+        projectAuditedProviderMutation(
+          tx,
           context,
           action,
+          auditCommandId,
+          listingId,
+          () => mutate(tx, listingId, context),
+          applicationId,
         ),
     );
   }

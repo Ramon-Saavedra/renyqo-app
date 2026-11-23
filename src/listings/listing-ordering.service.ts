@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { withListingLifecycleAudit } from './listing-audit-boundary';
 import {
   BadRequestException,
   ForbiddenException,
@@ -62,6 +64,7 @@ export class ListingOrderingService {
   move(listingId: string, actor: ProviderActor, position: number) {
     if (!Number.isInteger(position) || position < 1)
       throw new BadRequestException('position must be a positive integer');
+    const commandId = randomUUID();
     return this.access.mutate(
       actor,
       'listing.order',
@@ -87,10 +90,19 @@ export class ListingOrderingService {
           );
         ids.splice(from, 1);
         ids.splice(position - 1, 0, listingId);
-        await this.compactWithinTransaction(tx, context.workspaceId, ids);
-        return tx.listing.findUniqueOrThrow({
-          where: { id: listingId, workspaceId: context.workspaceId },
-        });
+        return withListingLifecycleAudit(
+          tx,
+          { kind: 'MEMBER', context },
+          commandId,
+          listingId,
+          async () => {
+            await this.compactWithinTransaction(tx, context.workspaceId, ids);
+            return tx.listing.findUniqueOrThrow({
+              where: { id: listingId, workspaceId: context.workspaceId },
+            });
+          },
+          from !== position - 1,
+        );
       },
     );
   }

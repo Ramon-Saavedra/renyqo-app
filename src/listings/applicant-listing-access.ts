@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { withApplicationLifecycleAudit } from '../applications/application-audit-boundary';
 import {
   ForbiddenException,
   Injectable,
@@ -112,8 +114,16 @@ export class ApplicantListingAccess {
     applicationId: string,
     policy: ApplicantListingPolicy,
     mutate: (tx: Prisma.TransactionClient, listingId: string) => Promise<T>,
+    audit: { applicationLifecycle?: boolean } = {},
   ) {
-    return this.mutation(authority, applicationId, false, policy, mutate);
+    return this.mutation(
+      authority,
+      applicationId,
+      false,
+      policy,
+      mutate,
+      audit.applicationLifecycle ?? false,
+    );
   }
 
   // Admission is the public-resource exception: it creates the FIRST Application,
@@ -124,7 +134,7 @@ export class ApplicantListingAccess {
     policy: ApplicantListingPolicy,
     mutate: (tx: Prisma.TransactionClient, listingId: string) => Promise<T>,
   ) {
-    return this.mutation(authority, listingId, true, policy, mutate);
+    return this.mutation(authority, listingId, true, policy, mutate, true);
   }
 
   private mutation<T>(
@@ -133,10 +143,12 @@ export class ApplicantListingAccess {
     admission: boolean,
     policy: ApplicantListingPolicy,
     mutate: (tx: Prisma.TransactionClient, listingId: string) => Promise<T>,
+    auditApplicationLifecycle: boolean,
   ) {
     const principal = captureHumanAuthority(authority);
     if (principal.mode !== 'SESSION_BOUND')
       throw new ForbiddenException('Applicant HTTP session authority required');
+    const auditCommandId = randomUUID();
     return runSerializableTransaction(this.prisma, async (tx) => {
       await this.locks.global(tx, principal);
       await this.global.assert(tx, principal);
@@ -172,7 +184,15 @@ export class ApplicantListingAccess {
         );
       await policy(tx, route.listing_id);
       await this.global.assertSession(tx, principal);
-      return mutate(tx, route.listing_id);
+      if (!auditApplicationLifecycle) return mutate(tx, route.listing_id);
+      return withApplicationLifecycleAudit(
+        tx,
+        { kind: 'USER', authority: principal },
+        auditCommandId,
+        [route.listing_id],
+        () => mutate(tx, route.listing_id),
+        admission ? undefined : selector,
+      );
     });
   }
 

@@ -1,3 +1,13 @@
+// Pure ordering harness: Audit integration/rollback uses restricted PostgreSQL specs.
+jest.mock('./listing-audit-boundary', () => ({
+  withListingLifecycleAudit: (
+    _tx: unknown,
+    _actor: unknown,
+    _command: unknown,
+    _ids: unknown,
+    work: () => Promise<unknown>,
+  ) => work(),
+}));
 import {
   UNIT_WORKSPACE_ID,
   unitProvider,

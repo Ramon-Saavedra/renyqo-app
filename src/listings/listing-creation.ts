@@ -1,3 +1,4 @@
+import { listingLifecycleAudit } from './listing-lifecycle-audit';
 import { auditedWork } from '../audit/context/audited-work';
 import { assignmentAudit } from '../listing-assignments/assignment-audit';
 import {
@@ -176,6 +177,13 @@ export class ListingCreation {
               },
             });
             await assignmentAudit(tx, ctx, commandId);
+            await listingLifecycleAudit(
+              tx,
+              { kind: 'MEMBER', context: ctx },
+              commandId,
+              null,
+              listing,
+            );
             await this.criteria.current(
               tx,
               listing,

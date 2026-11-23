@@ -195,6 +195,7 @@ export class ApplicationLifecycleService {
       async () => {},
       (tx) =>
         this.withdrawWithinTransaction(tx, applicationId, authority.userId),
+      { applicationLifecycle: true },
     );
   }
 

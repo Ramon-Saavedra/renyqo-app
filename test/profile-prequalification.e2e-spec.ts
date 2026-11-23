@@ -467,14 +467,18 @@ describe('Profile prequalification assessments (isolated PostgreSQL schema)', ()
     ).toBe('REJECTED');
   });
   it('matches SQL, endpoint, detail, admission and promotion semantics for missing facts and declarations', async () => {
-    const rows = await Promise.all([
-      listing(),
-      listing({ minimumHouseholdNetIncome: 4000 }),
-      listing({ petsPolicy: 'NOT_ALLOWED' }),
-      listing({ smokingPolicy: 'NOT_ALLOWED' }),
-      listing({ schufaRequired: true, incomeProofRequired: true }),
-      listing({ petsPolicy: 'BY_ARRANGEMENT' }),
-    ]);
+    // This case compares eligibility semantics. Prepare its shared-workspace
+    // fixtures serially so setup cannot exhaust the bounded transaction retries.
+    const criteria: Partial<CreateListingDto>[] = [
+      {},
+      { minimumHouseholdNetIncome: 4000 },
+      { petsPolicy: 'NOT_ALLOWED' },
+      { smokingPolicy: 'NOT_ALLOWED' },
+      { schufaRequired: true, incomeProofRequired: true },
+      { petsPolicy: 'BY_ARRANGEMENT' },
+    ];
+    const rows: Awaited<ReturnType<typeof listing>>[] = [];
+    for (const item of criteria) rows.push(await listing(item));
     const user = await applicant({
       householdNetIncome: null,
       hasPets: null,

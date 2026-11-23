@@ -100,6 +100,46 @@ model AuditExecutionContext {
   @@map("audit_execution_contexts")
 }
 
+// Private status provenance; deleted by deferred cleanup, never domain history.
+model AuditApplicationChange {
+  id             String  @id @db.Uuid
+  transactionId  String  @map("transaction_id") @db.VarChar(20)
+  applicationId  String  @map("application_id") @db.Uuid
+  previousStatus String? @map("previous_status") @db.VarChar(20)
+  newStatus      String  @map("new_status") @db.VarChar(20)
+
+  @@index([transactionId, applicationId], map: "audit_application_change_tx_app")
+  @@map("audit_application_changes")
+}
+
+// Private insert provenance. Deferred cleanup removes it before commit.
+model AuditActivitySource {
+  activityId    String @id @map("activity_id") @db.Uuid
+  transactionId String @map("transaction_id") @db.VarChar(20)
+
+  @@index([transactionId, activityId], map: "audit_activity_source_transaction")
+  @@map("audit_activity_sources")
+}
+
+// Private profile Audit proof, valid only during the creating transaction.
+model AuditProfileScope {
+  id            String   @id @db.Uuid
+  transactionId String   @map("transaction_id") @db.VarChar(20)
+  userId        String   @map("user_id") @db.Uuid
+  listingIds    String[] @map("listing_ids") @db.Uuid
+  workspaceIds  String[] @map("workspace_ids") @db.Uuid
+
+  @@map("audit_profile_scopes")
+}
+
+model AuditProfileBinding {
+  contextId String @id @map("context_id") @db.Uuid
+  scopeId   String @map("scope_id") @db.Uuid
+
+  @@index([scopeId], map: "audit_profile_binding_scope")
+  @@map("audit_profile_bindings")
+}
+
 enum Role {
   APPLICANT @map("applicant")
   PROVIDER  @map("provider")
