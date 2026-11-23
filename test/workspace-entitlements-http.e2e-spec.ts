@@ -58,8 +58,15 @@ describe('Entitlement protected HTTP creation and replay', () => {
     const evidence = await f.db.prisma.auditEvent.findMany({
       where: { workspaceId: w.id, commandId },
     });
-    expect(evidence).toHaveLength(1);
-    expect(evidence[0]).toMatchObject({
+    expect(evidence.map((e) => e.action).sort()).toEqual(
+      [
+        'provider.listing.created',
+        'provider.listing_assignment.changed',
+      ].sort(),
+    );
+    expect(
+      evidence.find((e) => e.action === 'provider.listing_assignment.changed'),
+    ).toMatchObject({
       action: 'provider.listing_assignment.changed',
       resourceId: id,
       actorMembershipId: w.owner,
@@ -81,7 +88,7 @@ describe('Entitlement protected HTTP creation and replay', () => {
     });
     expect(
       await f.db.prisma.auditEvent.count({ where: { workspaceId: w.id } }),
-    ).toBe(1);
+    ).toBe(2);
     await f.db.prisma.user.update({
       where: { id: w.ownerUser },
       data: { authVersion: { increment: 1 } },

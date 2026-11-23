@@ -1,3 +1,5 @@
+import type { LifecycleAuditEffect } from '../domain/lifecycle-action';
+import { validLifecycleEffect } from '../payload/lifecycle-effect';
 import type { Prisma } from '../../generated/prisma/client';
 import { auditEffectKey } from '../commands/audit-command';
 import type { AuditSignals } from '../observability/audit-signals';
@@ -13,7 +15,9 @@ export type AuditEffect = Readonly<{
   metadata: Readonly<{ activationVersion: 1 }>;
 }>;
 export interface RequiredAudit {
-  append(effect: AuditEffect | DomainAuditEffect): Promise<string>;
+  append(
+    effect: AuditEffect | DomainAuditEffect | LifecycleAuditEffect,
+  ): Promise<string>;
 }
 
 function valid(effect: AuditEffect) {
@@ -43,21 +47,37 @@ export async function withRequiredAudit<T>(
 ): Promise<T> {
   let active = true;
   const audit: RequiredAudit = Object.freeze({
-    async append(effect: AuditEffect | DomainAuditEffect) {
+    async append(
+      effect: AuditEffect | DomainAuditEffect | LifecycleAuditEffect,
+    ) {
       if (!active) {
         signals.report('AUDIT_CONTEXT_MISSING');
         await tx.$executeRaw`SELECT reject_required_audit()`;
         throw new Error('Audit execution has ended');
       }
+      const lifecycle =
+        !!effect && typeof effect === 'object' && 'transition' in effect;
       const domain =
         effect && typeof effect === 'object' && 'evidence' in effect;
-      if (domain ? !validDomainEffect(effect) : !valid(effect)) {
+      if (
+        lifecycle
+          ? !validLifecycleEffect(effect)
+          : domain
+            ? !validDomainEffect(effect)
+            : !valid(effect)
+      ) {
         signals.report('AUDIT_PAYLOAD_REJECTED');
         // Poison the outer transaction even if the caller catches this failure.
         await tx.$executeRaw`SELECT reject_required_audit()`;
         throw new TypeError('Invalid audit effect');
       }
       try {
+        if (lifecycle) {
+          const [row] = await tx.$queryRaw<
+            { id: string }[]
+          >`SELECT append_lifecycle_audit_event(${id}::uuid,${effect.effectKey},${JSON.stringify(effect.transition)}::jsonb) AS id`;
+          return row.id;
+        }
         if (domain) {
           const [row] = await tx.$queryRaw<
             { id: string }[]

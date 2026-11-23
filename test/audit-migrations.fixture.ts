@@ -20,3 +20,10 @@ export const auditDomainMigrations = [
   '20261121124000_audit_domain_append',
   '20261121125000_audit_invitation_admission',
 ];
+
+export const auditLifecycleMigrations = [
+  '20261121130000_audit_lifecycle_contracts',
+  '20261121131000_audit_lifecycle_execution',
+  '20261121132000_audit_lifecycle_evidence',
+  '20261121133000_audit_lifecycle_access',
+];

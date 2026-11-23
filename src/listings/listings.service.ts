@@ -270,118 +270,128 @@ export class ListingsService {
     actor: ProviderActor,
     dto: RentListingDto,
   ): Promise<Listing> {
-    return this.access.mutate(actor, 'listing.write', id, async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "listings" WHERE id = ${id} FOR UPDATE`;
+    return this.access.mutate(
+      actor,
+      'listing.write',
+      id,
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "listings" WHERE id = ${id} FOR UPDATE`;
 
-      const listing = await tx.listing.findFirst({
-        where: { id, workspaceId: actor.workspaceId },
-      });
+        const listing = await tx.listing.findFirst({
+          where: { id, workspaceId: actor.workspaceId },
+        });
 
-      if (!listing) {
-        throw new NotFoundException('Listing not found');
-      }
+        if (!listing) {
+          throw new NotFoundException('Listing not found');
+        }
 
-      if (
-        listing.status !== ListingStatus.PUBLISHED &&
-        listing.status !== ListingStatus.PAUSED
-      ) {
-        throw new ConflictException('This listing cannot be marked as rented');
-      }
+        if (
+          listing.status !== ListingStatus.PUBLISHED &&
+          listing.status !== ListingStatus.PAUSED
+        ) {
+          throw new ConflictException(
+            'This listing cannot be marked as rented',
+          );
+        }
 
-      const selectedApplication = await tx.application.findUnique({
-        where: { id: dto.selectedApplicationId },
-      });
+        const selectedApplication = await tx.application.findUnique({
+          where: { id: dto.selectedApplicationId },
+        });
 
-      if (
-        !selectedApplication ||
-        selectedApplication.listingId !== id ||
-        selectedApplication.status !== ApplicationStatus.ACTIVE
-      ) {
-        throw new ConflictException(
-          'The selected application is not valid for this listing',
+        if (
+          !selectedApplication ||
+          selectedApplication.listingId !== id ||
+          selectedApplication.status !== ApplicationStatus.ACTIVE
+        ) {
+          throw new ConflictException(
+            'The selected application is not valid for this listing',
+          );
+        }
+
+        await this.viewingLifecycle.closeListingWithinTransaction(
+          tx,
+          id,
+          'LISTING_RENTED',
+          actor.authority.userId,
+          dto.selectedApplicationId,
         );
-      }
-
-      await this.viewingLifecycle.closeListingWithinTransaction(
-        tx,
-        id,
-        'LISTING_RENTED',
-        actor.authority.userId,
-        dto.selectedApplicationId,
-      );
-      const nonSelectedApplications = await tx.application.findMany({
-        where: {
-          listingId: id,
-          id: { not: dto.selectedApplicationId },
-          status: {
-            in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING],
-          },
-        },
-        select: { id: true, status: true },
-      });
-
-      if (nonSelectedApplications.length > 0) {
-        await tx.application.updateMany({
+        const nonSelectedApplications = await tx.application.findMany({
           where: {
-            id: {
-              in: nonSelectedApplications.map((application) => application.id),
+            listingId: id,
+            id: { not: dto.selectedApplicationId },
+            status: {
+              in: [ApplicationStatus.ACTIVE, ApplicationStatus.WAITING],
             },
           },
-          data: {
-            status: ApplicationStatus.REJECTED,
-            rejectedAt: new Date(),
-            publicReason: ApplicationRejectionReason.LISTING_RENTED,
+          select: { id: true, status: true },
+        });
+
+        if (nonSelectedApplications.length > 0) {
+          await tx.application.updateMany({
+            where: {
+              id: {
+                in: nonSelectedApplications.map(
+                  (application) => application.id,
+                ),
+              },
+            },
+            data: {
+              status: ApplicationStatus.REJECTED,
+              rejectedAt: new Date(),
+              publicReason: ApplicationRejectionReason.LISTING_RENTED,
+            },
+          });
+
+          await this.activityService.appendManyWithinTransaction(
+            tx,
+            nonSelectedApplications.map((application) => ({
+              applicationId: application.id,
+              type: ApplicationActivityType.APPLICATION_REJECTED,
+              actorUserId: actor.authority.userId,
+              actorType: ApplicationActivityActorType.PROVIDER,
+              visibility:
+                application.status === ApplicationStatus.ACTIVE
+                  ? ApplicationActivityVisibility.BOTH
+                  : ApplicationActivityVisibility.APPLICANT,
+              metadata: {
+                fromStatus: application.status,
+                toStatus: ApplicationStatus.REJECTED,
+                reason: ApplicationRejectionReason.LISTING_RENTED,
+              },
+            })),
+          );
+        }
+
+        await tx.application.update({
+          where: { id: dto.selectedApplicationId },
+          data: { status: ApplicationStatus.ACCEPTED },
+        });
+
+        await this.activityService.appendWithinTransaction(tx, {
+          applicationId: dto.selectedApplicationId,
+          type: ApplicationActivityType.APPLICATION_ACCEPTED,
+          actorUserId: actor.authority.userId,
+          actorType: ApplicationActivityActorType.PROVIDER,
+          visibility: ApplicationActivityVisibility.BOTH,
+          metadata: {
+            fromStatus: ApplicationStatus.ACTIVE,
+            toStatus: ApplicationStatus.ACCEPTED,
           },
         });
 
-        await this.activityService.appendManyWithinTransaction(
+        const result = await tx.listing.update({
+          where: { id },
+          data: { status: ListingStatus.RENTED, rentedAt: new Date() },
+        });
+        await this.activityService.lifecycleChangedForListingWithinTransaction(
           tx,
-          nonSelectedApplications.map((application) => ({
-            applicationId: application.id,
-            type: ApplicationActivityType.APPLICATION_REJECTED,
-            actorUserId: actor.authority.userId,
-            actorType: ApplicationActivityActorType.PROVIDER,
-            visibility:
-              application.status === ApplicationStatus.ACTIVE
-                ? ApplicationActivityVisibility.BOTH
-                : ApplicationActivityVisibility.APPLICANT,
-            metadata: {
-              fromStatus: application.status,
-              toStatus: ApplicationStatus.REJECTED,
-              reason: ApplicationRejectionReason.LISTING_RENTED,
-            },
-          })),
+          id,
+          new Date(),
         );
-      }
-
-      await tx.application.update({
-        where: { id: dto.selectedApplicationId },
-        data: { status: ApplicationStatus.ACCEPTED },
-      });
-
-      await this.activityService.appendWithinTransaction(tx, {
-        applicationId: dto.selectedApplicationId,
-        type: ApplicationActivityType.APPLICATION_ACCEPTED,
-        actorUserId: actor.authority.userId,
-        actorType: ApplicationActivityActorType.PROVIDER,
-        visibility: ApplicationActivityVisibility.BOTH,
-        metadata: {
-          fromStatus: ApplicationStatus.ACTIVE,
-          toStatus: ApplicationStatus.ACCEPTED,
-        },
-      });
-
-      const result = await tx.listing.update({
-        where: { id },
-        data: { status: ListingStatus.RENTED, rentedAt: new Date() },
-      });
-      await this.activityService.lifecycleChangedForListingWithinTransaction(
-        tx,
-        id,
-        new Date(),
-      );
-      return result;
-    });
+        return result;
+      },
+      { applicationConsequences: true },
+    );
   }
 
   async countByProvider(actor: ProviderActor): Promise<number> {
@@ -505,6 +515,9 @@ export class ListingsService {
         );
         return result;
       },
+      data.status === ListingStatus.PUBLISHED
+        ? { applicationConsequences: true }
+        : {},
     );
   }
 }

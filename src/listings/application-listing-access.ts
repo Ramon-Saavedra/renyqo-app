@@ -1,3 +1,4 @@
+import { auditsApplicationLifecycle } from '../applications/application-audit-operations';
 import {
   ForbiddenException,
   Injectable,
@@ -137,6 +138,7 @@ export class ApplicationListingAccess {
     policy: ApplicantListingPolicy,
     mutate: (tx: Prisma.TransactionClient, listingId: string) => Promise<T>,
     operation: ProviderOperation,
+    audit: { applicationLifecycle?: boolean } = {},
   ) {
     if (audience === 'provider') {
       if (!('authority' in actor))
@@ -153,6 +155,10 @@ export class ApplicationListingAccess {
     }
     if ('authority' in actor)
       throw new ForbiddenException('Explicit applicant session required');
-    return this.applicant.mutateApplication(actor, id, policy, mutate);
+    return this.applicant.mutateApplication(actor, id, policy, mutate, {
+      applicationLifecycle:
+        audit.applicationLifecycle === true ||
+        auditsApplicationLifecycle(operation),
+    });
   }
 }

@@ -14,6 +14,7 @@ import {
   auditMigrations,
   auditContextMigrations,
   auditDomainMigrations,
+  auditLifecycleMigrations,
 } from './audit-migrations.fixture';
 import { installTenantContext } from '../src/provider-tenancy/tenant-context';
 import {
@@ -80,6 +81,7 @@ export class ListingWorkspaceFixture extends TenantFixture {
       ...auditMigrations,
       ...auditContextMigrations,
       ...auditDomainMigrations,
+      ...auditLifecycleMigrations,
     ]) {
       try {
         await this.pool.query(

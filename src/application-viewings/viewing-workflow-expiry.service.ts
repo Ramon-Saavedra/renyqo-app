@@ -1,11 +1,10 @@
+import { executeViewingExpiryTarget } from './viewing-expiry-target';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import { ApplicationActivityService } from '../applications/application-activity.service';
 import { ApplicationLifecycleService } from '../applications/application-lifecycle.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { runSerializableTransaction } from '../prisma/run-serializable-transaction';
 import { ViewingClock } from './application-viewing.policy';
-import { installTenantContext } from '../provider-tenancy/tenant-context';
 
 export type ViewingExpiryTarget = {
   applicationId: string;
@@ -110,45 +109,17 @@ export class ViewingWorkflowExpiryService {
     );
   }
 
-  async processTarget(target: ViewingExpiryTarget): Promise<boolean> {
-    return runSerializableTransaction(this.prisma, async (tx) => {
-      // Explicit SYSTEM purpose: only expiry of this canonical viewing target.
-      // No revoked human authority is promoted into this worker path.
-      const [ref] = await tx.$queryRaw<
-        { listing_id: string; workspace_id: string }[]
-      >`
-        SELECT * FROM resolve_viewing_expiry_listing(${target.applicationId}::uuid,${target.id}::uuid,${target.kind}::text)`;
-      if (!ref) return false;
-      await installTenantContext(tx, ref.workspace_id);
-      await tx.$queryRaw`SELECT id FROM provider_workspaces WHERE id=${ref.workspace_id}::uuid FOR SHARE`;
-      const workspace = await tx.providerWorkspace.findUnique({
-        where: { id: ref.workspace_id },
-        select: { lifecycleStatus: true },
-      });
-      if (workspace?.lifecycleStatus !== 'ACTIVE') return false;
-      // Never claim/lock a proposal before the established domain lock order.
-      await tx.$queryRaw`SELECT id FROM listings WHERE id=${ref.listing_id}::uuid AND workspace_id=${ref.workspace_id}::uuid FOR UPDATE`;
-      await tx.$queryRaw`SELECT id FROM applications WHERE id=${target.applicationId}::uuid FOR UPDATE`;
-      const now = this.clock.now();
-      if (target.kind === 'proposal')
-        return this.proposalWithinTransaction(
-          tx,
-          target.applicationId,
-          target.id,
-          now,
-        );
-      const w = await tx.viewingWorkflow.findUnique({
-        where: { applicationId: target.applicationId },
-      });
-      if (!w) return false;
-      return this.lifecycle.expireViewingInterestWithinTransaction(
-        tx,
-        target.applicationId,
-        target.id,
-        w.revision,
-        now,
-      );
-    });
+  processTarget(target: ViewingExpiryTarget): Promise<boolean> {
+    return executeViewingExpiryTarget(
+      {
+        prisma: this.prisma,
+        clock: this.clock,
+        lifecycle: this.lifecycle,
+        proposal: (tx, app, id, now) =>
+          this.proposalWithinTransaction(tx, app, id, now),
+      },
+      target,
+    );
   }
 
   runOnce(batchSize = 50) {

@@ -18,6 +18,9 @@ export const DOMAIN_AUDIT_SCOPES = [
   'provider.plan',
   'provider.assignment',
   'provider.transfer',
+  'provider.lifecycle',
+  'application.lifecycle',
+  'application.lifecycle.system',
 ] as const;
 export type DomainAuditScope = (typeof DOMAIN_AUDIT_SCOPES)[number];
 

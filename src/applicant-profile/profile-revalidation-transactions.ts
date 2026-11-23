@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { withProfileRevalidationAudit } from './profile-revalidation-audit';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client';
 import type { ListingEligibilityState } from '../eligibility/profile-eligibility-evaluator';
@@ -28,6 +30,7 @@ export class ProfileRevalidationTransactions {
     const principal = captureHumanAuthority(authority);
     if (principal.mode !== 'SESSION_BOUND')
       throw new ForbiddenException('Applicant session required');
+    const commandId = randomUUID();
     return runSerializableTransaction(
       this.prisma,
       async (tx) => {
@@ -43,7 +46,13 @@ export class ProfileRevalidationTransactions {
         const listings = await tx.$queryRaw<ListingEligibilityState[]>`
         SELECT * FROM lock_profile_revalidation_listings(${principal.userId}::uuid)`;
         await this.global.assertSession(tx, principal);
-        return mutate(tx, listings);
+        return withProfileRevalidationAudit(
+          tx,
+          principal,
+          listings.map((l) => l.id),
+          () => mutate(tx, listings),
+          commandId,
+        );
       },
       { fallbackMessage: 'Profile update could not be completed' },
     );

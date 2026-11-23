@@ -211,6 +211,7 @@ export class ApplicationViewingOutcomeService {
         );
       },
       'viewing.respond',
+      { applicationLifecycle: interest === ViewingInterest.NOT_INTERESTED },
     );
   }
 
